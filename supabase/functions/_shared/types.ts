@@ -1,0 +1,44 @@
+export type RecommendedReplyTone = 'direct' | 'playful' | 'casualSmallTalk';
+
+export type ReplyTone =
+  | 'sound_more_like_me'
+  | 'playful'
+  | 'direct'
+  | 'casualSmallTalk';
+
+export type VibeCheck = {
+  interestLevel: 'Low' | 'Medium' | 'High' | 'Unclear';
+  conversationEnergy: string;
+  bestTone: RecommendedReplyTone;
+  risk: string;
+  summary: string;
+};
+
+export type SuggestedReply = {
+  id: string;
+  tone: ReplyTone;
+  text: string;
+};
+
+export type ContextNotes = {
+  userFacts: string[];
+  themFacts: string[];
+  situationNotes: string[];
+  replyInstruction: string[];
+};
+
+export type VibeCheckRequest = {
+  transcriptText: string;
+  extraContext?: string;
+};
+
+export type RepliesRequest = {
+  transcriptText: string;
+  selectedTone: ReplyTone;
+  vibeCheck: VibeCheck;
+  extraContext?: string;
+  contextNotes?: ContextNotes;
+  userStylePreference?: {
+    howTheyText: string;
+  };
+};

@@ -38,6 +38,7 @@ import {
 } from 'react-native';
 import { analyzeScreenshot, generateReplies } from './lib/wingr-ai';
 import type {
+  DetectedMessage,
   ReplyTone,
   RecommendedReplyTone,
   SuggestedReply,
@@ -127,12 +128,12 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('upload');
   const [selectedScreenshotUri, setSelectedScreenshotUri] = useState<string | null>(null);
   const [chatTranscript, setChatTranscript] = useState('');
+  const [detectedMessages, setDetectedMessages] = useState<DetectedMessage[]>([]);
   const [extraContext, setExtraContext] = useState('');
   const [replyContext, setReplyContext] = useState('');
   const [selectedTone, setSelectedTone] = useState<ReplyTone>('playful');
   const [suggestedReplies, setSuggestedReplies] = useState<SuggestedReply[]>([]);
   const [vibeCheck, setVibeCheck] = useState<VibeCheck | null>(null);
-  const [ocrSource, setOcrSource] = useState<'backend' | 'mock' | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [isGeneratingReplies, setIsGeneratingReplies] = useState(false);
   const [userStylePreference] = useState<UserStylePreference>({
@@ -166,8 +167,8 @@ export default function App() {
   const handleAnalyzeScreenshot = async (screenshotUri: string) => {
     setAnalysisError(null);
     setChatTranscript('');
+    setDetectedMessages([]);
     setVibeCheck(null);
-    setOcrSource(null);
     setSuggestedReplies([]);
     setReplyContext('');
     setScreen('analyzing');
@@ -176,11 +177,16 @@ export default function App() {
       const result = await analyzeScreenshot({ screenshotUri });
 
       setChatTranscript(result.transcriptText);
+      setDetectedMessages(result.ocr.detectedMessages);
       setVibeCheck(result.vibeCheck);
-      setOcrSource(result.ocr.source);
       setScreen('vibecheck');
-    } catch {
-      setAnalysisError('Wingr could not read that screenshot. Try another image.');
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Wingr could not read that screenshot. Try another image.';
+
+      setAnalysisError(message);
       Alert.alert('Could not read screenshot', 'Try another screenshot or upload again.');
       setScreen('upload');
     }
@@ -260,8 +266,8 @@ export default function App() {
       {screen === 'vibecheck' && vibeCheck ? (
         <VibeCheckScreen
           chatTranscript={chatTranscript}
+          detectedMessages={detectedMessages}
           extraContext={extraContext}
-          ocrSource={ocrSource}
           selectedScreenshotUri={selectedScreenshotUri}
           onBack={() => setScreen('upload')}
           isGeneratingReplies={isGeneratingReplies}
@@ -358,9 +364,9 @@ function AnalyzingScreen({ selectedScreenshotUri }: { selectedScreenshotUri: str
 
 function VibeCheckScreen({
   chatTranscript,
+  detectedMessages,
   extraContext,
   isGeneratingReplies,
-  ocrSource,
   selectedScreenshotUri,
   onBack,
   onExtraContextChange,
@@ -369,9 +375,9 @@ function VibeCheckScreen({
   vibeCheck,
 }: {
   chatTranscript: string;
+  detectedMessages: DetectedMessage[];
   extraContext: string;
   isGeneratingReplies: boolean;
-  ocrSource: 'backend' | 'mock' | null;
   selectedScreenshotUri: string | null;
   onBack: () => void;
   onExtraContextChange: (value: string) => void;
@@ -430,17 +436,10 @@ function VibeCheckScreen({
           </View>
         ) : null}
 
-        <View style={styles.transcriptCard}>
-          <View style={styles.transcriptHeader}>
-            <Text style={styles.transcriptLabel}>Parsed chat</Text>
-            <Text style={styles.transcriptSource}>
-              {ocrSource === 'backend' ? 'OCR' : 'Mock OCR'}
-            </Text>
-          </View>
-          <Text numberOfLines={5} style={styles.transcriptText}>
-            {chatTranscript || 'No transcript captured yet.'}
-          </Text>
-        </View>
+        <DetectedConversationCard
+          detectedMessages={detectedMessages}
+          transcriptText={chatTranscript}
+        />
 
         <View style={styles.vibeCard}>
           <Text style={styles.vibeCardTitle}>Vibe check</Text>
@@ -478,7 +477,7 @@ function VibeCheckScreen({
           <TextInput
             multiline
             onChangeText={onExtraContextChange}
-            placeholder="Anything Wingr should know? e.g. you want to keep it playful, you haven't replied in 2 days, or this is from Hinge."
+            placeholder="Anything about them or the situation? Use I/me/my for facts about you."
             placeholderTextColor="#9B9BA3"
             style={styles.contextInput}
             textAlignVertical="top"
@@ -506,6 +505,64 @@ function VibeCheckScreen({
       </ScrollView>
     </KeyboardAvoidingView>
   );
+}
+
+function DetectedConversationCard({
+  detectedMessages,
+  transcriptText,
+}: {
+  detectedMessages: DetectedMessage[];
+  transcriptText: string;
+}) {
+  const previewMessages =
+    detectedMessages.length > 0
+      ? detectedMessages
+      : transcriptText
+          .split('\n')
+          .filter(Boolean)
+          .map((text, index) => ({
+            id: `fallback-${index + 1}`,
+            sender: 'unknown' as const,
+            text,
+          }));
+
+  return (
+    <View style={styles.transcriptCard}>
+      <View style={styles.transcriptHeader}>
+        <Text style={styles.transcriptLabel}>Detected conversation</Text>
+        <Text style={styles.transcriptSource}>On-device OCR</Text>
+      </View>
+
+      <View style={styles.detectedMessagesList}>
+        {previewMessages.slice(0, 5).map((message) => (
+          <View key={message.id} style={styles.detectedMessageRow}>
+            <Text style={styles.detectedMessageSender}>
+              {getDetectedMessageSenderLabel(message)}
+            </Text>
+            <Text numberOfLines={2} style={styles.detectedMessageText}>
+              {message.text}
+            </Text>
+          </View>
+        ))}
+      </View>
+
+      {previewMessages.length > 5 ? (
+        <Text style={styles.detectedMessageMore}>+{previewMessages.length - 5} more lines</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function getDetectedMessageSenderLabel(message: DetectedMessage) {
+  if (message.sender === 'you') {
+    return 'You';
+  }
+
+  if (message.sender === 'them') {
+    return 'Them';
+  }
+
+  return message.confidence ? 'Unknown?' : 'Unknown';
 }
 
 function VibeMetric({
@@ -1080,7 +1137,7 @@ const styles = StyleSheet.create({
     borderColor: '#222229',
     borderRadius: 14,
     borderWidth: 1,
-    gap: 8,
+    gap: 10,
     padding: 12,
   },
   transcriptHeader: {
@@ -1096,6 +1153,34 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   transcriptSource: {
+    color: COLORS.muted,
+    fontFamily: FONTS.bodyRegular,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  detectedMessagesList: {
+    gap: 6,
+  },
+  detectedMessageRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  detectedMessageSender: {
+    color: COLORS.blue,
+    fontFamily: FONTS.body,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 17,
+    width: 56,
+  },
+  detectedMessageText: {
+    color: '#D8D8DD',
+    flex: 1,
+    fontFamily: FONTS.bodyRegular,
+    fontSize: 13,
+    lineHeight: 17,
+  },
+  detectedMessageMore: {
     color: COLORS.muted,
     fontFamily: FONTS.bodyRegular,
     fontSize: 12,

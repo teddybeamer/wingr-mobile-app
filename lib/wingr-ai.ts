@@ -1,3 +1,4 @@
+import { getContextNotes } from './context-notes';
 import { extractChatTextFromImage } from './wingr-ocr';
 import { hasWingrBackend, postJsonToWingrBackend } from './wingr-api';
 import type {
@@ -87,72 +88,24 @@ function normalizeVibeCheck(response: BackendAnalyzeResponse): VibeCheck {
 function getAnalyzePayload(transcriptText: string, extraContext?: string) {
   return {
     extraContext,
-    model: 'deepseek/deepseek-chat',
-    provider: 'openrouter',
-    responseFormat: {
-      schema: {
-        additionalProperties: false,
-        properties: {
-          bestTone: {
-            enum: ['direct', 'playful', 'casualSmallTalk'],
-            type: 'string',
-          },
-          conversationEnergy: { type: 'string' },
-          interestLevel: {
-            enum: ['Low', 'Medium', 'High', 'Unclear'],
-            type: 'string',
-          },
-          risk: { type: 'string' },
-          summary: { type: 'string' },
-        },
-        required: ['interestLevel', 'conversationEnergy', 'bestTone', 'risk', 'summary'],
-        type: 'object',
-      },
-      type: 'json_schema',
-    },
-    task: 'vibe_check',
     transcriptText,
   };
 }
 
 function getRepliesPayload({
+  contextNotes,
   extraContext,
   selectedTone,
   transcriptText,
   userStylePreference,
   vibeCheck,
 }: GenerateRepliesParams) {
+  const structuredContext = contextNotes ?? getContextNotes(extraContext);
+
   return {
+    contextNotes: structuredContext,
     extraContext,
-    model: 'deepseek/deepseek-chat',
-    provider: 'openrouter',
-    responseFormat: {
-      schema: {
-        additionalProperties: false,
-        properties: {
-          replies: {
-            items: {
-              additionalProperties: false,
-              properties: {
-                id: { type: 'string' },
-                text: { type: 'string' },
-                tone: { enum: ['sound_more_like_me', 'direct', 'playful', 'casualSmallTalk'], type: 'string' },
-              },
-              required: ['id', 'tone', 'text'],
-              type: 'object',
-            },
-            maxItems: 2,
-            minItems: 2,
-            type: 'array',
-          },
-        },
-        required: ['replies'],
-        type: 'object',
-      },
-      type: 'json_schema',
-    },
     selectedTone,
-    task: 'reply_generation',
     transcriptText,
     userStylePreference,
     vibeCheck,
@@ -175,7 +128,7 @@ export async function analyzeScreenshot({
 
   try {
     const response = await postJsonToWingrBackend<BackendAnalyzeResponse>(
-      '/ai/vibe-check',
+      '/ai-vibe-check',
       getAnalyzePayload(ocr.transcriptText, extraContext),
     );
 
@@ -203,8 +156,9 @@ export async function generateReplies({
   if (hasWingrBackend()) {
     try {
       const response = await postJsonToWingrBackend<BackendRepliesResponse>(
-        '/ai/replies',
+        '/ai-replies',
         getRepliesPayload({
+          contextNotes: getContextNotes(extraContext),
           extraContext,
           screenshotUri: null,
           selectedTone,

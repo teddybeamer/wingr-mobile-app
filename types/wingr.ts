@@ -33,9 +33,25 @@ export type UserStylePreference = {
   howTheyText: string;
 };
 
+export type ContextNotes = {
+  userFacts: string[];
+  themFacts: string[];
+  situationNotes: string[];
+  replyInstruction: string[];
+};
+
+export type DetectedMessage = {
+  id: string;
+  sender: 'you' | 'them' | 'unknown';
+  text: string;
+  confidence?: number;
+};
+
 export type OcrResult = {
   transcriptText: string;
-  source: 'backend' | 'mock';
+  detectedMessages: DetectedMessage[];
+  rawText?: string;
+  source: 'onDevice';
   confidence?: number;
 };
 
@@ -56,5 +72,6 @@ export type GenerateRepliesParams = {
   screenshotUri: string | null;
   transcriptText: string;
   extraContext?: string;
+  contextNotes?: ContextNotes;
   userStylePreference?: UserStylePreference;
 };
