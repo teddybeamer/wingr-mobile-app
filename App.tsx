@@ -10,7 +10,6 @@ import {
   ChatRound,
   Copy,
   EmojiFunnyCircle,
-  FaceScanSquare,
   FireMinimalistic,
   Heart,
   Refresh,
@@ -39,11 +38,11 @@ import {
 import { analyzeScreenshot, generateReplies } from './lib/wingr-ai';
 import type {
   DetectedMessage,
+  ReplyBatch,
   ReplyTone,
   RecommendedReplyTone,
   SuggestedReply,
   ToneOption,
-  UserStylePreference,
   VibeCheck,
 } from './types/wingr';
 
@@ -79,7 +78,6 @@ type Screen = 'upload' | 'analyzing' | 'vibecheck' | 'replies';
 type MetricVariant = 'interest' | 'energy' | 'risk' | 'move';
 
 const TONE_OPTIONS: ToneOption[] = [
-  { value: 'sound_more_like_me', label: 'Sound more like me', icon: FaceScanSquare },
   { value: 'playful', label: 'Playful', icon: EmojiFunnyCircle },
   { value: 'direct', label: 'Direct', icon: FireMinimalistic },
   { value: 'casualSmallTalk', label: 'Casual small talk', icon: Waterdrop },
@@ -87,6 +85,30 @@ const TONE_OPTIONS: ToneOption[] = [
 
 function getToneLabel(tone: ReplyTone | RecommendedReplyTone) {
   return TONE_OPTIONS.find((option) => option.value === tone)?.label ?? 'Playful';
+}
+
+function getUnusedReplies(replyBatch: ReplyBatch, tone: ReplyTone, shownReplyIds: string[]) {
+  const shownIds = new Set(shownReplyIds);
+
+  return (replyBatch[tone] ?? []).filter((reply) => !shownIds.has(reply.id));
+}
+
+function getVisibleRepliesForTone(replyBatch: ReplyBatch, tone: ReplyTone, shownReplyIds: string[]) {
+  return getUnusedReplies(replyBatch, tone, shownReplyIds).slice(0, 2);
+}
+
+function mergeReplyBatch(currentBatch: ReplyBatch, nextBatch: ReplyBatch) {
+  return {
+    ...currentBatch,
+    ...nextBatch,
+  };
+}
+
+function appendShownReplyIds(currentShownReplyIds: string[], replies: SuggestedReply[]) {
+  return [
+    ...currentShownReplyIds,
+    ...replies.map((reply) => reply.id).filter((replyId) => !currentShownReplyIds.includes(replyId)),
+  ];
 }
 
 const METRIC_VARIANTS: Record<
@@ -132,13 +154,12 @@ export default function App() {
   const [extraContext, setExtraContext] = useState('');
   const [replyContext, setReplyContext] = useState('');
   const [selectedTone, setSelectedTone] = useState<ReplyTone>('playful');
-  const [suggestedReplies, setSuggestedReplies] = useState<SuggestedReply[]>([]);
+  const [replyBatch, setReplyBatch] = useState<ReplyBatch>({});
+  const [visibleReplies, setVisibleReplies] = useState<SuggestedReply[]>([]);
+  const [shownReplyIds, setShownReplyIds] = useState<string[]>([]);
   const [vibeCheck, setVibeCheck] = useState<VibeCheck | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [isGeneratingReplies, setIsGeneratingReplies] = useState(false);
-  const [userStylePreference] = useState<UserStylePreference>({
-    howTheyText: 'short and casual',
-  });
   const [fontsLoaded] = useFonts({
     [FONTS.display]: require('./assets/fonts/ClashDisplay-Variable.ttf'),
     [FONTS.body]: require('./assets/fonts/ClashGrotesk-Variable.ttf'),
@@ -160,7 +181,6 @@ export default function App() {
       screenshotUri: selectedScreenshotUri,
       transcriptText: chatTranscript,
       extraContext: nextContext,
-      userStylePreference: tone === 'sound_more_like_me' ? userStylePreference : undefined,
     });
   };
 
@@ -169,15 +189,23 @@ export default function App() {
     setChatTranscript('');
     setDetectedMessages([]);
     setVibeCheck(null);
-    setSuggestedReplies([]);
+    setReplyBatch({});
+    setVisibleReplies([]);
+    setShownReplyIds([]);
     setReplyContext('');
     setScreen('analyzing');
 
     try {
       const result = await analyzeScreenshot({ screenshotUri });
+      const initialTone = result.vibeCheck.bestTone;
+      const initialVisibleReplies = getVisibleRepliesForTone(result.replyBatch, initialTone, []);
 
       setChatTranscript(result.transcriptText);
       setDetectedMessages(result.ocr.detectedMessages);
+      setReplyBatch(result.replyBatch);
+      setVisibleReplies(initialVisibleReplies);
+      setShownReplyIds(initialVisibleReplies.map((reply) => reply.id));
+      setSelectedTone(initialTone);
       setVibeCheck(result.vibeCheck);
       setScreen('vibecheck');
     } catch (error) {
@@ -225,27 +253,61 @@ export default function App() {
 
     const nextContext = extraContext.trim();
     const initialTone = vibeCheck.bestTone;
+
     setReplyContext(nextContext);
     setSelectedTone(initialTone);
+    setScreen('replies');
+  };
+
+  const handleToneChange = async (tone: ReplyTone) => {
+    setSelectedTone(tone);
+    const cachedReplies = getVisibleRepliesForTone(replyBatch, tone, shownReplyIds);
+
+    if (cachedReplies.length === 2) {
+      setVisibleReplies(cachedReplies);
+      setShownReplyIds((currentShownReplyIds) => appendShownReplyIds(currentShownReplyIds, cachedReplies));
+      return;
+    }
+
     setIsGeneratingReplies(true);
 
     try {
-      const replies = await generateRepliesForTone(initialTone, nextContext);
+      const nextReplyBatch = await generateRepliesForTone(tone, replyContext);
+      const nextVisibleReplies = (nextReplyBatch[tone] ?? []).slice(0, 2);
 
-      setSuggestedReplies(replies);
-      setScreen('replies');
-    } catch {
-      Alert.alert('Could not generate replies', 'Try again in a moment.');
+      setReplyBatch((currentReplyBatch) => mergeReplyBatch(currentReplyBatch, nextReplyBatch));
+      setVisibleReplies(nextVisibleReplies);
+      setShownReplyIds((currentShownReplyIds) =>
+        appendShownReplyIds(currentShownReplyIds, nextVisibleReplies),
+      );
     } finally {
       setIsGeneratingReplies(false);
     }
   };
 
-  const handleToneChange = async (tone: ReplyTone) => {
-    setSelectedTone(tone);
+  const handleRefreshReplies = async () => {
+    const cachedReplies = getVisibleRepliesForTone(replyBatch, selectedTone, shownReplyIds);
 
-    const nextReplies = await generateRepliesForTone(tone, replyContext);
-    setSuggestedReplies(nextReplies);
+    if (cachedReplies.length === 2) {
+      setVisibleReplies(cachedReplies);
+      setShownReplyIds((currentShownReplyIds) => appendShownReplyIds(currentShownReplyIds, cachedReplies));
+      return;
+    }
+
+    setIsGeneratingReplies(true);
+
+    try {
+      const nextReplyBatch = await generateRepliesForTone(selectedTone, replyContext);
+      const nextVisibleReplies = (nextReplyBatch[selectedTone] ?? []).slice(0, 2);
+
+      setReplyBatch((currentReplyBatch) => mergeReplyBatch(currentReplyBatch, nextReplyBatch));
+      setVisibleReplies(nextVisibleReplies);
+      setShownReplyIds((currentShownReplyIds) =>
+        appendShownReplyIds(currentShownReplyIds, nextVisibleReplies),
+      );
+    } finally {
+      setIsGeneratingReplies(false);
+    }
   };
 
   return (
@@ -280,17 +342,12 @@ export default function App() {
 
       {screen === 'replies' && vibeCheck ? (
         <RepliesScreen
-          chatTranscript={chatTranscript}
-          extraContext={replyContext}
           isGeneratingReplies={isGeneratingReplies}
           onBack={() => setScreen('vibecheck')}
-          onRepliesChange={setSuggestedReplies}
+          onRefreshReplies={handleRefreshReplies}
           onToneChange={handleToneChange}
-          replies={suggestedReplies}
-          screenshotUri={selectedScreenshotUri}
+          replies={visibleReplies}
           selectedTone={selectedTone}
-          userStylePreference={userStylePreference}
-          vibeCheck={vibeCheck}
         />
       ) : null}
     </SafeAreaView>
@@ -663,28 +720,19 @@ function GlowIconContainer({
 }
 
 function RepliesScreen({
-  chatTranscript,
-  extraContext,
+  isGeneratingReplies,
   onBack,
-  onRepliesChange,
+  onRefreshReplies,
   onToneChange,
   replies,
-  screenshotUri,
   selectedTone,
-  userStylePreference,
-  vibeCheck,
 }: {
-  chatTranscript: string;
-  extraContext: string;
   isGeneratingReplies: boolean;
   onBack: () => void;
-  onRepliesChange: (replies: SuggestedReply[]) => void;
+  onRefreshReplies: () => Promise<void>;
   onToneChange: (tone: ReplyTone) => Promise<void>;
   replies: SuggestedReply[];
-  screenshotUri: string | null;
   selectedTone: ReplyTone;
-  userStylePreference: UserStylePreference;
-  vibeCheck: VibeCheck;
 }) {
   const [isToneSheetOpen, setIsToneSheetOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -703,17 +751,7 @@ function RepliesScreen({
     setIsRefreshing(true);
 
     try {
-      const nextReplies = await generateReplies({
-        vibeCheck,
-        selectedTone,
-        screenshotUri,
-        transcriptText: chatTranscript,
-        extraContext,
-        userStylePreference:
-          selectedTone === 'sound_more_like_me' ? userStylePreference : undefined,
-      });
-
-      onRepliesChange(nextReplies);
+      await onRefreshReplies();
       setCopiedReplyId(null);
     } catch {
       Alert.alert('Could not refresh replies', 'Try again in a moment.');
@@ -771,15 +809,15 @@ function RepliesScreen({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Get new replies"
-          disabled={isRefreshing}
+          disabled={isRefreshing || isGeneratingReplies}
           onPress={handleRegenerateReplies}
           style={({ pressed }) => [
             styles.newRepliesButton,
             pressed && styles.uploadButtonPressed,
-            isRefreshing && styles.disabledButton,
+            (isRefreshing || isGeneratingReplies) && styles.disabledButton,
           ]}
         >
-          {isRefreshing ? (
+          {isRefreshing || isGeneratingReplies ? (
             <ActivityIndicator color={COLORS.white} />
           ) : (
             <>

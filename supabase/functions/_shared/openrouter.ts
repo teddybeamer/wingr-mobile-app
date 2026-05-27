@@ -4,7 +4,7 @@ const OPENROUTER_MODEL = Deno.env.get('OPENROUTER_MODEL') ?? 'deepseek/deepseek-
 type OpenRouterSchema = {
   type: 'object';
   properties: Record<string, unknown>;
-  required: string[];
+  required: readonly string[];
   additionalProperties?: boolean;
 };
 

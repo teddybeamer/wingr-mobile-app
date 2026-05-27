@@ -1,5 +1,13 @@
 import { getContextNotes } from './context-notes.ts';
-import type { ContextNotes, RepliesRequest, SuggestedReply, VibeCheck, VibeCheckRequest } from './types.ts';
+import type {
+  ContextNotes,
+  ReplyBatch,
+  RepliesRequest,
+  ReplyTone,
+  SuggestedReply,
+  VibeCheck,
+  VibeCheckRequest,
+} from './types.ts';
 
 export const vibeCheckSchema = {
   additionalProperties: false,
@@ -24,36 +32,57 @@ export const vibeCheckSchema = {
       description: 'A concise, user-friendly summary of the vibe.',
       type: 'string',
     },
+    targetLanguage: {
+      description:
+        'The dominant natural language of the actual chat messages, written as an English language name such as Danish, Spanish, French, German, or English.',
+      type: 'string',
+    },
   },
-  required: ['interestLevel', 'conversationEnergy', 'bestTone', 'risk', 'summary'],
+  required: ['interestLevel', 'conversationEnergy', 'bestTone', 'risk', 'summary', 'targetLanguage'],
   type: 'object',
 } as const;
 
-export const repliesSchema = {
+const replyItemSchema = {
   additionalProperties: false,
   properties: {
-    replies: {
-      items: {
-        additionalProperties: false,
-        properties: {
-          id: { type: 'string' },
-          text: { type: 'string' },
-          tone: {
-            enum: ['sound_more_like_me', 'direct', 'playful', 'casualSmallTalk'],
-            type: 'string',
-          },
-        },
-        required: ['id', 'tone', 'text'],
-        type: 'object',
-      },
-      maxItems: 2,
-      minItems: 2,
-      type: 'array',
+    id: { type: 'string' },
+    text: { type: 'string' },
+    tone: {
+      enum: ['direct', 'playful', 'casualSmallTalk'],
+      type: 'string',
     },
   },
-  required: ['replies'],
+  required: ['id', 'tone', 'text'],
   type: 'object',
 } as const;
+
+export function createReplyBatchSchema(selectedTones: ReplyTone[]) {
+  const properties = Object.fromEntries(
+    selectedTones.map((tone) => [
+      tone,
+      {
+        items: replyItemSchema,
+        maxItems: 2,
+        minItems: 2,
+        type: 'array',
+      },
+    ]),
+  );
+
+  return {
+    additionalProperties: false,
+    properties: {
+      replyBatch: {
+        additionalProperties: false,
+        properties,
+        required: selectedTones,
+        type: 'object',
+      },
+    },
+    required: ['replyBatch'],
+    type: 'object',
+  } as const;
+}
 
 export function buildVibeCheckPrompt({ extraContext, transcriptText }: VibeCheckRequest) {
   return [
@@ -61,6 +90,7 @@ export function buildVibeCheckPrompt({ extraContext, transcriptText }: VibeCheck
     'Return a vibe check for the user deciding how to reply next.',
     'Rules:',
     '- bestTone must be exactly one of: direct, playful, casualSmallTalk',
+    '- targetLanguage must be the dominant natural language of the actual chat messages, ignoring speaker labels like You/Them/Unknown and app UI text.',
     '- Focus on the emotional dynamics of the transcript, not generic dating advice.',
     '- Keep conversationEnergy, risk, and summary concise and readable in a mobile UI.',
     extraContext ? `Extra context: ${extraContext}` : '',
@@ -79,24 +109,54 @@ export function buildRepliesPrompt({
   userStylePreference,
   vibeCheck,
 }: RepliesRequest) {
+  return buildReplyBatchPrompt(
+    {
+      contextNotes,
+      extraContext,
+      selectedTone,
+      transcriptText,
+      userStylePreference,
+      vibeCheck,
+    },
+    [selectedTone],
+  );
+}
+
+export function buildReplyBatchPrompt(
+  {
+    contextNotes,
+    extraContext,
+    selectedTone,
+    transcriptText,
+    userStylePreference,
+    vibeCheck,
+  }: RepliesRequest,
+  selectedTones: ReplyTone[],
+) {
   const notes = normalizeContextNotes(contextNotes ?? getContextNotes(extraContext));
+  const targetLanguage = normalizeTargetLanguage(vibeCheck.targetLanguage);
+  const languageInstruction = getReplyLanguageInstruction(transcriptText, targetLanguage);
+  const toneInstructions = selectedTones.map((tone) => `- ${tone}: generate exactly 2 distinct replies`).join('\n');
 
   return [
-    'Generate exactly two reply suggestions for the user in this dating chat.',
-    `Selected tone: ${selectedTone}`,
-    userStylePreference?.howTheyText
-      ? `Saved user style preference: ${userStylePreference.howTheyText}`
-      : '',
+    'Generate a batch of reply suggestions for the user in this dating chat.',
+    languageInstruction,
+    `Requested tones: ${selectedTones.join(', ')}`,
+    userStylePreference?.howTheyText ? `Saved user style preference: ${userStylePreference.howTheyText}` : '',
     `Vibe check summary: ${vibeCheck.summary}`,
     `Interest level: ${vibeCheck.interestLevel}`,
     `Conversation energy: ${vibeCheck.conversationEnergy}`,
     `Risk to avoid: ${vibeCheck.risk}`,
     formatContextNotes(notes),
     'Rules:',
-    '- Return exactly two replies.',
-    '- Keep each reply flirty, concise, and realistic to send.',
+    '- Return one replyBatch object with the requested tones as keys.',
+    `- Every reply must be written in ${targetLanguage}. This is a hard requirement for every tone.`,
+    '- Tone names, saved style preferences, vibe check text, and system labels may be English; do not use those as the reply language.',
+    '- Do not translate the conversation into English unless the transcript itself is primarily English.',
+    '- Keep each reply concise, realistic to send, and distinct from the others in the same tone.',
     '- Avoid over-investing.',
-    '- The tone field on each reply must match the selected tone.',
+    '- The tone field on each reply must match its tone bucket exactly.',
+    toneInstructions,
     '- Context ownership is strict: userFacts are about the user; themFacts are about the other person.',
     '- Do not claim the user likes, feels, has done, or has experienced anything unless it appears in userFacts or the transcript.',
     '- If a themFact is useful, reference it as something relevant to the other person, not as the user owning that fact.',
@@ -105,15 +165,56 @@ export function buildRepliesPrompt({
     '- If themFacts mention dogs or pets, do not write "my dog", "my pup", "my furry roommate", or "I love dogs too" unless userFacts or the user transcript explicitly says that.',
     '- A safe dog mention is a casual question like "Important question: best dog you have ever met?"',
     '- Treat ambiguous extra context as about the other person, the conversation, or the situation.',
-    notes.replyInstruction.length > 0
-      ? '- Follow replyInstruction while preserving fact ownership.'
-      : '',
-    selectedTone === 'sound_more_like_me' && userStylePreference?.howTheyText
-      ? '- Lean into the saved user style without sounding robotic.'
-      : '',
+    notes.replyInstruction.length > 0 ? '- Follow replyInstruction while preserving fact ownership.' : '',
     'Transcript:',
     transcriptText,
   ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function buildReplyLanguageRepairPrompt(
+  request: RepliesRequest,
+  previousReplies: SuggestedReply[],
+  selectedTones: ReplyTone[],
+) {
+  const targetLanguage = normalizeTargetLanguage(request.vibeCheck.targetLanguage);
+
+  return [
+    buildReplyBatchPrompt(request, selectedTones),
+    '',
+    'Language repair:',
+    `- The previous attempt did not follow the language requirement. Rewrite exactly two replies in ${targetLanguage}.`,
+    '- Do not write any English words unless they are names, app names, game names, or quoted terms already present in the transcript.',
+    '- Preserve the selected tone and all ownership rules.',
+    'Previous invalid replies:',
+    previousReplies.map((reply) => `- ${reply.text}`).join('\n'),
+  ].join('\n');
+}
+
+function normalizeTargetLanguage(targetLanguage?: string) {
+  const normalized = targetLanguage?.trim();
+
+  return normalized || 'the same language as the transcript';
+}
+
+function getReplyLanguageInstruction(transcriptText: string, targetLanguage: string) {
+  return [
+    'Reply language:',
+    `- Target reply language: ${targetLanguage}.`,
+    '- Infer the dominant natural language from the actual chat messages in Transcript, ignoring speaker labels like You/Them/Unknown.',
+    `- Write both suggested replies in ${targetLanguage}, using the same script and a natural casual texting register.`,
+    '- If the conversation is mixed-language, use the language of the latest real message from Them. If that is unclear, use the language of the latest real message from You.',
+    '- Examples: Danish transcript -> Danish replies; Spanish transcript -> Spanish replies; French transcript -> French replies.',
+    '- Keep names, app names, games, slang, and quoted words as they naturally appear in the conversation.',
+    `Transcript language source text:\n${stripSpeakerLabels(transcriptText)}`,
+  ].join('\n');
+}
+
+function stripSpeakerLabels(transcriptText: string) {
+  return transcriptText
+    .split('\n')
+    .map((line) => line.replace(/^\s*(You|Them|Unknown)\s*:\s*/i, '').trim())
     .filter(Boolean)
     .join('\n');
 }
@@ -162,15 +263,12 @@ export function getMockVibeCheck(): VibeCheck {
     risk: "Don't over invest",
     summary:
       "There's still interest here, but the next message should add energy without chasing.",
+    targetLanguage: 'English',
   };
 }
 
 export function getMockReplies(selectedTone: RepliesRequest['selectedTone']): SuggestedReply[] {
   const map: Record<RepliesRequest['selectedTone'], [string, string]> = {
-    sound_more_like_me: [
-      "Haha okay, I'll give you that one. What are you actually up to today?",
-      "Okay, fair. I'll allow it, but only because the energy is improving.",
-    ],
     playful: [
       "Damn... You're slowly becoming my favorite notification",
       "Haha okay, I'll take that. What are you actually up to today?",
@@ -190,4 +288,8 @@ export function getMockReplies(selectedTone: RepliesRequest['selectedTone']): Su
     text,
     tone: selectedTone,
   }));
+}
+
+export function getMockReplyBatch(selectedTones: ReplyTone[]): ReplyBatch {
+  return Object.fromEntries(selectedTones.map((tone) => [tone, getMockReplies(tone)]));
 }

@@ -1,7 +1,6 @@
 import type { Icon as SolarIcon } from '@solar-icons/react-native/lib/index';
 
 export type ReplyTone =
-  | 'sound_more_like_me'
   | 'playful'
   | 'direct'
   | 'casualSmallTalk';
@@ -20,6 +19,7 @@ export type VibeCheck = {
   bestTone: RecommendedReplyTone;
   risk: string;
   summary: string;
+  targetLanguage?: string;
 };
 
 export type SuggestedReply = {
@@ -28,6 +28,8 @@ export type SuggestedReply = {
   text: string;
   whyItWorks?: string;
 };
+
+export type ReplyBatch = Partial<Record<ReplyTone, SuggestedReply[]>>;
 
 export type UserStylePreference = {
   howTheyText: string;
@@ -63,6 +65,7 @@ export type AnalyzeScreenshotParams = {
 export type AnalyzeScreenshotResult = {
   transcriptText: string;
   vibeCheck: VibeCheck;
+  replyBatch: ReplyBatch;
   ocr: OcrResult;
 };
 

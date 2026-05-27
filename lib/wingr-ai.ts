@@ -6,16 +6,13 @@ import type {
   AnalyzeScreenshotResult,
   GenerateRepliesParams,
   RecommendedReplyTone,
+  ReplyBatch,
   ReplyTone,
   SuggestedReply,
   VibeCheck,
 } from '../types/wingr';
 
 const REPLIES_BY_TONE: Record<ReplyTone, [string, string]> = {
-  sound_more_like_me: [
-    "Haha okay, I'll give you that one. What are you actually up to today?",
-    "Okay, fair. I'll allow it, but only because the energy is improving.",
-  ],
   playful: [
     "Damn... You're slowly becoming my favorite notification",
     "Haha okay, I'll take that. What are you actually up to today?",
@@ -31,7 +28,6 @@ const REPLIES_BY_TONE: Record<ReplyTone, [string, string]> = {
 };
 
 const WHY_BY_TONE: Record<ReplyTone, string> = {
-  sound_more_like_me: 'Uses your saved texting style without adding extra pressure.',
   playful: "Playful, but doesn't over-invest.",
   direct: 'Clear and confident without chasing.',
   casualSmallTalk: 'Easy to answer and keeps the conversation moving.',
@@ -44,21 +40,24 @@ const MOCK_VIBE_CHECK: VibeCheck = {
   risk: "Don't over invest",
   summary:
     "Wingr read the vibe. There's still interest here, but the next message needs to add energy without chasing.",
+  targetLanguage: 'English',
 };
 
 const RECOMMENDED_TONES: RecommendedReplyTone[] = ['direct', 'playful', 'casualSmallTalk'];
 
 type BackendAnalyzeResponse = {
   vibeCheck?: VibeCheck;
+  replyBatch?: ReplyBatch;
   interestLevel?: VibeCheck['interestLevel'];
   conversationEnergy?: string;
   bestTone?: string;
   risk?: string;
   summary?: string;
+  targetLanguage?: string;
 };
 
 type BackendRepliesResponse = {
-  replies?: SuggestedReply[];
+  replyBatch?: ReplyBatch;
 };
 
 function normalizeBestTone(tone: unknown): RecommendedReplyTone {
@@ -82,6 +81,7 @@ function normalizeVibeCheck(response: BackendAnalyzeResponse): VibeCheck {
     bestTone: normalizeBestTone(candidate.bestTone),
     risk: candidate.risk ?? MOCK_VIBE_CHECK.risk,
     summary: candidate.summary ?? MOCK_VIBE_CHECK.summary,
+    targetLanguage: candidate.targetLanguage ?? MOCK_VIBE_CHECK.targetLanguage,
   };
 }
 
@@ -112,6 +112,37 @@ function getRepliesPayload({
   };
 }
 
+function normalizeReplyBatch(replyBatch?: ReplyBatch): ReplyBatch {
+  return {
+    casualSmallTalk: replyBatch?.casualSmallTalk?.slice(0, 2),
+    direct: replyBatch?.direct?.slice(0, 2),
+    playful: replyBatch?.playful?.slice(0, 2),
+  };
+}
+
+function getMockReplyBatch(): ReplyBatch {
+  return {
+    casualSmallTalk: REPLIES_BY_TONE.casualSmallTalk.map((text, index) => ({
+      id: `casualSmallTalk-${index + 1}`,
+      text,
+      tone: 'casualSmallTalk',
+      whyItWorks: WHY_BY_TONE.casualSmallTalk,
+    })),
+    direct: REPLIES_BY_TONE.direct.map((text, index) => ({
+      id: `direct-${index + 1}`,
+      text,
+      tone: 'direct',
+      whyItWorks: WHY_BY_TONE.direct,
+    })),
+    playful: REPLIES_BY_TONE.playful.map((text, index) => ({
+      id: `playful-${index + 1}`,
+      text,
+      tone: 'playful',
+      whyItWorks: WHY_BY_TONE.playful,
+    })),
+  };
+}
+
 export async function analyzeScreenshot({
   extraContext,
   screenshotUri,
@@ -121,6 +152,7 @@ export async function analyzeScreenshot({
   if (!hasWingrBackend()) {
     return {
       ocr,
+      replyBatch: getMockReplyBatch(),
       transcriptText: ocr.transcriptText,
       vibeCheck: MOCK_VIBE_CHECK,
     };
@@ -134,12 +166,14 @@ export async function analyzeScreenshot({
 
     return {
       ocr,
+      replyBatch: normalizeReplyBatch(response.replyBatch),
       transcriptText: ocr.transcriptText,
       vibeCheck: normalizeVibeCheck(response),
     };
   } catch {
     return {
       ocr,
+      replyBatch: getMockReplyBatch(),
       transcriptText: ocr.transcriptText,
       vibeCheck: MOCK_VIBE_CHECK,
     };
@@ -152,44 +186,30 @@ export async function generateReplies({
   transcriptText,
   userStylePreference,
   vibeCheck,
-}: GenerateRepliesParams): Promise<SuggestedReply[]> {
+}: GenerateRepliesParams): Promise<ReplyBatch> {
   if (hasWingrBackend()) {
-    try {
-      const response = await postJsonToWingrBackend<BackendRepliesResponse>(
-        '/ai-replies',
-        getRepliesPayload({
-          contextNotes: getContextNotes(extraContext),
-          extraContext,
-          screenshotUri: null,
-          selectedTone,
-          transcriptText,
-          userStylePreference,
-          vibeCheck,
-        }),
-      );
+    const response = await postJsonToWingrBackend<BackendRepliesResponse>(
+      '/ai-replies',
+      getRepliesPayload({
+        contextNotes: getContextNotes(extraContext),
+        extraContext,
+        screenshotUri: null,
+        selectedTone,
+        transcriptText,
+        userStylePreference,
+        vibeCheck,
+      }),
+    );
 
-      if (response.replies?.length === 2) {
-        return response.replies.map((reply, index) => ({
-          id: reply.id || `${selectedTone}-${index + 1}`,
-          text: reply.text,
-          tone: reply.tone,
-        }));
-      }
-    } catch {
-      // Fall through to mock replies so the MVP remains usable while the backend is wired.
-    }
+    return normalizeReplyBatch(response.replyBatch);
   }
 
-  const replies = REPLIES_BY_TONE[selectedTone];
-  const styleHint =
-    selectedTone === 'sound_more_like_me' && userStylePreference?.howTheyText
-      ? ` Sounds like you: ${userStylePreference.howTheyText}.`
-      : '';
-
-  return replies.map((text, index) => ({
-    id: `${selectedTone}-${index + 1}-${Date.now()}`,
-    tone: selectedTone,
-    text,
-    whyItWorks: `${WHY_BY_TONE[selectedTone]}${styleHint}`,
-  }));
+  return normalizeReplyBatch({
+    [selectedTone]: REPLIES_BY_TONE[selectedTone].map((text, index) => ({
+      id: `${selectedTone}-${index + 1}-${Date.now()}`,
+      text,
+      tone: selectedTone,
+      whyItWorks: WHY_BY_TONE[selectedTone],
+    })),
+  });
 }
