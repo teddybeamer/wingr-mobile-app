@@ -17,8 +17,14 @@ export const vibeCheckSchema = {
       type: 'string',
     },
     conversationEnergy: {
-      description: 'Short description of the current texting energy.',
+      description:
+        'A short, human-readable explanation of what seems to be happening in the chat. Avoid labels, parsing terms, confidence scores, OCR language, or speaker-debug language.',
       type: 'string',
+    },
+    contextWouldImproveReplyQuality: {
+      description:
+        'True only when the transcript is clearly too short, ambiguous, or missing necessary context for a good reply.',
+      type: 'boolean',
     },
     interestLevel: {
       enum: ['Low', 'Medium', 'High', 'Unclear'],
@@ -37,8 +43,23 @@ export const vibeCheckSchema = {
         'The dominant natural language of the actual chat messages, written as an English language name such as Danish, Spanish, French, German, or English.',
       type: 'string',
     },
+    vibeConfidence: {
+      description:
+        'How confident the model is that it understands the social situation from the transcript.',
+      enum: ['low', 'medium', 'high'],
+      type: 'string',
+    },
   },
-  required: ['interestLevel', 'conversationEnergy', 'bestTone', 'risk', 'summary', 'targetLanguage'],
+  required: [
+    'interestLevel',
+    'conversationEnergy',
+    'bestTone',
+    'risk',
+    'summary',
+    'targetLanguage',
+    'vibeConfidence',
+    'contextWouldImproveReplyQuality',
+  ],
   type: 'object',
 } as const;
 
@@ -86,13 +107,16 @@ export function createReplyBatchSchema(selectedTones: ReplyTone[]) {
 
 export function buildVibeCheckPrompt({ extraContext, transcriptText }: VibeCheckRequest) {
   return [
-    'Analyze this dating chat transcript for Wingr.',
-    'Return a vibe check for the user deciding how to reply next.',
+    'Analyze this dating chat for Wingr and return concise JSON.',
     'Rules:',
     '- bestTone must be exactly one of: direct, playful, casualSmallTalk',
-    '- targetLanguage must be the dominant natural language of the actual chat messages, ignoring speaker labels like You/Them/Unknown and app UI text.',
-    '- Focus on the emotional dynamics of the transcript, not generic dating advice.',
-    '- Keep conversationEnergy, risk, and summary concise and readable in a mobile UI.',
+    '- targetLanguage is the dominant chat language, ignoring speaker labels.',
+    '- Focus on social dynamics and the next-reply strategy.',
+    '- conversationEnergy must explain what is happening, not just label the chat.',
+    '- Avoid debug terms like OCR, confidence score, parsed, or Speaker A.',
+    '- vibeConfidence is low only when the transcript is short, ambiguous, or missing key context.',
+    '- contextWouldImproveReplyQuality is true only when context is likely necessary.',
+    '- Keep every field short and mobile-friendly.',
     extraContext ? `Extra context: ${extraContext}` : '',
     'Transcript:',
     transcriptText,
@@ -258,12 +282,14 @@ function formatNoteSection(label: string, items: string[]) {
 export function getMockVibeCheck(): VibeCheck {
   return {
     interestLevel: 'Medium',
-    conversationEnergy: 'Dry but recoverable',
+    conversationEnergy: "They're keeping it short, but there's still room to play.",
     bestTone: 'playful',
     risk: "Don't over invest",
     summary:
       "There's still interest here, but the next message should add energy without chasing.",
     targetLanguage: 'English',
+    vibeConfidence: 'medium',
+    contextWouldImproveReplyQuality: false,
   };
 }
 

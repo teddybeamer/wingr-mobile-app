@@ -12,6 +12,8 @@ export type VibeCheck = {
   risk: string;
   summary: string;
   targetLanguage?: string;
+  vibeConfidence?: 'low' | 'medium' | 'high';
+  contextWouldImproveReplyQuality?: boolean;
 };
 
 export type SuggestedReply = {

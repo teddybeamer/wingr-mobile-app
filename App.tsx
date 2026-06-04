@@ -1,10 +1,14 @@
+import './global.css';
+
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   AltArrowDown,
+  ArrowLeft,
+  ArrowRight,
   Bolt,
   CheckCircle,
   ChatRound,
@@ -23,7 +27,6 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  ImageBackground,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -32,12 +35,17 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
+  TouchableOpacity,
   View,
 } from 'react-native';
-import { analyzeScreenshot, generateReplies } from './lib/wingr-ai';
+import {
+  buildProvisionalVibeCheck,
+  extractScreenshotConversation,
+  generateReplies,
+  refineVibeCheck,
+} from './lib/wingr-ai';
 import type {
-  DetectedMessage,
+  OcrResult,
   ReplyBatch,
   ReplyTone,
   RecommendedReplyTone,
@@ -46,8 +54,6 @@ import type {
   VibeCheck,
 } from './types/wingr';
 
-const heroImage = require('./assets/images/screen1-screenshotupload.png');
-
 const FONTS = {
   display: 'ClashDisplay',
   body: 'ClashGrotesk',
@@ -55,7 +61,7 @@ const FONTS = {
 };
 
 const COLORS = {
-  background: '#050505',
+  background: '#080808',
   blue: '#1970FD',
   white: '#F6F7FB',
   muted: '#B7B7BE',
@@ -74,8 +80,9 @@ const COLORS = {
   indigo800: '#3730A3',
 };
 
-type Screen = 'upload' | 'analyzing' | 'vibecheck' | 'replies';
+type Screen = 'landing' | 'upload' | 'analyzing' | 'vibecheck' | 'replies';
 type MetricVariant = 'interest' | 'energy' | 'risk' | 'move';
+type VibeCheckStatus = 'idle' | 'provisional' | 'refining' | 'ready' | 'fallback';
 
 const TONE_OPTIONS: ToneOption[] = [
   { value: 'playful', label: 'Playful', icon: EmojiFunnyCircle },
@@ -109,6 +116,38 @@ function appendShownReplyIds(currentShownReplyIds: string[], replies: SuggestedR
     ...currentShownReplyIds,
     ...replies.map((reply) => reply.id).filter((replyId) => !currentShownReplyIds.includes(replyId)),
   ];
+}
+
+function getConversationEnergyCopy(vibeCheck: VibeCheck) {
+  const rawEnergy = vibeCheck.conversationEnergy.trim();
+  const lowerEnergy = rawEnergy.toLowerCase();
+  const debugTerms = ['detected', 'speaker', 'ocr', 'confidence', 'parsed'];
+  const looksLikeInternalOutput = debugTerms.some((term) => lowerEnergy.includes(term));
+  const hasSituationLanguage =
+    rawEnergy.length >= 55 &&
+    /\b(they|their|chat|conversation|reply|message|interest|momentum|move|room)\b/i.test(rawEnergy);
+
+  if (hasSituationLanguage && !looksLikeInternalOutput) {
+    return rawEnergy;
+  }
+
+  if (lowerEnergy.includes('dry') || lowerEnergy.includes('short') || lowerEnergy.includes('low')) {
+    return "They're keeping it short, but there's still room to play.";
+  }
+
+  if (lowerEnergy.includes('playful') || lowerEnergy.includes('light')) {
+    return 'The conversation is light and playful, but it needs a more confident next move.';
+  }
+
+  if (lowerEnergy.includes('high') || lowerEnergy.includes('warm')) {
+    return 'There is good energy here, so keep momentum with a clear next move.';
+  }
+
+  if (vibeCheck.interestLevel === 'Unclear') {
+    return 'There is some signal here, but the next reply should make the vibe easier to read.';
+  }
+
+  return "There's some interest here, but the chat needs a sharper reply to keep momentum.";
 }
 
 const METRIC_VARIANTS: Record<
@@ -147,10 +186,9 @@ const METRIC_VARIANTS: Record<
 };
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('upload');
+  const [screen, setScreen] = useState<Screen>('landing');
   const [selectedScreenshotUri, setSelectedScreenshotUri] = useState<string | null>(null);
   const [chatTranscript, setChatTranscript] = useState('');
-  const [detectedMessages, setDetectedMessages] = useState<DetectedMessage[]>([]);
   const [extraContext, setExtraContext] = useState('');
   const [replyContext, setReplyContext] = useState('');
   const [selectedTone, setSelectedTone] = useState<ReplyTone>('playful');
@@ -158,25 +196,28 @@ export default function App() {
   const [visibleReplies, setVisibleReplies] = useState<SuggestedReply[]>([]);
   const [shownReplyIds, setShownReplyIds] = useState<string[]>([]);
   const [vibeCheck, setVibeCheck] = useState<VibeCheck | null>(null);
+  const [vibeCheckStatus, setVibeCheckStatus] = useState<VibeCheckStatus>('idle');
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [isGeneratingReplies, setIsGeneratingReplies] = useState(false);
+  const analysisRequestIdRef = useRef(0);
+  const vibeCheckRefinementPromiseRef = useRef<Promise<VibeCheck> | null>(null);
   const [fontsLoaded] = useFonts({
     [FONTS.display]: require('./assets/fonts/ClashDisplay-Variable.ttf'),
     [FONTS.body]: require('./assets/fonts/ClashGrotesk-Variable.ttf'),
     [FONTS.bodyRegular]: require('./assets/fonts/ClashGrotesk-Regular.ttf'),
   });
 
-  if (!fontsLoaded) {
-    return <View style={styles.loadingScreen} />;
-  }
-
-  const generateRepliesForTone = async (tone: ReplyTone, nextContext: string) => {
-    if (!vibeCheck || !chatTranscript) {
+  const generateRepliesForTone = async (
+    tone: ReplyTone,
+    nextContext: string,
+    nextVibeCheck = vibeCheck,
+  ) => {
+    if (!nextVibeCheck || !chatTranscript) {
       throw new Error('Vibe check is not ready yet.');
     }
 
     return generateReplies({
-      vibeCheck,
+      vibeCheck: nextVibeCheck,
       selectedTone: tone,
       screenshotUri: selectedScreenshotUri,
       transcriptText: chatTranscript,
@@ -184,11 +225,82 @@ export default function App() {
     });
   };
 
-  const handleAnalyzeScreenshot = async (screenshotUri: string) => {
+  if (!fontsLoaded) {
+    return <View style={styles.loadingScreen} />;
+  }
+
+  const applyConversationResult = (ocr: OcrResult, nextVibeCheck: VibeCheck) => {
+    setChatTranscript(ocr.transcriptText);
+    setReplyBatch({});
+    setVisibleReplies([]);
+    setShownReplyIds([]);
+    setSelectedTone(nextVibeCheck.bestTone);
+    setVibeCheck(nextVibeCheck);
+  };
+
+  const startVibeCheckRefinement = ({
+    fallbackVibeCheck,
+    nextExtraContext,
+    requestId,
+    transcriptText,
+  }: {
+    fallbackVibeCheck: VibeCheck;
+    nextExtraContext: string;
+    requestId: number;
+    transcriptText: string;
+  }) => {
+    const refinementPromise = refineVibeCheck({
+      extraContext: nextExtraContext || undefined,
+      fallbackVibeCheck,
+      transcriptText,
+    }).then((refinedVibeCheck) => {
+      if (analysisRequestIdRef.current !== requestId) {
+        return refinedVibeCheck;
+      }
+
+      const usedFallback = refinedVibeCheck === fallbackVibeCheck;
+
+      setVibeCheck(refinedVibeCheck);
+      setSelectedTone(refinedVibeCheck.bestTone);
+      setReplyBatch({});
+      setVisibleReplies([]);
+      setShownReplyIds([]);
+      setVibeCheckStatus(usedFallback ? 'fallback' : 'ready');
+      console.info('[Wingr timing] vibe-check-result', {
+        result: usedFallback ? 'fallback' : 'refined',
+      });
+
+      return refinedVibeCheck;
+    });
+
+    vibeCheckRefinementPromiseRef.current = refinementPromise;
+    setVibeCheckStatus('refining');
+
+    return refinementPromise;
+  };
+
+  const getReplyVibeCheck = async () => {
+    if (vibeCheckStatus === 'refining' && vibeCheckRefinementPromiseRef.current) {
+      return vibeCheckRefinementPromiseRef.current;
+    }
+
+    if (!vibeCheck) {
+      throw new Error('Vibe check is not ready yet.');
+    }
+
+    return vibeCheck;
+  };
+
+  const handleAnalyzeScreenshot = async (screenshotUri: string, nextExtraContext = '') => {
+    const requestId = analysisRequestIdRef.current + 1;
+
+    analysisRequestIdRef.current = requestId;
+    vibeCheckRefinementPromiseRef.current = null;
+    setExtraContext(nextExtraContext);
     setAnalysisError(null);
     setChatTranscript('');
-    setDetectedMessages([]);
     setVibeCheck(null);
+    setVibeCheckStatus('idle');
     setReplyBatch({});
     setVisibleReplies([]);
     setShownReplyIds([]);
@@ -196,18 +308,24 @@ export default function App() {
     setScreen('analyzing');
 
     try {
-      const result = await analyzeScreenshot({ screenshotUri });
-      const initialTone = result.vibeCheck.bestTone;
-      const initialVisibleReplies = getVisibleRepliesForTone(result.replyBatch, initialTone, []);
+      const ocr = await extractScreenshotConversation(screenshotUri);
 
-      setChatTranscript(result.transcriptText);
-      setDetectedMessages(result.ocr.detectedMessages);
-      setReplyBatch(result.replyBatch);
-      setVisibleReplies(initialVisibleReplies);
-      setShownReplyIds(initialVisibleReplies.map((reply) => reply.id));
-      setSelectedTone(initialTone);
-      setVibeCheck(result.vibeCheck);
+      if (analysisRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      const provisionalVibeCheck = buildProvisionalVibeCheck(ocr);
+
+      applyConversationResult(ocr, provisionalVibeCheck);
+      setVibeCheckStatus('provisional');
       setScreen('vibecheck');
+      console.info('[Wingr timing] vibe-check-result', { result: 'provisional' });
+      startVibeCheckRefinement({
+        fallbackVibeCheck: provisionalVibeCheck,
+        nextExtraContext,
+        requestId,
+        transcriptText: ocr.transcriptText,
+      });
     } catch (error) {
       const message =
         error instanceof Error
@@ -220,7 +338,7 @@ export default function App() {
     }
   };
 
-  const handleUploadPress = async () => {
+  const pickScreenshot = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (!permission.granted) {
@@ -231,18 +349,34 @@ export default function App() {
       return;
     }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
+    return ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: false,
       quality: 1,
     });
+  };
 
-    if (!result.canceled) {
-      const screenshotUri = result.assets[0].uri;
+  const handlePickScreenshotForUpload = async () => {
+    const result = await pickScreenshot();
 
-      setSelectedScreenshotUri(screenshotUri);
-      await handleAnalyzeScreenshot(screenshotUri);
+    if (!result || result.canceled) {
+      return;
     }
+
+    const screenshotUri = result.assets[0].uri;
+
+    setSelectedScreenshotUri(screenshotUri);
+    setAnalysisError(null);
+    setScreen('upload');
+  };
+
+  const handleCheckSelectedScreenshot = async () => {
+    if (!selectedScreenshotUri) {
+      await handlePickScreenshotForUpload();
+      return;
+    }
+
+    await handleAnalyzeScreenshot(selectedScreenshotUri);
   };
 
   const handleGenerateReplies = async () => {
@@ -252,11 +386,33 @@ export default function App() {
     }
 
     const nextContext = extraContext.trim();
-    const initialTone = vibeCheck.bestTone;
 
+    setIsGeneratingReplies(true);
     setReplyContext(nextContext);
-    setSelectedTone(initialTone);
-    setScreen('replies');
+    setVisibleReplies([]);
+
+    try {
+      const replyVibeCheck = await getReplyVibeCheck();
+      const initialTone = replyVibeCheck.bestTone;
+
+      setVibeCheck(replyVibeCheck);
+      setSelectedTone(initialTone);
+      setScreen('replies');
+
+      const nextReplyBatch = await generateRepliesForTone(initialTone, nextContext, replyVibeCheck);
+      const nextVisibleReplies = (nextReplyBatch[initialTone] ?? []).slice(0, 2);
+
+      setReplyBatch((currentReplyBatch) => mergeReplyBatch(currentReplyBatch, nextReplyBatch));
+      setVisibleReplies(nextVisibleReplies);
+      setShownReplyIds((currentShownReplyIds) =>
+        appendShownReplyIds(currentShownReplyIds, nextVisibleReplies),
+      );
+    } catch {
+      Alert.alert('Could not generate replies', 'Try again in a moment.');
+      setScreen('vibecheck');
+    } finally {
+      setIsGeneratingReplies(false);
+    }
   };
 
   const handleToneChange = async (tone: ReplyTone) => {
@@ -313,11 +469,16 @@ export default function App() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="light" />
+      {screen === 'landing' ? (
+        <LandingScreen onContinue={handlePickScreenshotForUpload} />
+      ) : null}
+
       {screen === 'upload' ? (
-        <UploadScreen
-          analysisError={analysisError}
+        <UploadScreenshotScreen
+          onBack={() => setScreen('landing')}
+          onChangeScreenshot={handlePickScreenshotForUpload}
+          onCheckVibe={handleCheckSelectedScreenshot}
           selectedScreenshotUri={selectedScreenshotUri}
-          onUploadPress={handleUploadPress}
         />
       ) : null}
 
@@ -327,16 +488,10 @@ export default function App() {
 
       {screen === 'vibecheck' && vibeCheck ? (
         <VibeCheckScreen
-          chatTranscript={chatTranscript}
-          detectedMessages={detectedMessages}
-          extraContext={extraContext}
-          selectedScreenshotUri={selectedScreenshotUri}
           onBack={() => setScreen('upload')}
           isGeneratingReplies={isGeneratingReplies}
           onGenerateReplies={handleGenerateReplies}
           vibeCheck={vibeCheck}
-          onUploadNew={handleUploadPress}
-          onExtraContextChange={setExtraContext}
         />
       ) : null}
 
@@ -350,56 +505,135 @@ export default function App() {
           selectedTone={selectedTone}
         />
       ) : null}
+
     </SafeAreaView>
   );
 }
 
-function UploadScreen({
-  analysisError,
+function LandingScreen({ onContinue }: { onContinue: () => void }) {
+  return (
+    <View className="flex-1 bg-[#080808] px-4 pt-4">
+      <View className="items-center">
+        <Text className="font-display text-[18px] font-bold leading-[22px] text-[#2563EB]">
+          Wingr
+        </Text>
+      </View>
+
+      <View className="mt-9 items-center">
+        <View className="w-full max-w-[360px] overflow-hidden rounded-[20px] bg-[#111111]">
+          <View className="w-full aspect-[328/426] overflow-hidden bg-[#0d0d0d]">
+            <Image
+              accessibilityIgnoresInvertColors
+              className="h-full w-full"
+              resizeMode="cover"
+              source={require('./assets/images/landing-screen-image.png')}
+            />
+          </View>
+
+          <View className="gap-3 bg-[#171717] px-5 py-5">
+            <Text className="font-display text-landing-heading font-bold text-white">
+              Get better replies
+            </Text>
+
+            <Text className="font-bodyRegular text-landing-body text-[#A1A1AA]" numberOfLines={2}>
+              Check the energy, interest, and best move before you reply.
+            </Text>
+
+            <Pressable
+              accessibilityLabel="Upload screenshot"
+              accessibilityRole="button"
+              className="mt-1 h-12 w-full flex-row items-center justify-center gap-2 rounded-full bg-blue-700 shadow-lg shadow-black/60"
+              onPress={onContinue}
+            >
+              <Text className="font-body text-landing-cta font-semibold text-white">
+                Upload screenshot
+              </Text>
+              <ArrowRight color="#FFFFFF" size={16} />
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function UploadScreenshotScreen({
+  onBack,
+  onChangeScreenshot,
+  onCheckVibe,
   selectedScreenshotUri,
-  onUploadPress,
 }: {
-  analysisError: string | null;
+  onBack: () => void;
+  onChangeScreenshot: () => void;
+  onCheckVibe: () => void;
   selectedScreenshotUri: string | null;
-  onUploadPress: () => void;
 }) {
   return (
-    <View style={styles.screen}>
-      <Text style={styles.logo}>Wingr</Text>
-
-      <Image source={heroImage} resizeMode="contain" style={styles.heroImage} />
-
-      <View style={styles.uploadSection}>
-        <Text style={styles.sectionTitle}>Upload Text Screenshot</Text>
-        {analysisError ? <Text style={styles.errorText}>{analysisError}</Text> : null}
-
+    <View className="flex-1 bg-[#080808] px-4 pt-4">
+      <View className="flex-row items-center justify-between">
         <Pressable
+          accessibilityLabel="Go back"
           accessibilityRole="button"
-          accessibilityLabel="Upload text screenshot"
-          onPress={onUploadPress}
-          style={({ pressed }) => [styles.uploadButton, pressed && styles.uploadButtonPressed]}
+          className="h-10 w-10 items-center justify-center rounded-full bg-white/[0.10]"
+          onPress={onBack}
         >
-          {selectedScreenshotUri ? (
-            <ImageBackground
-              imageStyle={styles.selectedImage}
-              resizeMode="cover"
-              source={{ uri: selectedScreenshotUri }}
-              style={styles.selectedPreview}
-            >
-              <View style={styles.selectedOverlay}>
-                <Text style={styles.uploadText}>Screenshot selected</Text>
-                <Text style={styles.uploadSubtext}>Press to choose another</Text>
-              </View>
-            </ImageBackground>
-          ) : (
-            <View style={styles.uploadEmptyState}>
-              <Text style={styles.uploadText}>Press to upload screenshot</Text>
-              <View style={styles.plusButton}>
-                <Text style={styles.plusText}>+</Text>
-              </View>
-            </View>
-          )}
+          <ArrowLeft color="#FFFFFF" size={20} />
         </Pressable>
+
+        <Text className="font-display text-[18px] font-bold leading-[22px] text-blue-700">
+          Upload Screenshot
+        </Text>
+
+        <View className="h-10 w-10" />
+      </View>
+
+      <View className="mt-9 items-center">
+        <View className="w-full max-w-[360px] rounded-[20px] bg-[#171717] px-5 py-5">
+          <View className="items-center">
+            <Pressable
+              accessibilityLabel="Change Screenshot"
+              accessibilityRole="button"
+              className="h-10 flex-row items-center justify-center gap-2 rounded-full border border-white/55 px-5"
+              onPress={onChangeScreenshot}
+            >
+              <Refresh color="#FFFFFF" size={17} />
+              <Text className="font-body text-[14px] font-semibold leading-[18px] text-white">
+                Change Screenshot
+              </Text>
+            </Pressable>
+          </View>
+
+          <View className="mt-5 aspect-[288/332] w-full overflow-hidden rounded-[20px] bg-white">
+            {selectedScreenshotUri ? (
+              <Image
+                accessibilityIgnoresInvertColors
+                className="h-full w-full"
+                resizeMode="contain"
+                source={{ uri: selectedScreenshotUri }}
+              />
+            ) : (
+              <View className="h-full w-full items-center justify-center bg-[#101010] px-6">
+                <Text className="text-center font-bodyRegular text-[15px] leading-[20px] text-[#A1A1AA]">
+                  No screenshot selected
+                </Text>
+              </View>
+            )}
+          </View>
+
+          <View className="pt-5">
+            <Pressable
+              accessibilityLabel="Check the vibe"
+              accessibilityRole="button"
+              className="h-12 w-full flex-row items-center justify-center gap-3 rounded-full bg-blue-700 shadow-lg shadow-black/60"
+              onPress={onCheckVibe}
+            >
+              <Text className="font-body text-landing-cta font-semibold text-white">
+                Check the vibe
+              </Text>
+              <ArrowRight color="#FFFFFF" size={18} />
+            </Pressable>
+          </View>
+        </View>
       </View>
     </View>
   );
@@ -420,26 +654,14 @@ function AnalyzingScreen({ selectedScreenshotUri }: { selectedScreenshotUri: str
 }
 
 function VibeCheckScreen({
-  chatTranscript,
-  detectedMessages,
-  extraContext,
   isGeneratingReplies,
-  selectedScreenshotUri,
   onBack,
-  onExtraContextChange,
   onGenerateReplies,
-  onUploadNew,
   vibeCheck,
 }: {
-  chatTranscript: string;
-  detectedMessages: DetectedMessage[];
-  extraContext: string;
   isGeneratingReplies: boolean;
-  selectedScreenshotUri: string | null;
   onBack: () => void;
-  onExtraContextChange: (value: string) => void;
   onGenerateReplies: () => void;
-  onUploadNew: () => void;
   vibeCheck: VibeCheck;
 }) {
   return (
@@ -462,44 +684,17 @@ function VibeCheckScreen({
             onPress={onBack}
             style={({ pressed }) => [styles.backButton, pressed && styles.uploadButtonPressed]}
           >
-            <Text style={styles.backButtonText}>‹</Text>
+            <ArrowLeft color={COLORS.white} size={22} />
           </Pressable>
           <Text style={styles.vibeHeaderTitle}>Vibe Check</Text>
           <View style={styles.backButton} />
         </View>
 
-        {selectedScreenshotUri ? (
-          <View style={styles.uploadedPreviewRow}>
-            <Image
-              resizeMode="cover"
-              source={{ uri: selectedScreenshotUri }}
-              style={styles.uploadedPreviewImage}
-            />
-            <View style={styles.uploadedPreviewCopy}>
-              <Text style={styles.uploadedPreviewLabel}>Screenshot uploaded</Text>
-              <Text style={styles.uploadedPreviewText}>Wingr analyzed this conversation.</Text>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Upload a new screenshot"
-              onPress={onUploadNew}
-              style={({ pressed }) => [
-                styles.uploadNewButton,
-                pressed && styles.uploadButtonPressed,
-              ]}
-            >
-              <Text style={styles.uploadNewButtonText}>New</Text>
-            </Pressable>
-          </View>
-        ) : null}
-
-        <DetectedConversationCard
-          detectedMessages={detectedMessages}
-          transcriptText={chatTranscript}
-        />
-
         <View style={styles.vibeCard}>
-          <Text style={styles.vibeCardTitle}>Vibe check</Text>
+          <View style={styles.vibeCardTitleRow}>
+            <Text style={styles.vibeCardTitle}>Vibe check</Text>
+          </View>
+          <Text style={styles.vibeSummaryText}>{vibeCheck.summary}</Text>
           <VibeMetric
             icon={Heart}
             label="Their interest"
@@ -510,7 +705,7 @@ function VibeCheckScreen({
           <VibeMetric
             icon={Bolt}
             label="Conversation energy"
-            value={vibeCheck.conversationEnergy}
+            value={getConversationEnergyCopy(vibeCheck)}
             variant="energy"
           />
           <VibeMetric
@@ -528,98 +723,29 @@ function VibeCheckScreen({
           />
         </View>
 
-        <View style={styles.contextSection}>
-          <Text style={styles.contextTitle}>Add extra context</Text>
-          <Text style={styles.contextHelper}>This is optional.</Text>
-          <TextInput
-            multiline
-            onChangeText={onExtraContextChange}
-            placeholder="Anything about them or the situation? Use I/me/my for facts about you."
-            placeholderTextColor="#9B9BA3"
-            style={styles.contextInput}
-            textAlignVertical="top"
-            value={extraContext}
-          />
-        </View>
-
-        <Pressable
+        <TouchableOpacity
+          activeOpacity={0.88}
           accessibilityRole="button"
-          accessibilityLabel="Generate replies"
+          accessibilityLabel="Get replies"
           disabled={isGeneratingReplies}
           onPress={onGenerateReplies}
-          style={({ pressed }) => [
+          style={[
             styles.generateButton,
-            pressed && styles.generateButtonPressed,
             isGeneratingReplies && styles.disabledButton,
           ]}
         >
           {isGeneratingReplies ? (
             <ActivityIndicator color={COLORS.white} />
           ) : (
-            <Text style={styles.generateButtonText}>Generate replies</Text>
+            <>
+              <Text style={styles.generateButtonText}>Get replies</Text>
+              <ArrowRight color={COLORS.white} size={22} />
+            </>
           )}
-        </Pressable>
+        </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
   );
-}
-
-function DetectedConversationCard({
-  detectedMessages,
-  transcriptText,
-}: {
-  detectedMessages: DetectedMessage[];
-  transcriptText: string;
-}) {
-  const previewMessages =
-    detectedMessages.length > 0
-      ? detectedMessages
-      : transcriptText
-          .split('\n')
-          .filter(Boolean)
-          .map((text, index) => ({
-            id: `fallback-${index + 1}`,
-            sender: 'unknown' as const,
-            text,
-          }));
-
-  return (
-    <View style={styles.transcriptCard}>
-      <View style={styles.transcriptHeader}>
-        <Text style={styles.transcriptLabel}>Detected conversation</Text>
-        <Text style={styles.transcriptSource}>On-device OCR</Text>
-      </View>
-
-      <View style={styles.detectedMessagesList}>
-        {previewMessages.slice(0, 5).map((message) => (
-          <View key={message.id} style={styles.detectedMessageRow}>
-            <Text style={styles.detectedMessageSender}>
-              {getDetectedMessageSenderLabel(message)}
-            </Text>
-            <Text numberOfLines={2} style={styles.detectedMessageText}>
-              {message.text}
-            </Text>
-          </View>
-        ))}
-      </View>
-
-      {previewMessages.length > 5 ? (
-        <Text style={styles.detectedMessageMore}>+{previewMessages.length - 5} more lines</Text>
-      ) : null}
-    </View>
-  );
-}
-
-function getDetectedMessageSenderLabel(message: DetectedMessage) {
-  if (message.sender === 'you') {
-    return 'You';
-  }
-
-  if (message.sender === 'them') {
-    return 'Them';
-  }
-
-  return message.confidence ? 'Unknown?' : 'Unknown';
 }
 
 function VibeMetric({
@@ -644,7 +770,15 @@ function VibeMetric({
       <GlowIconContainer Icon={icon} variant={variant} />
       <View style={styles.metricCopy}>
         <Text style={styles.metricLabel}>{label}</Text>
-        <Text style={[styles.metricValue, { color: config.valueColor }]}>{value}</Text>
+        <Text
+          style={[
+            styles.metricValue,
+            variant === 'energy' && styles.metricValueBody,
+            { color: config.valueColor },
+          ]}
+        >
+          {value}
+        </Text>
       </View>
       {withMeter ? (
         <View style={styles.meterTrack}>
@@ -770,7 +904,7 @@ function RepliesScreen({
           onPress={onBack}
           style={({ pressed }) => [styles.backButton, pressed && styles.uploadButtonPressed]}
         >
-          <Text style={styles.backButtonText}>‹</Text>
+          <ArrowLeft color={COLORS.white} size={22} />
         </Pressable>
         <Text style={styles.vibeHeaderTitle}>Replies</Text>
         <View style={styles.backButton} />
@@ -781,20 +915,51 @@ function RepliesScreen({
         contentContainerStyle={styles.repliesScrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Change reply tone"
-          onPress={() => setIsToneSheetOpen(true)}
-          style={({ pressed }) => [styles.toneSelector, pressed && styles.uploadButtonPressed]}
-        >
-          <ChatRound color="#D6D6DB" size={18} />
-          <Text numberOfLines={1} style={styles.toneSelectorText}>
-            {selectedToneLabel}
-          </Text>
-          <AltArrowDown color="#D6D6DB" size={18} />
-        </Pressable>
+        <View style={styles.repliesControlsRow}>
+          <TouchableOpacity
+            activeOpacity={0.88}
+            accessibilityRole="button"
+            accessibilityLabel="Get new replies"
+            disabled={isRefreshing || isGeneratingReplies}
+            onPress={handleRegenerateReplies}
+            style={[
+              styles.newRepliesButton,
+              (isRefreshing || isGeneratingReplies) && styles.disabledButton,
+            ]}
+          >
+            {isRefreshing || isGeneratingReplies ? (
+              <ActivityIndicator color={COLORS.white} />
+            ) : (
+              <>
+                <Refresh color={COLORS.white} size={16} />
+                <Text style={styles.newRepliesButtonText}>Get new replies</Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            activeOpacity={0.88}
+            accessibilityRole="button"
+            accessibilityLabel="Change reply tone"
+            onPress={() => setIsToneSheetOpen(true)}
+            style={styles.toneSelector}
+          >
+            <StarsMinimalistic color="#D6D6DB" size={14} />
+            <Text numberOfLines={1} style={styles.toneSelectorText}>
+              {selectedToneLabel}
+            </Text>
+            <AltArrowDown color="#D6D6DB" size={16} />
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.replyCards}>
+          {replies.length === 0 && isGeneratingReplies ? (
+            <View style={styles.repliesLoadingCard}>
+              <ActivityIndicator color={COLORS.blue} />
+              <Text style={styles.repliesLoadingText}>Writing replies...</Text>
+            </View>
+          ) : null}
+
           {replies.slice(0, 2).map((reply, index) => (
             <ReplyCard
               copied={copiedReplyId === reply.id}
@@ -805,27 +970,6 @@ function RepliesScreen({
             />
           ))}
         </View>
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Get new replies"
-          disabled={isRefreshing || isGeneratingReplies}
-          onPress={handleRegenerateReplies}
-          style={({ pressed }) => [
-            styles.newRepliesButton,
-            pressed && styles.uploadButtonPressed,
-            (isRefreshing || isGeneratingReplies) && styles.disabledButton,
-          ]}
-        >
-          {isRefreshing || isGeneratingReplies ? (
-            <ActivityIndicator color={COLORS.white} />
-          ) : (
-            <>
-              <Refresh color={COLORS.white} size={22} />
-              <Text style={styles.newRepliesButtonText}>Get new replies</Text>
-            </>
-          )}
-        </Pressable>
       </ScrollView>
 
       <ToneBottomSheet
@@ -881,19 +1025,20 @@ function ReplyCard({
         ) : null}
       </View>
 
-      <Pressable
+      <TouchableOpacity
+        activeOpacity={0.88}
         accessibilityRole="button"
         accessibilityLabel="Copy reply"
         onPress={onCopy}
-        style={({ pressed }) => [styles.copyButton, pressed && styles.generateButtonPressed]}
+        style={styles.copyButton}
       >
         {copied ? (
-          <CheckCircle color={COLORS.white} size={24} />
+          <CheckCircle color={COLORS.white} size={16} />
         ) : (
-          <Copy color={COLORS.white} size={24} />
+          <Copy color={COLORS.white} size={16} />
         )}
         <Text style={styles.copyButtonText}>{copied ? 'Copied' : 'Copy'}</Text>
-      </Pressable>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -1108,13 +1253,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 34,
   },
-  backButtonText: {
-    color: COLORS.white,
-    fontFamily: FONTS.body,
-    fontSize: 28,
-    fontWeight: '600',
-    lineHeight: 30,
-  },
   vibeHeaderTitle: {
     color: COLORS.blue,
     fontFamily: FONTS.display,
@@ -1123,118 +1261,18 @@ const styles = StyleSheet.create({
     lineHeight: 28,
     textAlign: 'center',
   },
-  uploadedPreviewRow: {
-    alignItems: 'center',
-    backgroundColor: COLORS.panel,
-    borderColor: '#232329',
-    borderRadius: 16,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 12,
-    padding: 10,
-  },
-  uploadedPreviewImage: {
-    backgroundColor: '#24242A',
-    borderRadius: 12,
-    height: 54,
-    width: 42,
-  },
-  uploadedPreviewCopy: {
-    flex: 1,
-    gap: 2,
-  },
-  uploadedPreviewLabel: {
-    color: COLORS.white,
-    fontFamily: FONTS.body,
-    fontSize: 15,
-    fontWeight: '700',
-    lineHeight: 20,
-  },
-  uploadedPreviewText: {
-    color: COLORS.muted,
-    fontFamily: FONTS.bodyRegular,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  uploadNewButton: {
-    alignItems: 'center',
-    backgroundColor: '#202026',
-    borderRadius: 999,
-    height: 34,
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-  },
-  uploadNewButtonText: {
-    color: COLORS.white,
-    fontFamily: FONTS.body,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  transcriptCard: {
-    backgroundColor: '#0D0D0F',
-    borderColor: '#222229',
-    borderRadius: 14,
-    borderWidth: 1,
-    gap: 10,
-    padding: 12,
-  },
-  transcriptHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  transcriptLabel: {
-    color: COLORS.white,
-    fontFamily: FONTS.body,
-    fontSize: 14,
-    fontWeight: '600',
-    lineHeight: 18,
-  },
-  transcriptSource: {
-    color: COLORS.muted,
-    fontFamily: FONTS.bodyRegular,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  detectedMessagesList: {
-    gap: 6,
-  },
-  detectedMessageRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  detectedMessageSender: {
-    color: COLORS.blue,
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    fontWeight: '600',
-    lineHeight: 17,
-    width: 56,
-  },
-  detectedMessageText: {
-    color: '#D8D8DD',
-    flex: 1,
-    fontFamily: FONTS.bodyRegular,
-    fontSize: 13,
-    lineHeight: 17,
-  },
-  detectedMessageMore: {
-    color: COLORS.muted,
-    fontFamily: FONTS.bodyRegular,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  transcriptText: {
-    color: '#C9C9CF',
-    fontFamily: FONTS.bodyRegular,
-    fontSize: 13,
-    lineHeight: 18,
-  },
   vibeCard: {
     backgroundColor: COLORS.panelRaised,
     borderRadius: 12,
     gap: 0,
     padding: 10,
+  },
+  vibeCardTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    marginBottom: 4,
   },
   vibeCardTitle: {
     color: COLORS.blue,
@@ -1242,7 +1280,14 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: '700',
     lineHeight: 32,
-    marginBottom: 4,
+  },
+  vibeSummaryText: {
+    color: COLORS.white,
+    fontFamily: FONTS.body,
+    fontSize: 15,
+    fontWeight: '500',
+    lineHeight: 21,
+    marginBottom: 6,
   },
   metricRow: {
     alignItems: 'center',
@@ -1295,6 +1340,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 22,
   },
+  metricValueBody: {
+    fontFamily: FONTS.body,
+    fontSize: 16,
+    fontWeight: '600',
+    lineHeight: 21,
+  },
   meterTrack: {
     backgroundColor: '#56565C',
     borderRadius: 999,
@@ -1308,62 +1359,16 @@ const styles = StyleSheet.create({
     height: '100%',
     width: '50%',
   },
-  summaryCard: {
-    backgroundColor: '#0D0D0F',
-    borderColor: '#222229',
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 14,
-  },
-  summaryLabel: {
-    color: COLORS.blue,
-    fontFamily: FONTS.display,
-    fontSize: 17,
-    fontWeight: '700',
-    lineHeight: 22,
-    marginBottom: 4,
-  },
-  summaryText: {
-    color: COLORS.white,
-    fontFamily: FONTS.body,
-    fontSize: 15,
-    fontWeight: '500',
-    lineHeight: 21,
-  },
-  contextSection: {
-    gap: 7,
-  },
-  contextTitle: {
-    color: COLORS.white,
-    fontFamily: FONTS.display,
-    fontSize: 22,
-    fontWeight: '700',
-    lineHeight: 28,
-  },
-  contextHelper: {
-    color: '#B6B6BC',
-    fontFamily: FONTS.bodyRegular,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  contextInput: {
-    backgroundColor: COLORS.panelRaised,
-    borderRadius: 18,
-    color: COLORS.white,
-    fontFamily: FONTS.bodyRegular,
-    fontSize: 16,
-    lineHeight: 22,
-    minHeight: 122,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
   generateButton: {
     alignItems: 'center',
     backgroundColor: COLORS.blue,
     borderRadius: 999,
+    flexDirection: 'row',
+    gap: 12,
     height: 48,
     justifyContent: 'center',
     marginTop: 2,
+    width: '100%',
   },
   generateButtonPressed: {
     opacity: 0.9,
@@ -1375,54 +1380,79 @@ const styles = StyleSheet.create({
   generateButtonText: {
     color: COLORS.white,
     fontFamily: FONTS.body,
-    fontSize: 19,
+    fontSize: 17,
     fontWeight: '600',
-    lineHeight: 24,
+    lineHeight: 22,
   },
   repliesScreen: {
     paddingHorizontal: 16,
   },
   repliesScrollContent: {
     alignItems: 'center',
-    gap: 22,
+    gap: 16,
     paddingBottom: 24,
     paddingTop: 22,
   },
+  repliesControlsRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    width: '100%',
+  },
   toneSelector: {
     alignItems: 'center',
-    alignSelf: 'center',
     borderColor: '#B7B7BE',
     borderRadius: 999,
     borderWidth: 1,
     flexDirection: 'row',
-    gap: 8,
-    height: 38,
+    flexShrink: 0,
+    gap: 6,
+    height: 40,
     justifyContent: 'center',
-    maxWidth: '82%',
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
+    width: 96,
   },
   toneSelectorText: {
     color: '#D6D6DB',
     fontFamily: FONTS.bodyRegular,
-    fontSize: 16,
-    lineHeight: 21,
+    fontSize: 13,
+    lineHeight: 17,
   },
   replyCards: {
     gap: 14,
     width: '100%',
   },
+  repliesLoadingCard: {
+    alignItems: 'center',
+    backgroundColor: '#151515',
+    borderColor: '#2B2B2F',
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 12,
+    minHeight: 164,
+    justifyContent: 'center',
+    padding: 20,
+    width: '100%',
+  },
+  repliesLoadingText: {
+    color: '#D6D6DB',
+    fontFamily: FONTS.body,
+    fontSize: 16,
+    fontWeight: '600',
+    lineHeight: 21,
+  },
   replyCard: {
     backgroundColor: '#151515',
     borderColor: '#2B2B2F',
-    borderRadius: 24,
+    borderRadius: 12,
     borderWidth: 1,
-    padding: 12,
+    padding: 10,
     width: '100%',
   },
   recommendedReplyCard: {
     backgroundColor: '#0C111D',
     borderColor: COLORS.blue,
-    borderWidth: 2,
+    borderWidth: 1,
   },
   recommendedBadge: {
     alignItems: 'center',
@@ -1494,20 +1524,20 @@ const styles = StyleSheet.create({
   },
   newRepliesButton: {
     alignItems: 'center',
-    alignSelf: 'stretch',
     backgroundColor: '#454545',
     borderRadius: 999,
+    flex: 1,
     flexDirection: 'row',
-    gap: 12,
-    height: 48,
+    gap: 8,
+    height: 40,
     justifyContent: 'center',
   },
   newRepliesButtonText: {
     color: COLORS.white,
     fontFamily: FONTS.body,
-    fontSize: 19,
+    fontSize: 16,
     fontWeight: '600',
-    lineHeight: 24,
+    lineHeight: 20,
   },
   sheetBackdrop: {
     backgroundColor: 'rgba(0, 0, 0, 0.58)',

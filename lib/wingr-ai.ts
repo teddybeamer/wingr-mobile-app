@@ -5,6 +5,7 @@ import type {
   AnalyzeScreenshotParams,
   AnalyzeScreenshotResult,
   GenerateRepliesParams,
+  OcrResult,
   RecommendedReplyTone,
   ReplyBatch,
   ReplyTone,
@@ -35,12 +36,14 @@ const WHY_BY_TONE: Record<ReplyTone, string> = {
 
 const MOCK_VIBE_CHECK: VibeCheck = {
   interestLevel: 'Medium',
-  conversationEnergy: 'Dry but recoverable',
+  conversationEnergy: "They're keeping it short, but there's still room to play.",
   bestTone: 'playful',
   risk: "Don't over invest",
   summary:
     "Wingr read the vibe. There's still interest here, but the next message needs to add energy without chasing.",
   targetLanguage: 'English',
+  vibeConfidence: 'medium',
+  contextWouldImproveReplyQuality: false,
 };
 
 const RECOMMENDED_TONES: RecommendedReplyTone[] = ['direct', 'playful', 'casualSmallTalk'];
@@ -54,11 +57,26 @@ type BackendAnalyzeResponse = {
   risk?: string;
   summary?: string;
   targetLanguage?: string;
+  vibeConfidence?: VibeCheck['vibeConfidence'];
+  contextWouldImproveReplyQuality?: boolean;
 };
 
 type BackendRepliesResponse = {
   replyBatch?: ReplyBatch;
 };
+
+type RefineVibeCheckParams = {
+  extraContext?: string;
+  fallbackVibeCheck?: VibeCheck;
+  transcriptText: string;
+};
+
+function logTiming(label: string, startedAt: number, metadata?: Record<string, unknown>) {
+  console.info(`[Wingr timing] ${label}`, {
+    durationMs: Date.now() - startedAt,
+    ...metadata,
+  });
+}
 
 function normalizeBestTone(tone: unknown): RecommendedReplyTone {
   if (tone === 'casual_small_talk') {
@@ -82,6 +100,107 @@ function normalizeVibeCheck(response: BackendAnalyzeResponse): VibeCheck {
     risk: candidate.risk ?? MOCK_VIBE_CHECK.risk,
     summary: candidate.summary ?? MOCK_VIBE_CHECK.summary,
     targetLanguage: candidate.targetLanguage ?? MOCK_VIBE_CHECK.targetLanguage,
+    vibeConfidence: candidate.vibeConfidence ?? MOCK_VIBE_CHECK.vibeConfidence,
+    contextWouldImproveReplyQuality:
+      candidate.contextWouldImproveReplyQuality ??
+      MOCK_VIBE_CHECK.contextWouldImproveReplyQuality,
+  };
+}
+
+function normalizeMessageText(text: string) {
+  return text.trim().replace(/\s+/g, ' ');
+}
+
+function getMeaningfulTranscriptText(transcriptText: string) {
+  return transcriptText
+    .split('\n')
+    .map((line) => line.replace(/^\s*(You|Them|Unknown)\s*:\s*/i, '').trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
+function getLatestIncomingMessage(ocr: OcrResult) {
+  return [...ocr.detectedMessages].reverse().find((message) => message.sender === 'them');
+}
+
+function getProvisionalInterestLevel(ocr: OcrResult): VibeCheck['interestLevel'] {
+  const messageCount = ocr.detectedMessages.length;
+  const latestIncomingMessage = getLatestIncomingMessage(ocr);
+
+  if (!latestIncomingMessage || (latestIncomingMessage.confidence ?? 0) < 0.45) {
+    return 'Unclear';
+  }
+
+  if (messageCount >= 8 && latestIncomingMessage.text.length > 35) {
+    return 'High';
+  }
+
+  if (messageCount >= 6 && latestIncomingMessage.text.length > 18) {
+    return 'Medium';
+  }
+
+  return 'Medium';
+}
+
+function getProvisionalTone(ocr: OcrResult): RecommendedReplyTone {
+  const latestIncomingMessage = getLatestIncomingMessage(ocr);
+  const latestIncomingText = normalizeMessageText(latestIncomingMessage?.text ?? '').toLowerCase();
+
+  if (/\b(when|where|plan|free|meet|date|tonight|tomorrow)\b/.test(latestIncomingText)) {
+    return 'direct';
+  }
+
+  if (latestIncomingText.length < 18) {
+    return 'playful';
+  }
+
+  return 'casualSmallTalk';
+}
+
+export function buildProvisionalVibeCheck(ocr: OcrResult): VibeCheck {
+  const meaningfulText = getMeaningfulTranscriptText(ocr.transcriptText);
+  const meaningfulCharacterCount = meaningfulText.replace(/\s/g, '').length;
+  const latestIncomingMessage = getLatestIncomingMessage(ocr);
+  const latestIncomingText = normalizeMessageText(latestIncomingMessage?.text ?? '');
+  const lowConfidence = (ocr.confidence ?? 0) < 0.45 || meaningfulCharacterCount < 28;
+  const shortLatestReply = latestIncomingText.length > 0 && latestIncomingText.length < 18;
+  const bestTone = getProvisionalTone(ocr);
+
+  if (lowConfidence) {
+    return {
+      interestLevel: 'Unclear',
+      conversationEnergy: 'There is enough signal to start, but part of the chat may need a closer read.',
+      bestTone,
+      risk: 'Avoid guessing too much',
+      summary: 'Wingr has a quick first read. The AI pass is checking the details now.',
+      targetLanguage: 'English',
+      vibeConfidence: 'low',
+      contextWouldImproveReplyQuality: true,
+    };
+  }
+
+  if (shortLatestReply) {
+    return {
+      interestLevel: getProvisionalInterestLevel(ocr),
+      conversationEnergy: "They're keeping it short, but there's still room to play.",
+      bestTone,
+      risk: "Don't over invest",
+      summary: 'Quick read: there is something to work with, but the next reply should add energy.',
+      targetLanguage: 'English',
+      vibeConfidence: 'medium',
+      contextWouldImproveReplyQuality: false,
+    };
+  }
+
+  return {
+    interestLevel: getProvisionalInterestLevel(ocr),
+    conversationEnergy: 'There is some interest here, but the chat needs a sharper reply to keep momentum.',
+    bestTone,
+    risk: 'Keep it clear without chasing',
+    summary: 'Quick read: the conversation has enough signal for a confident next move.',
+    targetLanguage: 'English',
+    vibeConfidence: 'medium',
+    contextWouldImproveReplyQuality: false,
   };
 }
 
@@ -120,64 +239,68 @@ function normalizeReplyBatch(replyBatch?: ReplyBatch): ReplyBatch {
   };
 }
 
-function getMockReplyBatch(): ReplyBatch {
-  return {
-    casualSmallTalk: REPLIES_BY_TONE.casualSmallTalk.map((text, index) => ({
-      id: `casualSmallTalk-${index + 1}`,
-      text,
-      tone: 'casualSmallTalk',
-      whyItWorks: WHY_BY_TONE.casualSmallTalk,
-    })),
-    direct: REPLIES_BY_TONE.direct.map((text, index) => ({
-      id: `direct-${index + 1}`,
-      text,
-      tone: 'direct',
-      whyItWorks: WHY_BY_TONE.direct,
-    })),
-    playful: REPLIES_BY_TONE.playful.map((text, index) => ({
-      id: `playful-${index + 1}`,
-      text,
-      tone: 'playful',
-      whyItWorks: WHY_BY_TONE.playful,
-    })),
-  };
+export async function extractScreenshotConversation(screenshotUri: string) {
+  const startedAt = Date.now();
+  const ocr = await extractChatTextFromImage(screenshotUri);
+
+  logTiming('ocr', startedAt, {
+    detectedMessages: ocr.detectedMessages.length,
+    transcriptLength: ocr.transcriptText.length,
+  });
+
+  return ocr;
+}
+
+export async function refineVibeCheck({
+  extraContext,
+  fallbackVibeCheck = MOCK_VIBE_CHECK,
+  transcriptText,
+}: RefineVibeCheckParams): Promise<VibeCheck> {
+  if (!hasWingrBackend()) {
+    console.info('[Wingr timing] vibe-check-ai', { result: 'fallback-no-backend' });
+    return fallbackVibeCheck;
+  }
+
+  const startedAt = Date.now();
+
+  try {
+    const response = await postJsonToWingrBackend<BackendAnalyzeResponse>(
+      '/ai-vibe-check',
+      getAnalyzePayload(transcriptText, extraContext),
+    );
+    const vibeCheck = normalizeVibeCheck(response);
+
+    logTiming('vibe-check-ai', startedAt, { result: 'refined' });
+
+    return vibeCheck;
+  } catch (error) {
+    logTiming('vibe-check-ai', startedAt, {
+      result: 'fallback',
+      reason: error instanceof Error ? error.message : 'unknown',
+    });
+
+    return fallbackVibeCheck;
+  }
 }
 
 export async function analyzeScreenshot({
   extraContext,
   screenshotUri,
 }: AnalyzeScreenshotParams): Promise<AnalyzeScreenshotResult> {
-  const ocr = await extractChatTextFromImage(screenshotUri);
+  const ocr = await extractScreenshotConversation(screenshotUri);
+  const provisionalVibeCheck = buildProvisionalVibeCheck(ocr);
+  const vibeCheck = await refineVibeCheck({
+    extraContext,
+    fallbackVibeCheck: provisionalVibeCheck,
+    transcriptText: ocr.transcriptText,
+  });
 
-  if (!hasWingrBackend()) {
-    return {
-      ocr,
-      replyBatch: getMockReplyBatch(),
-      transcriptText: ocr.transcriptText,
-      vibeCheck: MOCK_VIBE_CHECK,
-    };
-  }
-
-  try {
-    const response = await postJsonToWingrBackend<BackendAnalyzeResponse>(
-      '/ai-vibe-check',
-      getAnalyzePayload(ocr.transcriptText, extraContext),
-    );
-
-    return {
-      ocr,
-      replyBatch: normalizeReplyBatch(response.replyBatch),
-      transcriptText: ocr.transcriptText,
-      vibeCheck: normalizeVibeCheck(response),
-    };
-  } catch {
-    return {
-      ocr,
-      replyBatch: getMockReplyBatch(),
-      transcriptText: ocr.transcriptText,
-      vibeCheck: MOCK_VIBE_CHECK,
-    };
-  }
+  return {
+    ocr,
+    replyBatch: {},
+    transcriptText: ocr.transcriptText,
+    vibeCheck,
+  };
 }
 
 export async function generateReplies({

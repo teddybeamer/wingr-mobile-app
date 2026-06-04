@@ -44,6 +44,7 @@ export async function generateReplyBatch(request: RepliesRequest, selectedTones:
       prompt: buildReplyBatchPrompt(normalizedRequest, selectedTones),
       schema,
       schemaName: `wingr_reply_batch_${selectedTones.join('_')}`,
+      task: 'reply',
     });
 
     let replyBatch = getFilteredReplyBatch(result.replyBatch ?? {}, normalizedRequest, selectedTones);
@@ -57,6 +58,7 @@ export async function generateReplyBatch(request: RepliesRequest, selectedTones:
         ),
         schema: createReplyBatchSchema(selectedTones),
         schemaName: `wingr_reply_batch_repair_${selectedTones.join('_')}`,
+        task: 'reply',
       });
 
       replyBatch = getFilteredReplyBatch(
