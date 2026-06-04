@@ -39,7 +39,6 @@ import {
   View,
 } from 'react-native';
 import {
-  buildProvisionalVibeCheck,
   extractScreenshotConversation,
   generateReplies,
   refineVibeCheck,
@@ -82,12 +81,11 @@ const COLORS = {
 
 type Screen = 'landing' | 'upload' | 'analyzing' | 'vibecheck' | 'replies';
 type MetricVariant = 'interest' | 'energy' | 'risk' | 'move';
-type VibeCheckStatus = 'idle' | 'provisional' | 'refining' | 'ready' | 'fallback';
 
 const TONE_OPTIONS: ToneOption[] = [
   { value: 'playful', label: 'Playful', icon: EmojiFunnyCircle },
   { value: 'direct', label: 'Direct', icon: FireMinimalistic },
-  { value: 'casualSmallTalk', label: 'Casual small talk', icon: Waterdrop },
+  { value: 'casualSmallTalk', label: 'Small talk', icon: Waterdrop },
 ];
 
 function getToneLabel(tone: ReplyTone | RecommendedReplyTone) {
@@ -196,31 +194,37 @@ export default function App() {
   const [visibleReplies, setVisibleReplies] = useState<SuggestedReply[]>([]);
   const [shownReplyIds, setShownReplyIds] = useState<string[]>([]);
   const [vibeCheck, setVibeCheck] = useState<VibeCheck | null>(null);
-  const [vibeCheckStatus, setVibeCheckStatus] = useState<VibeCheckStatus>('idle');
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [isGeneratingReplies, setIsGeneratingReplies] = useState(false);
   const analysisRequestIdRef = useRef(0);
-  const vibeCheckRefinementPromiseRef = useRef<Promise<VibeCheck> | null>(null);
   const [fontsLoaded] = useFonts({
     [FONTS.display]: require('./assets/fonts/ClashDisplay-Variable.ttf'),
     [FONTS.body]: require('./assets/fonts/ClashGrotesk-Variable.ttf'),
     [FONTS.bodyRegular]: require('./assets/fonts/ClashGrotesk-Regular.ttf'),
   });
 
-  const generateRepliesForTone = async (
-    tone: ReplyTone,
-    nextContext: string,
+  const generateRepliesForTone = async ({
+    tone,
+    nextContext,
+    nextScreenshotUri = selectedScreenshotUri,
+    nextTranscriptText = chatTranscript,
     nextVibeCheck = vibeCheck,
-  ) => {
-    if (!nextVibeCheck || !chatTranscript) {
+  }: {
+    tone: ReplyTone;
+    nextContext: string;
+    nextScreenshotUri?: string | null;
+    nextTranscriptText?: string;
+    nextVibeCheck?: VibeCheck | null;
+  }) => {
+    if (!nextVibeCheck || !nextTranscriptText) {
       throw new Error('Vibe check is not ready yet.');
     }
 
     return generateReplies({
       vibeCheck: nextVibeCheck,
       selectedTone: tone,
-      screenshotUri: selectedScreenshotUri,
-      transcriptText: chatTranscript,
+      screenshotUri: nextScreenshotUri ?? null,
+      transcriptText: nextTranscriptText,
       extraContext: nextContext,
     });
   };
@@ -238,73 +242,47 @@ export default function App() {
     setVibeCheck(nextVibeCheck);
   };
 
-  const startVibeCheckRefinement = ({
-    fallbackVibeCheck,
+  const getCompletedVibeCheck = async ({
     nextExtraContext,
-    requestId,
     transcriptText,
   }: {
-    fallbackVibeCheck: VibeCheck;
     nextExtraContext: string;
-    requestId: number;
     transcriptText: string;
   }) => {
-    const refinementPromise = refineVibeCheck({
+    const completedVibeCheck = await refineVibeCheck({
       extraContext: nextExtraContext || undefined,
-      fallbackVibeCheck,
       transcriptText,
-    }).then((refinedVibeCheck) => {
-      if (analysisRequestIdRef.current !== requestId) {
-        return refinedVibeCheck;
-      }
-
-      const usedFallback = refinedVibeCheck === fallbackVibeCheck;
-
-      setVibeCheck(refinedVibeCheck);
-      setSelectedTone(refinedVibeCheck.bestTone);
-      setReplyBatch({});
-      setVisibleReplies([]);
-      setShownReplyIds([]);
-      setVibeCheckStatus(usedFallback ? 'fallback' : 'ready');
-      console.info('[Wingr timing] vibe-check-result', {
-        result: usedFallback ? 'fallback' : 'refined',
-      });
-
-      return refinedVibeCheck;
     });
 
-    vibeCheckRefinementPromiseRef.current = refinementPromise;
-    setVibeCheckStatus('refining');
+    console.info('[Wingr timing] vibe-check-result', {
+      result: 'completed',
+    });
 
-    return refinementPromise;
+    return completedVibeCheck;
   };
 
   const getReplyVibeCheck = async () => {
-    if (vibeCheckStatus === 'refining' && vibeCheckRefinementPromiseRef.current) {
-      return vibeCheckRefinementPromiseRef.current;
+    if (vibeCheck) {
+      return vibeCheck;
     }
 
-    if (!vibeCheck) {
-      throw new Error('Vibe check is not ready yet.');
-    }
-
-    return vibeCheck;
+    throw new Error('Vibe check is not ready yet.');
   };
 
   const handleAnalyzeScreenshot = async (screenshotUri: string, nextExtraContext = '') => {
     const requestId = analysisRequestIdRef.current + 1;
+    const trimmedContext = nextExtraContext.trim();
 
     analysisRequestIdRef.current = requestId;
-    vibeCheckRefinementPromiseRef.current = null;
     setExtraContext(nextExtraContext);
     setAnalysisError(null);
     setChatTranscript('');
     setVibeCheck(null);
-    setVibeCheckStatus('idle');
     setReplyBatch({});
     setVisibleReplies([]);
     setShownReplyIds([]);
-    setReplyContext('');
+    setReplyContext(trimmedContext);
+    setIsGeneratingReplies(false);
     setScreen('analyzing');
 
     try {
@@ -314,18 +292,19 @@ export default function App() {
         return;
       }
 
-      const provisionalVibeCheck = buildProvisionalVibeCheck(ocr);
+      setChatTranscript(ocr.transcriptText);
 
-      applyConversationResult(ocr, provisionalVibeCheck);
-      setVibeCheckStatus('provisional');
-      setScreen('vibecheck');
-      console.info('[Wingr timing] vibe-check-result', { result: 'provisional' });
-      startVibeCheckRefinement({
-        fallbackVibeCheck: provisionalVibeCheck,
+      const completedVibeCheck = await getCompletedVibeCheck({
         nextExtraContext,
-        requestId,
         transcriptText: ocr.transcriptText,
       });
+
+      if (analysisRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      applyConversationResult(ocr, completedVibeCheck);
+      setScreen('vibecheck');
     } catch (error) {
       const message =
         error instanceof Error
@@ -386,21 +365,28 @@ export default function App() {
     }
 
     const nextContext = extraContext.trim();
+    const cachedReplies = getVisibleRepliesForTone(replyBatch, selectedTone, shownReplyIds);
+
+    setReplyContext(nextContext);
+    setScreen('replies');
+
+    if (cachedReplies.length === 2) {
+      setVisibleReplies(cachedReplies);
+      setShownReplyIds((currentShownReplyIds) => appendShownReplyIds(currentShownReplyIds, cachedReplies));
+      return;
+    }
 
     setIsGeneratingReplies(true);
-    setReplyContext(nextContext);
     setVisibleReplies([]);
 
     try {
       const replyVibeCheck = await getReplyVibeCheck();
-      const initialTone = replyVibeCheck.bestTone;
-
-      setVibeCheck(replyVibeCheck);
-      setSelectedTone(initialTone);
-      setScreen('replies');
-
-      const nextReplyBatch = await generateRepliesForTone(initialTone, nextContext, replyVibeCheck);
-      const nextVisibleReplies = (nextReplyBatch[initialTone] ?? []).slice(0, 2);
+      const nextReplyBatch = await generateRepliesForTone({
+        tone: selectedTone,
+        nextContext,
+        nextVibeCheck: replyVibeCheck,
+      });
+      const nextVisibleReplies = (nextReplyBatch[selectedTone] ?? []).slice(0, 2);
 
       setReplyBatch((currentReplyBatch) => mergeReplyBatch(currentReplyBatch, nextReplyBatch));
       setVisibleReplies(nextVisibleReplies);
@@ -428,7 +414,10 @@ export default function App() {
     setIsGeneratingReplies(true);
 
     try {
-      const nextReplyBatch = await generateRepliesForTone(tone, replyContext);
+      const nextReplyBatch = await generateRepliesForTone({
+        tone,
+        nextContext: replyContext,
+      });
       const nextVisibleReplies = (nextReplyBatch[tone] ?? []).slice(0, 2);
 
       setReplyBatch((currentReplyBatch) => mergeReplyBatch(currentReplyBatch, nextReplyBatch));
@@ -436,6 +425,8 @@ export default function App() {
       setShownReplyIds((currentShownReplyIds) =>
         appendShownReplyIds(currentShownReplyIds, nextVisibleReplies),
       );
+    } catch (error) {
+      throw error;
     } finally {
       setIsGeneratingReplies(false);
     }
@@ -453,7 +444,10 @@ export default function App() {
     setIsGeneratingReplies(true);
 
     try {
-      const nextReplyBatch = await generateRepliesForTone(selectedTone, replyContext);
+      const nextReplyBatch = await generateRepliesForTone({
+        tone: selectedTone,
+        nextContext: replyContext,
+      });
       const nextVisibleReplies = (nextReplyBatch[selectedTone] ?? []).slice(0, 2);
 
       setReplyBatch((currentReplyBatch) => mergeReplyBatch(currentReplyBatch, nextReplyBatch));
@@ -461,6 +455,8 @@ export default function App() {
       setShownReplyIds((currentShownReplyIds) =>
         appendShownReplyIds(currentShownReplyIds, nextVisibleReplies),
       );
+    } catch (error) {
+      throw error;
     } finally {
       setIsGeneratingReplies(false);
     }
@@ -648,7 +644,9 @@ function AnalyzingScreen({ selectedScreenshotUri }: { selectedScreenshotUri: str
       ) : null}
       <ActivityIndicator color={COLORS.blue} size="large" />
       <Text style={styles.analyzingTitle}>Extracting the conversation...</Text>
-      <Text style={styles.analyzingText}>Wingr is reading the screenshot and preparing the vibe check.</Text>
+      <Text style={styles.analyzingText}>
+        Wingr is reading the screenshot and checking the vibe.
+      </Text>
     </View>
   );
 }
@@ -932,7 +930,7 @@ function RepliesScreen({
             ) : (
               <>
                 <Refresh color={COLORS.white} size={16} />
-                <Text style={styles.newRepliesButtonText}>Get new replies</Text>
+                <Text style={styles.newRepliesButtonText}>New Replies</Text>
               </>
             )}
           </TouchableOpacity>
@@ -1066,23 +1064,30 @@ function ToneBottomSheet({
               const ToneIcon = option.icon;
 
               return (
-                <Pressable
+                <TouchableOpacity
+                  activeOpacity={0.88}
                   accessibilityRole="button"
                   accessibilityState={{ selected }}
                   key={option.value}
                   onPress={() => onSelect(option.value)}
-                  style={({ pressed }) => [
+                  style={[
                     styles.toneOption,
                     selected && styles.toneOptionSelected,
-                    pressed && styles.uploadButtonPressed,
                   ]}
                 >
-                  <ToneIcon color={selected ? COLORS.blue : '#D6D6DB'} size={20} />
-                  <Text style={[styles.toneOptionText, selected && styles.toneOptionTextSelected]}>
-                    {option.label}
-                  </Text>
-                  {selected ? <CheckCircle color={COLORS.blue} size={21} /> : null}
-                </Pressable>
+                  <View style={styles.toneOptionLeft}>
+                    <ToneIcon color={selected ? COLORS.blue : '#D6D6DB'} size={20} />
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.toneOptionText, selected && styles.toneOptionTextSelected]}
+                    >
+                      {option.label}
+                    </Text>
+                  </View>
+                  <View style={styles.toneOptionCheckSlot}>
+                    {selected ? <CheckCircle color={COLORS.blue} size={21} /> : null}
+                  </View>
+                </TouchableOpacity>
               );
             })}
           </View>
@@ -1396,27 +1401,29 @@ const styles = StyleSheet.create({
   repliesControlsRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 10,
+    gap: 12,
     width: '100%',
   },
   toneSelector: {
     alignItems: 'center',
+    alignSelf: 'flex-start',
     borderColor: '#B7B7BE',
     borderRadius: 999,
     borderWidth: 1,
-    flexDirection: 'row',
     flexShrink: 0,
-    gap: 6,
+    flexDirection: 'row',
+    gap: 9,
     height: 40,
     justifyContent: 'center',
-    paddingHorizontal: 12,
-    width: 96,
+    paddingHorizontal: 22,
+    width: 190,
   },
   toneSelectorText: {
     color: '#D6D6DB',
     fontFamily: FONTS.bodyRegular,
     fontSize: 13,
     lineHeight: 17,
+    minWidth: 0,
   },
   replyCards: {
     gap: 14,
@@ -1545,6 +1552,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheetPanel: {
+    alignItems: 'stretch',
     backgroundColor: '#111113',
     borderTopColor: '#2B2B2F',
     borderTopLeftRadius: 26,
@@ -1571,7 +1579,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   toneOptions: {
-    gap: 10,
+    gap: 12,
+    width: '100%',
   },
   toneOption: {
     alignItems: 'center',
@@ -1580,23 +1589,38 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
     flexDirection: 'row',
-    gap: 12,
-    minHeight: 58,
-    paddingHorizontal: 16,
+    justifyContent: 'space-between',
+    minHeight: 64,
+    paddingHorizontal: 24,
+    width: '100%',
   },
   toneOptionSelected: {
     backgroundColor: '#0C1427',
     borderColor: COLORS.blue,
   },
+  toneOptionLeft: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: 12,
+    minWidth: 0,
+  },
   toneOptionText: {
-    color: COLORS.white,
+    color: 'rgba(255, 255, 255, 0.92)',
     flex: 1,
     fontFamily: FONTS.body,
     fontSize: 18,
     fontWeight: '600',
     lineHeight: 24,
+    minWidth: 0,
   },
   toneOptionTextSelected: {
     color: '#6EA0FF',
+  },
+  toneOptionCheckSlot: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 12,
+    width: 24,
   },
 });

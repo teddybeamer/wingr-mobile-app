@@ -48,8 +48,21 @@ const MOCK_VIBE_CHECK: VibeCheck = {
 
 const RECOMMENDED_TONES: RecommendedReplyTone[] = ['direct', 'playful', 'casualSmallTalk'];
 
+type BackendVibeCheckPayload = Partial<VibeCheck> & {
+  bestMove?: string;
+  confidence?: VibeCheck['vibeConfidence'];
+  energy?: string;
+  interest?: VibeCheck['interestLevel'];
+  recommendedTone?: RecommendedReplyTone | 'casual_small_talk';
+};
+
 type BackendAnalyzeResponse = {
-  vibeCheck?: VibeCheck;
+  vibeCheck?: BackendVibeCheckPayload;
+  bestMove?: string;
+  confidence?: VibeCheck['vibeConfidence'];
+  energy?: string;
+  interest?: VibeCheck['interestLevel'];
+  recommendedTone?: RecommendedReplyTone | 'casual_small_talk';
   replyBatch?: ReplyBatch;
   interestLevel?: VibeCheck['interestLevel'];
   conversationEnergy?: string;
@@ -92,15 +105,20 @@ function normalizeBestTone(tone: unknown): RecommendedReplyTone {
 
 function normalizeVibeCheck(response: BackendAnalyzeResponse): VibeCheck {
   const candidate = response.vibeCheck ?? response;
+  const interestLevel = candidate.interestLevel ?? candidate.interest;
+  const conversationEnergy = candidate.conversationEnergy ?? candidate.energy;
+  const bestTone = candidate.bestTone ?? candidate.recommendedTone;
+  const summary = candidate.summary ?? candidate.bestMove;
+  const vibeConfidence = candidate.vibeConfidence ?? candidate.confidence;
 
   return {
-    interestLevel: candidate.interestLevel ?? MOCK_VIBE_CHECK.interestLevel,
-    conversationEnergy: candidate.conversationEnergy ?? MOCK_VIBE_CHECK.conversationEnergy,
-    bestTone: normalizeBestTone(candidate.bestTone),
+    interestLevel: interestLevel ?? MOCK_VIBE_CHECK.interestLevel,
+    conversationEnergy: conversationEnergy ?? MOCK_VIBE_CHECK.conversationEnergy,
+    bestTone: normalizeBestTone(bestTone),
     risk: candidate.risk ?? MOCK_VIBE_CHECK.risk,
-    summary: candidate.summary ?? MOCK_VIBE_CHECK.summary,
+    summary: summary ?? MOCK_VIBE_CHECK.summary,
     targetLanguage: candidate.targetLanguage ?? MOCK_VIBE_CHECK.targetLanguage,
-    vibeConfidence: candidate.vibeConfidence ?? MOCK_VIBE_CHECK.vibeConfidence,
+    vibeConfidence: vibeConfidence ?? MOCK_VIBE_CHECK.vibeConfidence,
     contextWouldImproveReplyQuality:
       candidate.contextWouldImproveReplyQuality ??
       MOCK_VIBE_CHECK.contextWouldImproveReplyQuality,

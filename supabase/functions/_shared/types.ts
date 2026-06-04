@@ -16,6 +16,16 @@ export type VibeCheck = {
   contextWouldImproveReplyQuality?: boolean;
 };
 
+export type GeminiVibeCheck = {
+  interest: VibeCheck['interestLevel'];
+  energy: string;
+  bestMove: string;
+  risk: string;
+  recommendedTone: RecommendedReplyTone;
+  confidence: NonNullable<VibeCheck['vibeConfidence']>;
+  targetLanguage?: string;
+};
+
 export type SuggestedReply = {
   id: string;
   tone: ReplyTone;

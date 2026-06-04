@@ -1,6 +1,7 @@
 import { getContextNotes } from './context-notes.ts';
 import type {
   ContextNotes,
+  GeminiVibeCheck,
   ReplyBatch,
   RepliesRequest,
   ReplyTone,
@@ -60,6 +61,45 @@ export const vibeCheckSchema = {
     'vibeConfidence',
     'contextWouldImproveReplyQuality',
   ],
+  type: 'object',
+} as const;
+
+export const geminiVibeCheckSchema = {
+  additionalProperties: false,
+  properties: {
+    bestMove: {
+      description:
+        'One short next-step recommendation for the user. Keep it concise and practical.',
+      type: 'string',
+    },
+    confidence: {
+      enum: ['low', 'medium', 'high'],
+      type: 'string',
+    },
+    energy: {
+      description:
+        'One short sentence about the current social energy in the chat. Avoid labels or debugging language.',
+      type: 'string',
+    },
+    interest: {
+      enum: ['Low', 'Medium', 'High', 'Unclear'],
+      type: 'string',
+    },
+    recommendedTone: {
+      enum: ['direct', 'playful', 'casualSmallTalk'],
+      type: 'string',
+    },
+    risk: {
+      description: 'A very short warning about what to avoid next.',
+      type: 'string',
+    },
+    targetLanguage: {
+      description:
+        'The dominant natural language of the actual chat messages, written as an English language name such as Danish, Spanish, French, German, or English.',
+      type: 'string',
+    },
+  },
+  required: ['interest', 'energy', 'bestMove', 'risk', 'recommendedTone', 'confidence', 'targetLanguage'],
   type: 'object',
 } as const;
 
@@ -123,6 +163,38 @@ export function buildVibeCheckPrompt({ extraContext, transcriptText }: VibeCheck
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+export function buildGeminiVibeCheckPrompt({ extraContext, transcriptText }: VibeCheckRequest) {
+  return [
+    'Analyze this dating chat and return JSON only.',
+    'Keep it fast and concise.',
+    'Rules:',
+    '- interest: Low, Medium, High, or Unclear',
+    '- recommendedTone: direct, playful, or casualSmallTalk',
+    '- confidence: low, medium, or high',
+    '- targetLanguage: dominant chat language as an English language name',
+    '- Write energy, bestMove, and risk in the same natural language as the chat when clear.',
+    '- Keep energy and bestMove to one short sentence each.',
+    '- Keep risk very short.',
+    extraContext ? `Extra context: ${extraContext}` : '',
+    'Transcript:',
+    transcriptText,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function getMockGeminiVibeCheck(): GeminiVibeCheck {
+  return {
+    bestMove: 'Keep it light and move the chat forward with one confident question.',
+    confidence: 'medium',
+    energy: "They're engaged enough, but the chat needs a sharper next move.",
+    interest: 'Medium',
+    recommendedTone: 'playful',
+    risk: "Don't over-invest.",
+    targetLanguage: 'English',
+  };
 }
 
 export function buildRepliesPrompt({
