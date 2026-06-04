@@ -67,30 +67,24 @@ export const vibeCheckSchema = {
 export const geminiVibeCheckSchema = {
   additionalProperties: false,
   properties: {
-    bestMove: {
+    avoid: {
       description:
-        'One short next-step recommendation for the user. Keep it concise and practical.',
+        'A short, casual warning about what the user should not do next.',
       type: 'string',
     },
     confidence: {
-      enum: ['low', 'medium', 'high'],
-      type: 'string',
+      description: 'A number from 0 to 1 showing how confident the read is.',
+      maximum: 1,
+      minimum: 0,
+      type: 'number',
     },
-    energy: {
+    oneLiner: {
       description:
-        'One short sentence about the current social energy in the chat. Avoid labels or debugging language.',
-      type: 'string',
-    },
-    interest: {
-      enum: ['Low', 'Medium', 'High', 'Unclear'],
+        'One casual, useful read of the vibe. It should sound like a smart friend, not a report.',
       type: 'string',
     },
     recommendedTone: {
-      enum: ['direct', 'playful', 'casualSmallTalk'],
-      type: 'string',
-    },
-    risk: {
-      description: 'A very short warning about what to avoid next.',
+      enum: ['Playful', 'Flirty', 'Direct', 'Casual Small Talk', 'Small talk', 'Make it right'],
       type: 'string',
     },
     targetLanguage: {
@@ -98,8 +92,18 @@ export const geminiVibeCheckSchema = {
         'The dominant natural language of the actual chat messages, written as an English language name such as Danish, Spanish, French, German, or English.',
       type: 'string',
     },
+    theirEnergy: {
+      description:
+        'One short phrase or sentence about how the other person is showing up.',
+      type: 'string',
+    },
+    yourMove: {
+      description:
+        'One short next move for the user.',
+      type: 'string',
+    },
   },
-  required: ['interest', 'energy', 'bestMove', 'risk', 'recommendedTone', 'confidence', 'targetLanguage'],
+  required: ['oneLiner', 'theirEnergy', 'yourMove', 'avoid', 'recommendedTone', 'confidence', 'targetLanguage'],
   type: 'object',
 } as const;
 
@@ -167,16 +171,23 @@ export function buildVibeCheckPrompt({ extraContext, transcriptText }: VibeCheck
 
 export function buildGeminiVibeCheckPrompt({ extraContext, transcriptText }: VibeCheckRequest) {
   return [
-    'Analyze this dating chat and return JSON only.',
-    'Keep it fast and concise.',
+    'You are Wingr, a socially sharp texting assistant.',
+    'Read the vibe like a smart friend, not like a report.',
+    'Return strict JSON only.',
     'Rules:',
-    '- interest: Low, Medium, High, or Unclear',
-    '- recommendedTone: direct, playful, or casualSmallTalk',
-    '- confidence: low, medium, or high',
-    '- targetLanguage: dominant chat language as an English language name',
-    '- Write energy, bestMove, and risk in the same natural language as the chat when clear.',
-    '- Keep energy and bestMove to one short sentence each.',
-    '- Keep risk very short.',
+    '- Keep it short, casual, specific, and actually useful.',
+    '- Match the natural language of the chat for oneLiner, theirEnergy, yourMove, and avoid.',
+    '- Do not mix languages.',
+    '- targetLanguage is the dominant chat language as an English language name.',
+    '- recommendedTone must be one of: Playful, Flirty, Direct, Casual Small Talk, Small talk, Make it right.',
+    '- confidence must be a number from 0 to 1.',
+    '- Avoid robotic/report words: moderate, neutral, indicates, suggests, engagement, rapport, dynamic, pursue, reciprocate, initiate.',
+    '- Prefer natural phrases like: a bit dry, still interested, low effort, playful, curious, don\'t overdo it, make it easy to answer, keep it light.',
+    '- Keep oneLiner, theirEnergy, yourMove, and avoid short enough for a mobile card.',
+    'Bad example:',
+    '{"oneLiner":"Interest is moderate.","theirEnergy":"Energy is neutral.","yourMove":"Ask a playful follow-up question.","avoid":"Avoid overpursuing.","recommendedTone":"Playful","confidence":0.7,"targetLanguage":"English"}',
+    'Good example:',
+    '{"oneLiner":"They are not cold, but they are making you do some of the work.","theirEnergy":"Warm, but a little low-effort.","yourMove":"Keep it light and give them something easy to answer.","avoid":"Do not send a paragraph here.","recommendedTone":"Playful","confidence":0.82,"targetLanguage":"English"}',
     extraContext ? `Extra context: ${extraContext}` : '',
     'Transcript:',
     transcriptText,
@@ -187,13 +198,13 @@ export function buildGeminiVibeCheckPrompt({ extraContext, transcriptText }: Vib
 
 export function getMockGeminiVibeCheck(): GeminiVibeCheck {
   return {
-    bestMove: 'Keep it light and move the chat forward with one confident question.',
-    confidence: 'medium',
-    energy: "They're engaged enough, but the chat needs a sharper next move.",
-    interest: 'Medium',
-    recommendedTone: 'playful',
-    risk: "Don't over-invest.",
+    avoid: "Don't send a paragraph here.",
+    confidence: 0.72,
+    oneLiner: 'They are not cold, but they are making you do some of the work.',
+    recommendedTone: 'Playful',
     targetLanguage: 'English',
+    theirEnergy: 'Warm, but a little low-effort.',
+    yourMove: 'Keep it light and make it easy to answer.',
   };
 }
 

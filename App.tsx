@@ -599,12 +599,12 @@ function UploadScreenshotScreen({
             </Pressable>
           </View>
 
-          <View className="mt-5 aspect-[288/332] w-full overflow-hidden rounded-[20px] bg-white">
+          <View className="mt-5 aspect-[288/332] w-full overflow-hidden rounded-[20px] bg-[#101010]">
             {selectedScreenshotUri ? (
               <Image
                 accessibilityIgnoresInvertColors
                 className="h-full w-full"
-                resizeMode="contain"
+                resizeMode="cover"
                 source={{ uri: selectedScreenshotUri }}
               />
             ) : (

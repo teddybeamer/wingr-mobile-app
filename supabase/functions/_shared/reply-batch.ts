@@ -1,5 +1,6 @@
 import { normalizeVibeCheckLanguage, repliesLookWrongLanguage } from './language.ts';
 import { callOpenRouterStructured } from './openrouter.ts';
+import { withSafeReplyTranscript } from './prompt-budget.ts';
 import {
   buildReplyBatchPrompt,
   buildReplyLanguageRepairPrompt,
@@ -33,9 +34,10 @@ function hasWrongLanguageInBatch(replyBatch: ReplyBatch, request: RepliesRequest
 }
 
 export async function generateReplyBatch(request: RepliesRequest, selectedTones: ReplyTone[]) {
+  const safeRequest = withSafeReplyTranscript(request);
   const normalizedRequest = {
-    ...request,
-    vibeCheck: normalizeVibeCheckLanguage(request.vibeCheck, request.transcriptText),
+    ...safeRequest,
+    vibeCheck: normalizeVibeCheckLanguage(safeRequest.vibeCheck, safeRequest.transcriptText),
   };
 
   try {

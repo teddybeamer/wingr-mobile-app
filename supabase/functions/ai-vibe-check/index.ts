@@ -2,6 +2,7 @@ import { handleCors } from '../_shared/cors.ts';
 import { error, json, readJson } from '../_shared/http.ts';
 import { inferTranscriptLanguage } from '../_shared/language.ts';
 import { callOpenRouterStructured } from '../_shared/openrouter.ts';
+import { withSafeVibeCheckTranscript } from '../_shared/prompt-budget.ts';
 import {
   buildGeminiVibeCheckPrompt,
   geminiVibeCheckSchema,
@@ -31,10 +32,11 @@ Deno.serve(async (request) => {
     }
 
     let vibeCheck: GeminiVibeCheck;
+    const safeBody = withSafeVibeCheckTranscript(body);
 
     try {
       const rawVibeCheck = await callOpenRouterStructured<GeminiVibeCheck>({
-        prompt: buildGeminiVibeCheckPrompt(body),
+        prompt: buildGeminiVibeCheckPrompt(safeBody),
         schema: geminiVibeCheckSchema,
         schemaName: 'wingr_vibe_check_gemini_flash_lite',
         task: 'vibeCheck',
@@ -42,14 +44,20 @@ Deno.serve(async (request) => {
 
       vibeCheck = {
         ...rawVibeCheck,
-        targetLanguage: normalizeTargetLanguage(rawVibeCheck.targetLanguage, body.transcriptText),
+        targetLanguage: normalizeTargetLanguage(rawVibeCheck.targetLanguage, safeBody.transcriptText),
       };
     } catch (aiError) {
       console.error('ai-vibe-check fallback', aiError);
+      console.warn('[Wingr AI] Vibecheck provider: fallback mock', {
+        endpointType: 'local fallback',
+        model: 'mock',
+        result: 'fallback',
+        task: 'vibeCheck',
+      });
       const mockVibeCheck = getMockGeminiVibeCheck();
       vibeCheck = {
         ...mockVibeCheck,
-        targetLanguage: normalizeTargetLanguage(mockVibeCheck.targetLanguage, body.transcriptText),
+        targetLanguage: normalizeTargetLanguage(mockVibeCheck.targetLanguage, safeBody.transcriptText),
       };
     }
 

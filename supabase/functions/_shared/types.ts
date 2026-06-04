@@ -17,12 +17,12 @@ export type VibeCheck = {
 };
 
 export type GeminiVibeCheck = {
-  interest: VibeCheck['interestLevel'];
-  energy: string;
-  bestMove: string;
-  risk: string;
-  recommendedTone: RecommendedReplyTone;
-  confidence: NonNullable<VibeCheck['vibeConfidence']>;
+  oneLiner: string;
+  theirEnergy: string;
+  yourMove: string;
+  avoid: string;
+  recommendedTone: 'Playful' | 'Flirty' | 'Direct' | 'Casual Small Talk' | 'Small talk' | 'Make it right';
+  confidence: number;
   targetLanguage?: string;
 };
 

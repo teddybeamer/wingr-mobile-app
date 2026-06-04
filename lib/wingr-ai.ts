@@ -46,23 +46,29 @@ const MOCK_VIBE_CHECK: VibeCheck = {
   contextWouldImproveReplyQuality: false,
 };
 
-const RECOMMENDED_TONES: RecommendedReplyTone[] = ['direct', 'playful', 'casualSmallTalk'];
-
 type BackendVibeCheckPayload = Partial<VibeCheck> & {
+  avoid?: string;
   bestMove?: string;
-  confidence?: VibeCheck['vibeConfidence'];
+  confidence?: VibeCheck['vibeConfidence'] | number;
   energy?: string;
   interest?: VibeCheck['interestLevel'];
-  recommendedTone?: RecommendedReplyTone | 'casual_small_talk';
+  oneLiner?: string;
+  recommendedTone?: RecommendedReplyTone | 'casual_small_talk' | string;
+  theirEnergy?: string;
+  yourMove?: string;
 };
 
 type BackendAnalyzeResponse = {
   vibeCheck?: BackendVibeCheckPayload;
+  avoid?: string;
   bestMove?: string;
-  confidence?: VibeCheck['vibeConfidence'];
+  confidence?: VibeCheck['vibeConfidence'] | number;
   energy?: string;
   interest?: VibeCheck['interestLevel'];
-  recommendedTone?: RecommendedReplyTone | 'casual_small_talk';
+  oneLiner?: string;
+  recommendedTone?: RecommendedReplyTone | 'casual_small_talk' | string;
+  theirEnergy?: string;
+  yourMove?: string;
   replyBatch?: ReplyBatch;
   interestLevel?: VibeCheck['interestLevel'];
   conversationEnergy?: string;
@@ -92,33 +98,67 @@ function logTiming(label: string, startedAt: number, metadata?: Record<string, u
 }
 
 function normalizeBestTone(tone: unknown): RecommendedReplyTone {
-  if (tone === 'casual_small_talk') {
+  if (typeof tone !== 'string') {
+    return 'playful';
+  }
+
+  const normalizedTone = tone.trim().toLowerCase().replace(/[_-]+/g, ' ');
+
+  if (
+    normalizedTone === 'casual small talk' ||
+    normalizedTone === 'small talk' ||
+    normalizedTone === 'casualsmalltalk'
+  ) {
     return 'casualSmallTalk';
   }
 
-  if (RECOMMENDED_TONES.includes(tone as RecommendedReplyTone)) {
-    return tone as RecommendedReplyTone;
+  if (normalizedTone === 'direct' || normalizedTone === 'make it right') {
+    return 'direct';
+  }
+
+  if (normalizedTone === 'playful' || normalizedTone === 'flirty') {
+    return 'playful';
   }
 
   return 'playful';
 }
 
+function normalizeVibeConfidence(confidence: BackendVibeCheckPayload['confidence']): VibeCheck['vibeConfidence'] {
+  if (typeof confidence === 'number') {
+    if (confidence >= 0.78) {
+      return 'high';
+    }
+
+    if (confidence <= 0.45) {
+      return 'low';
+    }
+
+    return 'medium';
+  }
+
+  if (confidence === 'low' || confidence === 'medium' || confidence === 'high') {
+    return confidence;
+  }
+
+  return MOCK_VIBE_CHECK.vibeConfidence;
+}
+
 function normalizeVibeCheck(response: BackendAnalyzeResponse): VibeCheck {
   const candidate = response.vibeCheck ?? response;
   const interestLevel = candidate.interestLevel ?? candidate.interest;
-  const conversationEnergy = candidate.conversationEnergy ?? candidate.energy;
+  const conversationEnergy = candidate.conversationEnergy ?? candidate.theirEnergy ?? candidate.energy;
   const bestTone = candidate.bestTone ?? candidate.recommendedTone;
-  const summary = candidate.summary ?? candidate.bestMove;
+  const summary = candidate.summary ?? candidate.oneLiner ?? candidate.bestMove ?? candidate.yourMove;
   const vibeConfidence = candidate.vibeConfidence ?? candidate.confidence;
 
   return {
     interestLevel: interestLevel ?? MOCK_VIBE_CHECK.interestLevel,
     conversationEnergy: conversationEnergy ?? MOCK_VIBE_CHECK.conversationEnergy,
     bestTone: normalizeBestTone(bestTone),
-    risk: candidate.risk ?? MOCK_VIBE_CHECK.risk,
+    risk: candidate.risk ?? candidate.avoid ?? MOCK_VIBE_CHECK.risk,
     summary: summary ?? MOCK_VIBE_CHECK.summary,
     targetLanguage: candidate.targetLanguage ?? MOCK_VIBE_CHECK.targetLanguage,
-    vibeConfidence: vibeConfidence ?? MOCK_VIBE_CHECK.vibeConfidence,
+    vibeConfidence: normalizeVibeConfidence(vibeConfidence),
     contextWouldImproveReplyQuality:
       candidate.contextWouldImproveReplyQuality ??
       MOCK_VIBE_CHECK.contextWouldImproveReplyQuality,
