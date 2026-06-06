@@ -2,6 +2,7 @@ import { getContextNotes } from './context-notes.ts';
 import type {
   ContextNotes,
   GeminiVibeCheck,
+  ParsedConversation,
   ReplyBatch,
   RepliesRequest,
   ReplyTone,
@@ -28,6 +29,8 @@ export const vibeCheckSchema = {
       type: 'boolean',
     },
     interestLevel: {
+      description:
+        'Low, Medium, High, or Unclear based on the other person\'s romantic interest signals. High includes clear flirting, warm positive emojis, compliments, questions back, plan-making, or enthusiastic engagement.',
       enum: ['Low', 'Medium', 'High', 'Unclear'],
       type: 'string',
     },
@@ -149,7 +152,37 @@ export function createReplyBatchSchema(selectedTones: ReplyTone[]) {
   } as const;
 }
 
-export function buildVibeCheckPrompt({ extraContext, transcriptText }: VibeCheckRequest) {
+function formatSpeakerAttribution(parsedConversation?: ParsedConversation) {
+  if (!parsedConversation) {
+    return '';
+  }
+
+  return [
+    'Speaker attribution:',
+    `- latestMessageSender: ${parsedConversation.latestMessageSender}`,
+    `- shouldGenerateDirectReply: ${parsedConversation.shouldGenerateDirectReply}`,
+    `- speakerAttributionConfidence: ${parsedConversation.speakerAttributionConfidence.toFixed(2)}`,
+    '- Message speaker values: user = screenshot owner/app user, other = the person they are talking to, unknown = uncertain/system.',
+    '- Message xPosition values: right usually means user, left usually means other, center usually means system or unknown.',
+    '- ME/user is always the screenshot owner.',
+    '- THEM/other is always the person ME/user is talking to.',
+    '- Generate replies only as user/ME to send to other/THEM.',
+    '- Never generate a reply as other/THEM.',
+    '- Never generate a reply to a ME/user message.',
+    '- If latestMessageSender is me, treat the task as a follow-up only, not an answer.',
+    'Structured messages:',
+    ...parsedConversation.messages.map(
+      (message) =>
+        `- ${message.id}: speaker=${message.speaker}; sender=${message.sender}; xPosition=${message.xPosition}; confidence=${message.confidence.toFixed(2)}; text="${message.text}"`,
+    ),
+  ].join('\n');
+}
+
+export function buildVibeCheckPrompt({
+  extraContext,
+  parsedConversation,
+  transcriptText,
+}: VibeCheckRequest) {
   return [
     'Analyze this dating chat for Wingr and return concise JSON.',
     'Rules:',
@@ -157,10 +190,25 @@ export function buildVibeCheckPrompt({ extraContext, transcriptText }: VibeCheck
     '- targetLanguage is the dominant chat language, ignoring speaker labels.',
     '- Focus on social dynamics and the next-reply strategy.',
     '- conversationEnergy must explain what is happening, not just label the chat.',
+    '- interestLevel must judge the other person\'s interest, not the user\'s interest.',
+    '- Use High when the other person is flirting, complimenting, asking questions back, suggesting plans, extending the chat, or using repeated warm/positive emojis like 😍, 😘, 🥰, 😉, ❤️, 😂, 😊, or 😏.',
+    '- A short reply can still be High if it is clearly warm or flirty, for example "haha yesss 😍😍", "you\'re cute lol", "miss you", "when are you free?", or "come over".',
+    '- Use Medium for responsive but mostly neutral energy: polite replies, light laughter, one positive emoji, or some openness without clear flirting or pursuit.',
+    '- Use Low for closed, avoidant, dry, or one-word replies with no questions back and no warmth.',
+    '- Use Unclear only when the transcript or speaker ownership is too ambiguous to judge.',
     '- Avoid debug terms like OCR, confidence score, parsed, or Speaker A.',
+    '- Only mention typos when they clearly appear in THEM\'s original message and materially affect the next reply.',
+    '- If a strange word may be OCR noise, ignore it completely instead of explaining or asking about it.',
     '- vibeConfidence is low only when the transcript is short, ambiguous, or missing key context.',
     '- contextWouldImproveReplyQuality is true only when context is likely necessary.',
     '- Keep every field short and mobile-friendly.',
+    'Interest examples:',
+    '- THEM: "haha yesss 😍😍" -> interestLevel High',
+    '- THEM: "you\'re cute lol" -> interestLevel High',
+    '- THEM: "when are you free?" -> interestLevel High',
+    '- THEM: "haha nice" -> interestLevel Medium',
+    '- THEM: "ok" -> interestLevel Low',
+    formatSpeakerAttribution(parsedConversation),
     extraContext ? `Extra context: ${extraContext}` : '',
     'Transcript:',
     transcriptText,
@@ -169,12 +217,20 @@ export function buildVibeCheckPrompt({ extraContext, transcriptText }: VibeCheck
     .join('\n');
 }
 
-export function buildGeminiVibeCheckPrompt({ extraContext, transcriptText }: VibeCheckRequest) {
+export function buildGeminiVibeCheckPrompt({
+  extraContext,
+  parsedConversation,
+  transcriptText,
+}: VibeCheckRequest) {
   return [
     'You are Wingr, a socially sharp texting assistant.',
     'Read the vibe like a smart friend, not like a report.',
     'Return strict JSON only.',
     'Rules:',
+    '- Speaker labels are strict: ME is the app user; THEM is the person ME is talking to.',
+    '- Judge THEM\'s energy and interest toward ME, never the reverse.',
+    '- If the latest message is ME, do not pretend THEM just said it.',
+    '- Do not use profile names, account names, device owner names, or any name outside the actual chat transcript.',
     '- Keep it short, casual, specific, and actually useful.',
     '- Match the natural language of the chat for oneLiner, theirEnergy, yourMove, and avoid.',
     '- Do not mix languages.',
@@ -182,8 +238,11 @@ export function buildGeminiVibeCheckPrompt({ extraContext, transcriptText }: Vib
     '- recommendedTone must be one of: Playful, Flirty, Direct, Casual Small Talk, Small talk, Make it right.',
     '- confidence must be a number from 0 to 1.',
     '- Avoid robotic/report words: moderate, neutral, indicates, suggests, engagement, rapport, dynamic, pursue, reciprocate, initiate.',
+    '- Only comment on typos if the typo is clearly in THEM\'s original message and affects what ME should reply.',
+    '- If a strange word may be OCR noise or model noise, ignore it. Do not mention random unclear tokens.',
     '- Prefer natural phrases like: a bit dry, still interested, low effort, playful, curious, don\'t overdo it, make it easy to answer, keep it light.',
     '- Keep oneLiner, theirEnergy, yourMove, and avoid short enough for a mobile card.',
+    formatSpeakerAttribution(parsedConversation),
     'Bad example:',
     '{"oneLiner":"Interest is moderate.","theirEnergy":"Energy is neutral.","yourMove":"Ask a playful follow-up question.","avoid":"Avoid overpursuing.","recommendedTone":"Playful","confidence":0.7,"targetLanguage":"English"}',
     'Good example:',
@@ -211,6 +270,7 @@ export function getMockGeminiVibeCheck(): GeminiVibeCheck {
 export function buildRepliesPrompt({
   contextNotes,
   extraContext,
+  parsedConversation,
   selectedTone,
   transcriptText,
   userStylePreference,
@@ -220,6 +280,7 @@ export function buildRepliesPrompt({
     {
       contextNotes,
       extraContext,
+      parsedConversation,
       selectedTone,
       transcriptText,
       userStylePreference,
@@ -233,6 +294,7 @@ export function buildReplyBatchPrompt(
   {
     contextNotes,
     extraContext,
+    parsedConversation,
     selectedTone,
     transcriptText,
     userStylePreference,
@@ -254,6 +316,7 @@ export function buildReplyBatchPrompt(
     `Interest level: ${vibeCheck.interestLevel}`,
     `Conversation energy: ${vibeCheck.conversationEnergy}`,
     `Risk to avoid: ${vibeCheck.risk}`,
+    formatSpeakerAttribution(parsedConversation),
     formatContextNotes(notes),
     'Rules:',
     '- Return one replyBatch object with the requested tones as keys.',
@@ -262,6 +325,19 @@ export function buildReplyBatchPrompt(
     '- Do not translate the conversation into English unless the transcript itself is primarily English.',
     '- Keep each reply concise, realistic to send, and distinct from the others in the same tone.',
     '- Avoid over-investing.',
+    '- Never include random OCR-looking tokens, unexplained all-caps strings, or unclear mixed-symbol words in replies.',
+    '- If an unclear word appears in the transcript, reply naturally to the visible context instead of asking what that unclear word means.',
+    '- Do not mention typos unless the typo is clearly in THEM\'s original message and the reply genuinely needs to address it.',
+    '- Do not mention ME\'s name unless that name appears naturally in the actual chat messages.',
+    '- Speaker labels are strict: ME is the app user; THEM is the other person.',
+    '- Every reply must be something ME can send to THEM.',
+    '- Generate replies from the screenshot owner/user perspective only.',
+    '- Only respond to the latest message whose speaker is other/THEM.',
+    '- Never reply as THEM or as the other person.',
+    '- Never write a reply that answers a ME message as if THEM had sent it.',
+    '- If latestMessageSender is me or shouldGenerateDirectReply is false, write natural follow-ups only. Do not make it sound like THEM just asked something.',
+    '- Do not use profile names, account names, device owner names, or inferred real names.',
+    '- If speaker detection is uncertain, avoid names and avoid assumptions.',
     '- The tone field on each reply must match its tone bucket exactly.',
     toneInstructions,
     '- Context ownership is strict: userFacts are about the user; themFacts are about the other person.',
@@ -293,6 +369,8 @@ export function buildReplyLanguageRepairPrompt(
     'Language repair:',
     `- The previous attempt did not follow the language requirement. Rewrite exactly two replies in ${targetLanguage}.`,
     '- Do not write any English words unless they are names, app names, game names, or quoted terms already present in the transcript.',
+    '- Do not carry over random OCR-looking tokens or unclear mixed-symbol words from the previous replies.',
+    '- Do not mention ME\'s name unless that name appears naturally in the actual chat messages.',
     '- Preserve the selected tone and all ownership rules.',
     'Previous invalid replies:',
     previousReplies.map((reply) => `- ${reply.text}`).join('\n'),
@@ -309,9 +387,9 @@ function getReplyLanguageInstruction(transcriptText: string, targetLanguage: str
   return [
     'Reply language:',
     `- Target reply language: ${targetLanguage}.`,
-    '- Infer the dominant natural language from the actual chat messages in Transcript, ignoring speaker labels like You/Them/Unknown.',
+    '- Infer the dominant natural language from the actual chat messages in Transcript, ignoring speaker labels like ME/THEM/UNKNOWN.',
     `- Write both suggested replies in ${targetLanguage}, using the same script and a natural casual texting register.`,
-    '- If the conversation is mixed-language, use the language of the latest real message from Them. If that is unclear, use the language of the latest real message from You.',
+    '- If the conversation is mixed-language, use the language of the latest real message from THEM. If that is unclear, use the language of the latest real message from ME.',
     '- Examples: Danish transcript -> Danish replies; Spanish transcript -> Spanish replies; French transcript -> French replies.',
     '- Keep names, app names, games, slang, and quoted words as they naturally appear in the conversation.',
     `Transcript language source text:\n${stripSpeakerLabels(transcriptText)}`,
@@ -321,7 +399,7 @@ function getReplyLanguageInstruction(transcriptText: string, targetLanguage: str
 function stripSpeakerLabels(transcriptText: string) {
   return transcriptText
     .split('\n')
-    .map((line) => line.replace(/^\s*(You|Them|Unknown)\s*:\s*/i, '').trim())
+    .map((line) => line.replace(/^\s*(ME|THEM|UNKNOWN|You|Them|Unknown)\s*:\s*/i, '').trim())
     .filter(Boolean)
     .join('\n');
 }

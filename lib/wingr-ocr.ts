@@ -2,7 +2,14 @@ import type {
   Rect,
   Text as RecognizedText,
 } from '@infinitered/react-native-mlkit-text-recognition';
-import type { DetectedMessage, OcrResult } from '../types/wingr';
+import type {
+  DetectedMessage,
+  MessageSender,
+  MessageSpeaker,
+  MessageXPosition,
+  OcrResult,
+  ParsedConversation,
+} from '../types/wingr';
 
 type OcrLine = {
   id: string;
@@ -52,6 +59,8 @@ const UI_LABELS = new Set([
   'yesterday',
 ]);
 
+const SPEAKER_CONFIRMATION_THRESHOLD = 0.62;
+
 function getWidth(frame: Rect) {
   return frame.right - frame.left;
 }
@@ -62,6 +71,52 @@ function getHeight(frame: Rect) {
 
 function getCenterX(frame: Rect) {
   return frame.left + getWidth(frame) / 2;
+}
+
+function getBoundingBox(frame: Rect): DetectedMessage['boundingBox'] {
+  return {
+    height: getHeight(frame),
+    width: getWidth(frame),
+    x: frame.left,
+    y: frame.top,
+  };
+}
+
+function getXPosition(frame: Rect, geometry: Pick<ConversationGeometry, 'minLeft' | 'width'>): MessageXPosition {
+  const centerX = getCenterX(frame);
+  const pageMidpoint = geometry.minLeft + geometry.width / 2;
+  const centerDeadZone = geometry.width * 0.12;
+
+  if (centerX > pageMidpoint + centerDeadZone) {
+    return 'right';
+  }
+
+  if (centerX < pageMidpoint - centerDeadZone) {
+    return 'left';
+  }
+
+  return 'center';
+}
+
+function getSpeakerFromSender(sender: MessageSender): MessageSpeaker {
+  if (sender === 'me') {
+    return 'user';
+  }
+
+  if (sender === 'them') {
+    return 'other';
+  }
+
+  return 'unknown';
+}
+
+function getFrameFromBoundingBox(boundingBox: DetectedMessage['boundingBox']): Rect {
+  return {
+    bottom: boundingBox.y + boundingBox.height,
+    left: boundingBox.x,
+    right: boundingBox.x + boundingBox.width,
+    top: boundingBox.y,
+  };
 }
 
 function normalizeText(text: string) {
@@ -340,7 +395,7 @@ function inferSender(frame: Rect, geometry: ConversationGeometry) {
 
   return {
     confidence,
-    sender: rightScore > leftScore ? ('you' as const) : ('them' as const),
+    sender: rightScore > leftScore ? ('me' as const) : ('them' as const),
   };
 }
 
@@ -445,7 +500,7 @@ function filterMetadataBubbles(bubbles: Bubble[], geometry: ConversationGeometry
 
     if (looksLikeReceiptBubble(bubble, previousBubble, geometry)) {
       if (previousBubble) {
-        previousBubble.sender = 'you';
+        previousBubble.sender = 'me';
         previousBubble.confidence = Math.max(previousBubble.confidence, 0.88);
         outgoingAnchorFrames.push(previousBubble.frame);
       }
@@ -499,8 +554,8 @@ function applyOutgoingAnchorInference(
 
     return {
       ...bubble,
-      confidence: Math.max(bubble.confidence, 0.82),
-      sender: 'you' as const,
+        confidence: Math.max(bubble.confidence, 0.82),
+      sender: 'me' as const,
     };
   });
 }
@@ -536,7 +591,7 @@ function applyClusterSenderInference(bubbles: Bubble[], geometry: ConversationGe
       return bubble;
     }
 
-    const clusterSender: DetectedMessage['sender'] = centerX > split ? 'you' : 'them';
+    const clusterSender: DetectedMessage['sender'] = centerX > split ? 'me' : 'them';
     const clusterConfidence = Math.min(0.9, 0.58 + distanceFromSplit / Math.max(spread, 1) * 0.5);
 
     if (bubble.sender === 'unknown' || bubble.confidence < clusterConfidence) {
@@ -597,7 +652,7 @@ function countCloserAlignmentVotes(
 
 function chooseSenderFromKnownAlignment(bubble: Bubble, bubbles: Bubble[], geometry: ConversationGeometry) {
   const knownYouFrames = bubbles
-    .filter((candidate) => candidate.sender === 'you' && candidate.confidence >= 0.72)
+    .filter((candidate) => candidate.sender === 'me' && candidate.confidence >= 0.72)
     .map((candidate) => candidate.frame);
   const knownThemFrames = bubbles
     .filter((candidate) => candidate.sender === 'them' && candidate.confidence >= 0.55)
@@ -613,7 +668,7 @@ function chooseSenderFromKnownAlignment(bubble: Bubble, bubbles: Bubble[], geome
     youVotes >= 2 &&
     (!themDeltas || youDeltas.score <= themDeltas.score + 0.02)
   ) {
-    return 'you' as const;
+    return 'me' as const;
   }
 
   if (
@@ -649,13 +704,23 @@ function applyKnownSenderAlignmentInference(bubbles: Bubble[], geometry: Convers
 }
 
 function parseMessages(lines: OcrLine[]): DetectedMessage[] {
-  return parseBubbles(lines)
-    .map((bubble, index) => ({
-      confidence: bubble.confidence,
-      id: `message-${index + 1}`,
-      sender: bubble.confidence >= 0.55 ? bubble.sender : ('unknown' as const),
-      text: bubbleText(bubble),
-    }))
+  const bubbles = parseBubbles(lines);
+  const geometry = bubbles.length > 0 ? getLineGeometry(bubbles.flatMap((bubble) => bubble.lines)) : null;
+
+  return bubbles
+    .map((bubble, index) => {
+      const sender = bubble.confidence >= 0.55 ? bubble.sender : ('unknown' as const);
+
+      return {
+        boundingBox: getBoundingBox(bubble.frame),
+        confidence: bubble.confidence,
+        id: `message-${index + 1}`,
+        sender,
+        speaker: getSpeakerFromSender(sender),
+        text: bubbleText(bubble),
+        xPosition: geometry ? getXPosition(bubble.frame, geometry) : 'center',
+      };
+    })
     .filter((message) => message.text.length > 1);
 }
 
@@ -663,11 +728,102 @@ function formatTranscript(messages: DetectedMessage[]) {
   return messages
     .map((message) => {
       const senderLabel =
-        message.sender === 'you' ? 'You' : message.sender === 'them' ? 'Them' : 'Unknown';
+        message.sender === 'me' ? 'ME' : message.sender === 'them' ? 'THEM' : 'UNKNOWN';
 
       return `${senderLabel}: ${message.text}`;
     })
     .join('\n');
+}
+
+function getLatestMessageSender(messages: DetectedMessage[]): MessageSender {
+  return messages[messages.length - 1]?.sender ?? 'unknown';
+}
+
+function getSpeakerAttributionConfidence(messages: DetectedMessage[]) {
+  if (messages.length === 0) {
+    return 0;
+  }
+
+  const averageConfidence =
+    messages.reduce((total, message) => total + message.confidence, 0) / messages.length;
+  const unknownPenalty = messages.filter((message) => message.sender === 'unknown').length / messages.length * 0.35;
+  const latestMessage = messages[messages.length - 1];
+  const latestPenalty = latestMessage.sender === 'unknown' ? 0.2 : Math.max(0, 0.62 - latestMessage.confidence) * 0.35;
+
+  return Math.max(0, Math.min(1, averageConfidence - unknownPenalty - latestPenalty));
+}
+
+export function buildParsedConversation(messages: DetectedMessage[]): ParsedConversation {
+  const latestMessageSender = getLatestMessageSender(messages);
+
+  return {
+    latestMessageSender,
+    messages,
+    shouldGenerateDirectReply: latestMessageSender === 'them',
+    speakerAttributionConfidence: getSpeakerAttributionConfidence(messages),
+  };
+}
+
+export function needsSpeakerConfirmation(parsedConversation: ParsedConversation) {
+  const confidentMeMessages = parsedConversation.messages.filter(
+    (message) => message.sender === 'me' && message.confidence >= 0.62,
+  ).length;
+  const confidentThemMessages = parsedConversation.messages.filter(
+    (message) => message.sender === 'them' && message.confidence >= 0.62,
+  ).length;
+
+  return (
+    parsedConversation.speakerAttributionConfidence < SPEAKER_CONFIRMATION_THRESHOLD ||
+    parsedConversation.latestMessageSender === 'unknown' ||
+    (parsedConversation.speakerAttributionConfidence < 0.8 &&
+      (confidentMeMessages === 0 || confidentThemMessages === 0))
+  );
+}
+
+function getMessageGeometry(messages: DetectedMessage[]) {
+  const frames = messages.map((message) => getFrameFromBoundingBox(message.boundingBox));
+
+  return {
+    maxRight: Math.max(...frames.map((frame) => frame.right)),
+    minLeft: Math.min(...frames.map((frame) => frame.left)),
+  };
+}
+
+export function rebuildOcrResultWithConfirmedUserSide(
+  ocr: OcrResult,
+  userSide: 'left' | 'right',
+): OcrResult {
+  if (ocr.detectedMessages.length === 0) {
+    return ocr;
+  }
+
+  const geometry = getMessageGeometry(ocr.detectedMessages);
+  const midpoint = geometry.minLeft + (geometry.maxRight - geometry.minLeft) / 2;
+  const messages = ocr.detectedMessages.map((message): DetectedMessage => {
+    const frame = getFrameFromBoundingBox(message.boundingBox);
+    const side = getCenterX(frame) >= midpoint ? 'right' : 'left';
+    const sender: MessageSender = side === userSide ? 'me' : 'them';
+    const midpointDistance = Math.abs(getCenterX(frame) - midpoint) / Math.max(geometry.maxRight - geometry.minLeft, 1);
+    const confidence = Math.max(message.confidence, midpointDistance < 0.05 ? 0.72 : 0.9);
+
+    return {
+      ...message,
+      confidence,
+      sender,
+      speaker: getSpeakerFromSender(sender),
+      xPosition: side,
+    };
+  });
+  const parsedConversation = buildParsedConversation(messages);
+  const transcriptText = formatTranscript(messages);
+
+  return {
+    ...ocr,
+    confidence: parsedConversation.speakerAttributionConfidence,
+    detectedMessages: messages,
+    parsedConversation,
+    transcriptText,
+  };
 }
 
 export async function extractChatTextFromImage(screenshotUri: string): Promise<OcrResult> {
@@ -690,6 +846,7 @@ export async function extractChatTextFromImage(screenshotUri: string): Promise<O
   const rawText = recognizedText.text?.trim() ?? '';
   const cleanedLines = cleanOcrLines(flattenLines(recognizedText));
   const detectedMessages = parseMessages(cleanedLines);
+  const parsedConversation = buildParsedConversation(detectedMessages);
   const transcriptText = formatTranscript(detectedMessages);
 
   if (!transcriptText.trim()) {
@@ -697,10 +854,9 @@ export async function extractChatTextFromImage(screenshotUri: string): Promise<O
   }
 
   return {
-    confidence:
-      detectedMessages.reduce((total, message) => total + (message.confidence ?? 0), 0) /
-      Math.max(detectedMessages.length, 1),
+    confidence: parsedConversation.speakerAttributionConfidence,
     detectedMessages,
+    parsedConversation,
     rawText,
     source: 'onDevice',
     transcriptText,

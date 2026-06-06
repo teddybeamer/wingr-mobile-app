@@ -1,6 +1,7 @@
 import { handleCors } from '../_shared/cors.ts';
 import { error, json, readJson } from '../_shared/http.ts';
 import { generateReplyBatch } from '../_shared/reply-batch.ts';
+import { needsSpeakerConfirmation } from '../_shared/speaker-attribution.ts';
 import type { RepliesRequest } from '../_shared/types.ts';
 
 Deno.serve(async (request) => {
@@ -26,6 +27,10 @@ Deno.serve(async (request) => {
 
     if (!body.vibeCheck) {
       return error('vibeCheck is required.', 400);
+    }
+
+    if (needsSpeakerConfirmation(body.parsedConversation)) {
+      return json({ needsSpeakerConfirmation: true });
     }
 
     const replyBatch = await generateReplyBatch(body, [body.selectedTone]);

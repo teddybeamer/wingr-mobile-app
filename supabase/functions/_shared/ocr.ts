@@ -1,8 +1,8 @@
 const DEFAULT_MOCK_TRANSCRIPT = [
-  'Them: haha okay maybe that was a weak answer',
-  'You: I will allow it for now',
-  'Them: generous of you',
-  'You: I have my moments',
+  'THEM: haha okay maybe that was a weak answer',
+  'ME: I will allow it for now',
+  'THEM: generous of you',
+  'ME: I have my moments',
 ].join('\n');
 
 type OcrSpaceResponse = {

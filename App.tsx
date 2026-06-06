@@ -43,8 +43,13 @@ import {
   generateReplies,
   refineVibeCheck,
 } from './lib/wingr-ai';
+import {
+  needsSpeakerConfirmation,
+  rebuildOcrResultWithConfirmedUserSide,
+} from './lib/wingr-ocr';
 import type {
   OcrResult,
+  ParsedConversation,
   ReplyBatch,
   ReplyTone,
   RecommendedReplyTone,
@@ -52,6 +57,7 @@ import type {
   ToneOption,
   VibeCheck,
 } from './types/wingr';
+import { OnboardingFlow } from './onboarding/OnboardingFlow';
 
 const FONTS = {
   display: 'ClashDisplay',
@@ -79,7 +85,7 @@ const COLORS = {
   indigo800: '#3730A3',
 };
 
-type Screen = 'landing' | 'upload' | 'analyzing' | 'vibecheck' | 'replies';
+type Screen = 'onboarding' | 'landing' | 'upload' | 'analyzing' | 'speakerConfirmation' | 'vibecheck' | 'replies';
 type MetricVariant = 'interest' | 'energy' | 'risk' | 'move';
 
 const TONE_OPTIONS: ToneOption[] = [
@@ -184,7 +190,7 @@ const METRIC_VARIANTS: Record<
 };
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('landing');
+  const [screen, setScreen] = useState<Screen>('onboarding');
   const [selectedScreenshotUri, setSelectedScreenshotUri] = useState<string | null>(null);
   const [chatTranscript, setChatTranscript] = useState('');
   const [extraContext, setExtraContext] = useState('');
@@ -194,6 +200,9 @@ export default function App() {
   const [visibleReplies, setVisibleReplies] = useState<SuggestedReply[]>([]);
   const [shownReplyIds, setShownReplyIds] = useState<string[]>([]);
   const [vibeCheck, setVibeCheck] = useState<VibeCheck | null>(null);
+  const [parsedConversation, setParsedConversation] = useState<ParsedConversation | null>(null);
+  const [pendingSpeakerOcr, setPendingSpeakerOcr] = useState<OcrResult | null>(null);
+  const [pendingSpeakerContext, setPendingSpeakerContext] = useState('');
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [isGeneratingReplies, setIsGeneratingReplies] = useState(false);
   const analysisRequestIdRef = useRef(0);
@@ -207,12 +216,14 @@ export default function App() {
     tone,
     nextContext,
     nextScreenshotUri = selectedScreenshotUri,
+    nextParsedConversation = parsedConversation,
     nextTranscriptText = chatTranscript,
     nextVibeCheck = vibeCheck,
   }: {
     tone: ReplyTone;
     nextContext: string;
     nextScreenshotUri?: string | null;
+    nextParsedConversation?: ParsedConversation | null;
     nextTranscriptText?: string;
     nextVibeCheck?: VibeCheck | null;
   }) => {
@@ -224,6 +235,7 @@ export default function App() {
       vibeCheck: nextVibeCheck,
       selectedTone: tone,
       screenshotUri: nextScreenshotUri ?? null,
+      parsedConversation: nextParsedConversation ?? undefined,
       transcriptText: nextTranscriptText,
       extraContext: nextContext,
     });
@@ -235,6 +247,7 @@ export default function App() {
 
   const applyConversationResult = (ocr: OcrResult, nextVibeCheck: VibeCheck) => {
     setChatTranscript(ocr.transcriptText);
+    setParsedConversation(ocr.parsedConversation);
     setReplyBatch({});
     setVisibleReplies([]);
     setShownReplyIds([]);
@@ -244,13 +257,16 @@ export default function App() {
 
   const getCompletedVibeCheck = async ({
     nextExtraContext,
+    parsedConversation: nextParsedConversation,
     transcriptText,
   }: {
     nextExtraContext: string;
+    parsedConversation: ParsedConversation;
     transcriptText: string;
   }) => {
     const completedVibeCheck = await refineVibeCheck({
       extraContext: nextExtraContext || undefined,
+      parsedConversation: nextParsedConversation,
       transcriptText,
     });
 
@@ -277,6 +293,9 @@ export default function App() {
     setExtraContext(nextExtraContext);
     setAnalysisError(null);
     setChatTranscript('');
+    setParsedConversation(null);
+    setPendingSpeakerOcr(null);
+    setPendingSpeakerContext('');
     setVibeCheck(null);
     setReplyBatch({});
     setVisibleReplies([]);
@@ -294,8 +313,16 @@ export default function App() {
 
       setChatTranscript(ocr.transcriptText);
 
+      if (needsSpeakerConfirmation(ocr.parsedConversation)) {
+        setPendingSpeakerOcr(ocr);
+        setPendingSpeakerContext(nextExtraContext);
+        setScreen('speakerConfirmation');
+        return;
+      }
+
       const completedVibeCheck = await getCompletedVibeCheck({
         nextExtraContext,
+        parsedConversation: ocr.parsedConversation,
         transcriptText: ocr.transcriptText,
       });
 
@@ -315,6 +342,52 @@ export default function App() {
       Alert.alert('Could not read screenshot', 'Try another screenshot or upload again.');
       setScreen('upload');
     }
+  };
+
+  const handleConfirmSpeakerSide = async (userSide: 'left' | 'right') => {
+    if (!pendingSpeakerOcr) {
+      setScreen('upload');
+      return;
+    }
+
+    const requestId = analysisRequestIdRef.current + 1;
+    const confirmedOcr = rebuildOcrResultWithConfirmedUserSide(pendingSpeakerOcr, userSide);
+
+    analysisRequestIdRef.current = requestId;
+    setScreen('analyzing');
+    setPendingSpeakerOcr(null);
+    setChatTranscript(confirmedOcr.transcriptText);
+
+    try {
+      const completedVibeCheck = await getCompletedVibeCheck({
+        nextExtraContext: pendingSpeakerContext,
+        parsedConversation: confirmedOcr.parsedConversation,
+        transcriptText: confirmedOcr.transcriptText,
+      });
+
+      if (analysisRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      applyConversationResult(confirmedOcr, completedVibeCheck);
+      setPendingSpeakerContext('');
+      setScreen('vibecheck');
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Wingr could not read that screenshot. Try another image.';
+
+      setAnalysisError(message);
+      Alert.alert('Could not read screenshot', 'Try another screenshot or upload again.');
+      setScreen('upload');
+    }
+  };
+
+  const handleCancelSpeakerConfirmation = () => {
+    setPendingSpeakerOcr(null);
+    setPendingSpeakerContext('');
+    setScreen('upload');
   };
 
   const pickScreenshot = async () => {
@@ -465,6 +538,10 @@ export default function App() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="light" />
+      {screen === 'onboarding' ? (
+        <OnboardingFlow onComplete={() => setScreen('landing')} />
+      ) : null}
+
       {screen === 'landing' ? (
         <LandingScreen onContinue={handlePickScreenshotForUpload} />
       ) : null}
@@ -480,6 +557,14 @@ export default function App() {
 
       {screen === 'analyzing' ? (
         <AnalyzingScreen selectedScreenshotUri={selectedScreenshotUri} />
+      ) : null}
+
+      {screen === 'speakerConfirmation' ? (
+        <SpeakerConfirmationScreen
+          onBack={handleCancelSpeakerConfirmation}
+          onConfirm={handleConfirmSpeakerSide}
+          selectedScreenshotUri={selectedScreenshotUri}
+        />
       ) : null}
 
       {screen === 'vibecheck' && vibeCheck ? (
@@ -647,6 +732,74 @@ function AnalyzingScreen({ selectedScreenshotUri }: { selectedScreenshotUri: str
       <Text style={styles.analyzingText}>
         Wingr is reading the screenshot and checking the vibe.
       </Text>
+    </View>
+  );
+}
+
+function SpeakerConfirmationScreen({
+  onBack,
+  onConfirm,
+  selectedScreenshotUri,
+}: {
+  onBack: () => void;
+  onConfirm: (userSide: 'left' | 'right') => void;
+  selectedScreenshotUri: string | null;
+}) {
+  return (
+    <View style={[styles.screen, styles.speakerConfirmationScreen]}>
+      <View style={styles.vibeHeader}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Go back to upload"
+          hitSlop={12}
+          onPress={onBack}
+          style={({ pressed }) => [styles.backButton, pressed && styles.uploadButtonPressed]}
+        >
+          <ArrowLeft color={COLORS.white} size={22} />
+        </Pressable>
+        <Text style={styles.vibeHeaderTitle}>Quick check</Text>
+        <View style={styles.backButton} />
+      </View>
+
+      <View style={styles.speakerConfirmationBody}>
+        {selectedScreenshotUri ? (
+          <Image
+            accessibilityIgnoresInvertColors
+            resizeMode="cover"
+            source={{ uri: selectedScreenshotUri }}
+            style={styles.speakerConfirmationImage}
+          />
+        ) : null}
+
+        <View style={styles.speakerConfirmationCard}>
+          <Text style={styles.speakerConfirmationTitle}>Just checking — which side is you?</Text>
+          <Text style={styles.speakerConfirmationText}>
+            Wingr needs this once so it does not write replies to your own message.
+          </Text>
+
+          <View style={styles.speakerConfirmationButtons}>
+            <TouchableOpacity
+              activeOpacity={0.88}
+              accessibilityRole="button"
+              accessibilityLabel="Right side is me"
+              onPress={() => onConfirm('right')}
+              style={styles.speakerConfirmationButton}
+            >
+              <Text style={styles.speakerConfirmationButtonText}>Right side</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.88}
+              accessibilityRole="button"
+              accessibilityLabel="Left side is me"
+              onPress={() => onConfirm('left')}
+              style={[styles.speakerConfirmationButton, styles.speakerConfirmationSecondaryButton]}
+            >
+              <Text style={styles.speakerConfirmationButtonText}>Left side</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
     </View>
   );
 }
@@ -1238,6 +1391,68 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     maxWidth: 280,
     textAlign: 'center',
+  },
+  speakerConfirmationScreen: {
+    paddingHorizontal: 16,
+  },
+  speakerConfirmationBody: {
+    alignItems: 'center',
+    gap: 18,
+    paddingTop: 28,
+  },
+  speakerConfirmationImage: {
+    backgroundColor: '#24242A',
+    borderRadius: 20,
+    height: 300,
+    opacity: 0.72,
+    width: 210,
+  },
+  speakerConfirmationCard: {
+    backgroundColor: COLORS.panelRaised,
+    borderColor: '#2B2B2F',
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 12,
+    padding: 16,
+    width: '100%',
+  },
+  speakerConfirmationTitle: {
+    color: COLORS.white,
+    fontFamily: FONTS.display,
+    fontSize: 24,
+    fontWeight: '700',
+    lineHeight: 30,
+    textAlign: 'center',
+  },
+  speakerConfirmationText: {
+    color: COLORS.muted,
+    fontFamily: FONTS.bodyRegular,
+    fontSize: 15,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  speakerConfirmationButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingTop: 4,
+  },
+  speakerConfirmationButton: {
+    alignItems: 'center',
+    backgroundColor: COLORS.blue,
+    borderRadius: 999,
+    flex: 1,
+    height: 48,
+    justifyContent: 'center',
+  },
+  speakerConfirmationSecondaryButton: {
+    backgroundColor: '#454545',
+  },
+  speakerConfirmationButtonText: {
+    color: COLORS.white,
+    fontFamily: FONTS.body,
+    fontSize: 16,
+    fontWeight: '600',
+    lineHeight: 20,
   },
   keyboardScreen: {
     flex: 1,

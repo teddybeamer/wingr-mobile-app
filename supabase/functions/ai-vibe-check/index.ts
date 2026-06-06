@@ -8,6 +8,7 @@ import {
   geminiVibeCheckSchema,
   getMockGeminiVibeCheck,
 } from '../_shared/prompting.ts';
+import { needsSpeakerConfirmation } from '../_shared/speaker-attribution.ts';
 import type { GeminiVibeCheck, VibeCheckRequest } from '../_shared/types.ts';
 
 function normalizeTargetLanguage(targetLanguage: string | undefined, transcriptText: string) {
@@ -29,6 +30,10 @@ Deno.serve(async (request) => {
 
     if (!body.transcriptText?.trim()) {
       return error('transcriptText is required.', 400);
+    }
+
+    if (needsSpeakerConfirmation(body.parsedConversation)) {
+      return json({ needsSpeakerConfirmation: true });
     }
 
     let vibeCheck: GeminiVibeCheck;

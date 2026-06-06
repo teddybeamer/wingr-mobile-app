@@ -1,4 +1,5 @@
 import { getContextNotes } from './context-notes.ts';
+import { getSuspiciousOcrTokens } from './transcript-cleanup.ts';
 import type { ContextNotes, RepliesRequest, SuggestedReply } from './types.ts';
 
 const PET_WORD_PATTERN =
@@ -26,6 +27,29 @@ const STOPWORDS = new Set([
   'would',
 ]);
 
+const ADDRESS_NAME_PREFIX_PATTERN =
+  /^\s*(?:(?:hey|hi|hej|hello|yo|okay|ok|haha|lol)\s+)?([A-ZÆØÅ][\p{L}'’-]{2,})\s*[,!]/u;
+const ADDRESS_NAME_TRAILING_PATTERN =
+  /(?:,\s*|\b(?:dig|you|du)\s+)([A-ZÆØÅ][\p{L}'’-]{2,}(?:\s+[A-ZÆØÅ][\p{L}'’-]{2,})?)\s*[?.!]*$/u;
+const MULTI_WORD_PROPER_NAME_PATTERN =
+  /\b([A-ZÆØÅ][\p{L}'’-]{2,}\s+[A-ZÆØÅ][\p{L}'’-]{2,})\b/gu;
+const THANKS_PATTERN = /\b(thanks|thank you|tak|tusind tak|mange tak|aw thanks|aww thanks)\b/i;
+const THANKS_WORTHY_OTHER_PATTERN =
+  /\b(cute|sød|flot|smuk|dejlig|handsome|pretty|beautiful|hot|nice picture|godt billede|kompliment|compliment|like your|love your|du ser|you look|made me smile)\b/i;
+const USER_SAID_PERSPECTIVE_PATTERN =
+  /\b(i|jeg)\s+(?:said|asked|sent|wrote|skrev|spurgte|sendte|sagde)\b/i;
+const OTHER_PERSON_PERSPECTIVE_PATTERN =
+  /\b(as the other person|from their side|som den anden person|jeg ville svare som dem)\b/i;
+const DIRECT_ADDRESS_ALLOWLIST = new Set([
+  'fair',
+  'haha',
+  'hej',
+  'hello',
+  'hi',
+  'lol',
+  'okay',
+]);
+
 function normalizeNotes(request: RepliesRequest): ContextNotes {
   const notes = request.contextNotes ?? getContextNotes(request.extraContext);
 
@@ -40,9 +64,59 @@ function normalizeNotes(request: RepliesRequest): ContextNotes {
 function getUserTranscriptText(transcriptText: string) {
   return transcriptText
     .split('\n')
-    .filter((line) => /^\s*You\s*:/i.test(line))
-    .map((line) => line.replace(/^\s*You\s*:\s*/i, ''))
+    .filter((line) => /^\s*(ME|You)\s*:/i.test(line))
+    .map((line) => line.replace(/^\s*(ME|You)\s*:\s*/i, ''))
     .join(' ');
+}
+
+function normalizeForLooseLookup(text: string) {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+function getLatestOtherText(request: RepliesRequest) {
+  const messages = request.parsedConversation?.messages ?? [];
+  const latestOther = [...messages].reverse().find(
+    (message) => message.sender === 'them' || message.speaker === 'other',
+  );
+
+  if (latestOther?.text) {
+    return latestOther.text;
+  }
+
+  return request.transcriptText
+    .split('\n')
+    .filter((line) => /^\s*(THEM|Them)\s*:/i.test(line))
+    .map((line) => line.replace(/^\s*(THEM|Them)\s*:\s*/i, ''))
+    .pop() ?? '';
+}
+
+function getUnsupportedDirectAddress(replyText: string, transcriptText: string) {
+  const transcriptWords = normalizeForLooseLookup(transcriptText).split(' ');
+  const candidates = [
+    ADDRESS_NAME_PREFIX_PATTERN.exec(replyText)?.[1],
+    ADDRESS_NAME_TRAILING_PATTERN.exec(replyText)?.[1],
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  return candidates.find((candidate) => {
+    const words = candidate.toLowerCase().split(/\s+/).filter(Boolean);
+
+    if (words.some((word) => DIRECT_ADDRESS_ALLOWLIST.has(word))) {
+      return false;
+    }
+
+    return words.some((word) => !transcriptWords.includes(word));
+  });
+}
+
+function getUnsupportedProperName(replyText: string, transcriptText: string) {
+  const transcriptWords = normalizeForLooseLookup(transcriptText).split(' ');
+  const candidates = [...replyText.matchAll(MULTI_WORD_PROPER_NAME_PATTERN)].map((match) => match[1]);
+
+  return candidates.find((candidate) => {
+    const words = candidate.toLowerCase().split(/\s+/).filter(Boolean);
+
+    return words.some((word) => !transcriptWords.includes(word));
+  });
 }
 
 function hasUserPetEvidence(notes: ContextNotes, transcriptText: string) {
@@ -137,6 +211,11 @@ function hasUnsupportedKeywordOwnership(replyText: string, notes: ContextNotes, 
 function getReplyOwnershipIssues(replyText: string, request: RepliesRequest) {
   const notes = normalizeNotes(request);
   const issues: string[] = [];
+  const suspiciousReplyTokens = getSuspiciousOcrTokens(replyText);
+
+  if (suspiciousReplyTokens.length > 0) {
+    issues.push('Reply includes random OCR-looking or model-noise tokens.');
+  }
 
   if (hasUnsupportedPetClaim(replyText, notes, request.transcriptText)) {
     issues.push('Reply implies the user owns or loves a pet without user evidence.');
@@ -144,6 +223,30 @@ function getReplyOwnershipIssues(replyText: string, request: RepliesRequest) {
 
   if (hasUnsupportedKeywordOwnership(replyText, notes, request.transcriptText)) {
     issues.push('Reply turns a fact about the other person into a user-owned claim.');
+  }
+
+  const addressedName = getUnsupportedDirectAddress(replyText, request.transcriptText);
+
+  if (addressedName) {
+    issues.push('Reply directly addresses a name that does not appear in the chat.');
+  }
+
+  if (getUnsupportedProperName(replyText, request.transcriptText)) {
+    issues.push('Reply includes a proper name that does not appear in the chat.');
+  }
+
+  const latestOtherText = getLatestOtherText(request);
+
+  if (THANKS_PATTERN.test(replyText) && !THANKS_WORTHY_OTHER_PATTERN.test(latestOtherText)) {
+    issues.push('Reply thanks the other person without a thanks-worthy latest other message.');
+  }
+
+  if (request.parsedConversation?.shouldGenerateDirectReply === false && THANKS_PATTERN.test(replyText)) {
+    issues.push('Reply appears to answer the user’s own latest message.');
+  }
+
+  if (USER_SAID_PERSPECTIVE_PATTERN.test(replyText) || OTHER_PERSON_PERSPECTIVE_PATTERN.test(replyText)) {
+    issues.push('Reply switches perspective or describes the wrong speaker role.');
   }
 
   return issues;

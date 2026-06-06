@@ -44,16 +44,38 @@ export type ContextNotes = {
   replyInstruction: string[];
 };
 
+export type MessageSender = 'me' | 'them' | 'unknown';
+export type MessageSpeaker = 'user' | 'other' | 'unknown';
+export type MessageXPosition = 'left' | 'right' | 'center';
+
+export type MessageBoundingBox = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type DetectedMessage = {
   id: string;
-  sender: 'you' | 'them' | 'unknown';
+  speaker: MessageSpeaker;
+  sender: MessageSender;
   text: string;
-  confidence?: number;
+  confidence: number;
+  xPosition: MessageXPosition;
+  boundingBox: MessageBoundingBox;
+};
+
+export type ParsedConversation = {
+  messages: DetectedMessage[];
+  latestMessageSender: MessageSender;
+  shouldGenerateDirectReply: boolean;
+  speakerAttributionConfidence: number;
 };
 
 export type OcrResult = {
   transcriptText: string;
   detectedMessages: DetectedMessage[];
+  parsedConversation: ParsedConversation;
   rawText?: string;
   source: 'onDevice';
   confidence?: number;
@@ -76,6 +98,7 @@ export type GenerateRepliesParams = {
   selectedTone: ReplyTone;
   screenshotUri: string | null;
   transcriptText: string;
+  parsedConversation?: ParsedConversation;
   extraContext?: string;
   contextNotes?: ContextNotes;
   userStylePreference?: UserStylePreference;

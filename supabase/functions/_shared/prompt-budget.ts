@@ -1,4 +1,5 @@
 import type { RepliesRequest, VibeCheckRequest } from './types.ts';
+import { cleanTranscriptForAi } from './transcript-cleanup.ts';
 
 export const MAX_VIBECHECK_TRANSCRIPT_CHARS = 4000;
 export const MAX_REPLY_TRANSCRIPT_CHARS = 6000;
@@ -29,7 +30,7 @@ export function getTranscriptCharBudget(requestType: AiRequestType) {
 
 export function trimTranscriptForRequest(transcriptText: string, requestType: AiRequestType) {
   const maxChars = getTranscriptCharBudget(requestType);
-  const trimmed = transcriptText.trim();
+  const trimmed = cleanTranscriptForAi(transcriptText).trim();
 
   return trimmed.length > maxChars ? trimmed.slice(-maxChars) : trimmed;
 }

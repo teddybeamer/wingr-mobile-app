@@ -33,6 +33,39 @@ function hasWrongLanguageInBatch(replyBatch: ReplyBatch, request: RepliesRequest
   );
 }
 
+function getMockFollowUpReplies(selectedTone: ReplyTone) {
+  const map: Record<ReplyTone, [string, string]> = {
+    playful: [
+      'Actually, I need your honest answer on that.',
+      'Leaving that there while I pretend to be patient.',
+    ],
+    direct: [
+      'No rush, but I would like to hear what you think.',
+      'I meant that. Your turn when you get a second.',
+    ],
+    casualSmallTalk: [
+      'Anyway, what are you up to now?',
+      'Also, how is your day going?',
+    ],
+  };
+
+  return map[selectedTone].map((text, index) => ({
+    id: `${selectedTone}-follow-up-${index + 1}`,
+    text,
+    tone: selectedTone,
+  }));
+}
+
+function getMockBatchForRequest(request: RepliesRequest, selectedTones: ReplyTone[]) {
+  if (request.parsedConversation?.shouldGenerateDirectReply === false) {
+    return Object.fromEntries(
+      selectedTones.map((tone) => [tone, getMockFollowUpReplies(tone)]),
+    ) as ReplyBatch;
+  }
+
+  return getMockReplyBatch(selectedTones);
+}
+
 export async function generateReplyBatch(request: RepliesRequest, selectedTones: ReplyTone[]) {
   const safeRequest = withSafeReplyTranscript(request);
   const normalizedRequest = {
@@ -76,7 +109,11 @@ export async function generateReplyBatch(request: RepliesRequest, selectedTones:
 
     return replyBatch;
   } catch (error) {
-    const fallbackBatch = getFilteredReplyBatch(getMockReplyBatch(selectedTones), normalizedRequest, selectedTones);
+    const fallbackBatch = getFilteredReplyBatch(
+      getMockBatchForRequest(normalizedRequest, selectedTones),
+      normalizedRequest,
+      selectedTones,
+    );
 
     if (hasWrongLanguageInBatch(fallbackBatch, normalizedRequest)) {
       throw error instanceof Error
