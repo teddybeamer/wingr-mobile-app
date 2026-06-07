@@ -4,12 +4,22 @@ export const onboardingContent: Record<OnboardingStepContent['id'], OnboardingSt
   welcome: {
     id: 'welcome',
     title: 'Never overthink a reply again',
+    titleParts: [
+      { text: 'Never ' },
+      { color: 'blue', text: 'overthink' },
+      { text: ' a reply again' },
+    ],
     body: 'Wingr helps you turn awkward, dry, or flirty moments into replies that actually sound like you.',
     ctaLabel: 'Get Started',
   },
   problem: {
     id: 'problem',
     title: 'What do you struggle with most?',
+    titleParts: [
+      { text: 'What do you ' },
+      { color: 'blue', text: 'struggle with most' },
+      { text: '?' },
+    ],
     body: '',
     ctaLabel: 'Next',
     requiresSelection: true,
@@ -67,13 +77,21 @@ export const onboardingContent: Record<OnboardingStepContent['id'], OnboardingSt
   uploadScreenshot: {
     id: 'uploadScreenshot',
     title: 'Try WINGR on a real chat',
+    titleParts: [
+      { text: 'Try WINGR on ' },
+      { color: 'blue', text: 'a real chat' },
+    ],
     body: "Upload a screenshot and Wingr will read the vibe, spot what's really going on, and suggest replies you can actually send.",
     ctaLabel: 'Next',
   },
   vibecheck: {
     id: 'vibecheck',
     title: 'Checking the vibe',
-    body: '',
+    titleParts: [
+      { text: 'Checking ' },
+      { color: 'blue', text: 'the vibe' },
+    ],
+    body: 'Reading the chat so you don’t have to overthink it.',
     ctaLabel: 'Get replies',
   },
   replies: {
@@ -85,12 +103,20 @@ export const onboardingContent: Record<OnboardingStepContent['id'], OnboardingSt
   rating: {
     id: 'rating',
     title: 'Give us a rating',
+    titleParts: [
+      { text: 'Give us a ' },
+      { color: 'blue', text: 'rating' },
+    ],
     body: 'Your feedback really helps us improve and reach more people who need WiNGR.',
     ctaLabel: 'Next',
   },
   paywall: {
     id: 'paywall',
     title: 'Unlock WiNGR to keep the chats going',
+    titleParts: [
+      { color: 'blue', text: 'Unlock WiNGR' },
+      { text: ' to keep the chats going' },
+    ],
     body: 'Unlock instant vibe checks and sendable replies for the chats that actually matter.',
     ctaLabel: 'Start Free Trial',
   },

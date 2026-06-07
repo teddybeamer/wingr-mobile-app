@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react';
+import { useEffect } from 'react';
 import { ChangeScreen } from './screens/ChangeScreen';
 import { PaywallScreen } from './screens/PaywallScreen';
 import { PrivacyScreen } from './screens/PrivacyScreen';
@@ -44,6 +45,16 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     totalSteps,
   } = useOnboardingFlow(onComplete);
   const ScreenComponent = screenMap[currentStep.id];
+
+  console.log('[Wingr boot] OnboardingFlow render', {
+    currentIndex,
+    currentStepId: currentStep.id,
+    totalSteps,
+  });
+
+  useEffect(() => {
+    console.log('[Wingr boot] OnboardingFlow mounted');
+  }, []);
 
   return (
     <ScreenComponent

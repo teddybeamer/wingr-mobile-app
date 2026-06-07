@@ -69,7 +69,6 @@ const styles = StyleSheet.create({
     borderColor: '#1970FD',
     borderRadius: 12,
     borderWidth: 1,
-    marginTop: 182,
     padding: 10,
   },
   replyText: {

@@ -78,7 +78,6 @@ const styles = StyleSheet.create({
   },
   stack: {
     gap: 10,
-    marginTop: 130,
   },
   title: {
     color: '#1970FD',

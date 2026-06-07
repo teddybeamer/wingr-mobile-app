@@ -26,7 +26,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 18,
     justifyContent: 'center',
-    marginTop: 70,
     width: '74%',
   },
   uploadText: {

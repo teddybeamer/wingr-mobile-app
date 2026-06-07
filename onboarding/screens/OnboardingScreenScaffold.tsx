@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { CTAButton } from '../components/CTAButton';
 import { ExampleChatCard } from '../components/ExampleChatCard';
 import { OnboardingHeader } from '../components/OnboardingHeader';
@@ -28,18 +28,14 @@ export function OnboardingScreenScaffold({
 
   return (
     <View style={styles.screen}>
-      <OnboardingHeader
-        canGoBack={canGoBack}
-        currentIndex={currentIndex}
-        onBack={onBack}
-        totalSteps={totalSteps}
-      />
+      <View style={styles.topSection}>
+        <OnboardingHeader
+          canGoBack={canGoBack}
+          currentIndex={currentIndex}
+          onBack={onBack}
+          totalSteps={totalSteps}
+        />
 
-      <ScrollView
-        bounces={false}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
         <View style={styles.copy}>
           <Text style={styles.title}>
             {content.titleParts
@@ -55,29 +51,33 @@ export function OnboardingScreenScaffold({
           </Text>
           {content.body ? <Text style={styles.body}>{content.body}</Text> : null}
         </View>
+      </View>
 
-        {content.chatMessages ? <ExampleChatCard messages={content.chatMessages} /> : null}
+      <View style={styles.middleSection}>
+        <View style={styles.middleContent}>
+          {content.chatMessages ? <ExampleChatCard messages={content.chatMessages} /> : null}
 
-        {content.choices ? (
-          <View style={styles.choices}>
-            {content.choices.map((choice, index) => (
-              <SelectionCard
-                description={choice.description}
-                key={choice.id}
-                onPress={() => onSelectChoice(choice.id)}
-                selected={selectedChoiceId ? selectedChoiceId === choice.id : index === -1}
-                title={choice.title}
-              />
-            ))}
-          </View>
-        ) : null}
+          {content.choices ? (
+            <View style={styles.choices}>
+              {content.choices.map((choice, index) => (
+                <SelectionCard
+                  description={choice.description}
+                  key={choice.id}
+                  onPress={() => onSelectChoice(choice.id)}
+                  selected={selectedChoiceId ? selectedChoiceId === choice.id : index === -1}
+                  title={choice.title}
+                />
+              ))}
+            </View>
+          ) : null}
 
-        {children}
+          {children}
 
-        {content.footerNote ? <Text style={styles.footerNote}>{content.footerNote}</Text> : null}
-      </ScrollView>
+          {content.footerNote ? <Text style={styles.footerNote}>{content.footerNote}</Text> : null}
+        </View>
+      </View>
 
-      <View style={styles.actions}>
+      <View style={styles.bottomSection}>
         <CTAButton
           disabled={!canContinue}
           label={content.ctaLabel ?? 'Next'}
@@ -89,31 +89,24 @@ export function OnboardingScreenScaffold({
 }
 
 const styles = StyleSheet.create({
-  actions: {
-    paddingBottom: 16,
-    paddingTop: 14,
-  },
   body: {
     color: '#F1F1F1',
     fontFamily: 'ClashGroteskRegular',
-    fontSize: 17,
-    lineHeight: 22,
+    fontSize: 16,
+    lineHeight: 17,
     textAlign: 'left',
+  },
+  bottomSection: {
+    height: 104,
+    justifyContent: 'center',
   },
   choices: {
     gap: 16,
-    marginTop: 128,
     width: '100%',
-  },
-  content: {
-    alignItems: 'stretch',
-    flexGrow: 1,
-    gap: 22,
-    paddingBottom: 24,
-    paddingTop: 52,
   },
   copy: {
     gap: 10,
+    marginTop: 52,
     width: '100%',
   },
   footerNote: {
@@ -123,18 +116,30 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     textAlign: 'center',
   },
+  middleContent: {
+    alignItems: 'stretch',
+    gap: 22,
+    width: '100%',
+  },
+  middleSection: {
+    flex: 1,
+    justifyContent: 'center',
+  },
   screen: {
     backgroundColor: '#080808',
     flex: 1,
     paddingHorizontal: 16,
     paddingTop: 8,
   },
+  topSection: {
+    height: 210,
+  },
   title: {
     color: '#F6F7FB',
     fontFamily: 'ClashDisplay',
-    fontSize: 34,
+    fontSize: 26,
     fontWeight: '700',
-    lineHeight: 40,
+    lineHeight: 34,
     textAlign: 'left',
   },
   titleBlue: {

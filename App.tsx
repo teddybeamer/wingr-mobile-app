@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
-import { useRef, useState } from 'react';
+import { Component, type ReactNode, useEffect, useRef, useState } from 'react';
 import {
   AltArrowDown,
   ArrowLeft,
@@ -59,6 +59,10 @@ import type {
 } from './types/wingr';
 import { OnboardingFlow } from './onboarding/OnboardingFlow';
 
+const DEBUG_BOOT_PROBE = true;
+
+console.log('[Wingr boot] App module loaded');
+
 const FONTS = {
   display: 'ClashDisplay',
   body: 'ClashGrotesk',
@@ -87,6 +91,41 @@ const COLORS = {
 
 type Screen = 'onboarding' | 'landing' | 'upload' | 'analyzing' | 'speakerConfirmation' | 'vibecheck' | 'replies';
 type MetricVariant = 'interest' | 'energy' | 'risk' | 'move';
+
+type BootErrorBoundaryProps = {
+  children: ReactNode;
+};
+
+type BootErrorBoundaryState = {
+  error: Error | null;
+};
+
+class BootErrorBoundary extends Component<BootErrorBoundaryProps, BootErrorBoundaryState> {
+  state: BootErrorBoundaryState = {
+    error: null,
+  };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: { componentStack: string }) {
+    console.error('[Wingr boot] Render error boundary caught', error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={styles.debugBootScreen}>
+          <Text style={styles.debugBootTitle}>Wingr render error</Text>
+          <Text style={styles.debugBootBody}>{this.state.error.message}</Text>
+        </View>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 const TONE_OPTIONS: ToneOption[] = [
   { value: 'playful', label: 'Playful', icon: EmojiFunnyCircle },
@@ -191,6 +230,7 @@ const METRIC_VARIANTS: Record<
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('onboarding');
+  const [showDebugBootScreen, setShowDebugBootScreen] = useState(DEBUG_BOOT_PROBE);
   const [selectedScreenshotUri, setSelectedScreenshotUri] = useState<string | null>(null);
   const [chatTranscript, setChatTranscript] = useState('');
   const [extraContext, setExtraContext] = useState('');
@@ -211,6 +251,31 @@ export default function App() {
     [FONTS.body]: require('./assets/fonts/ClashGrotesk-Variable.ttf'),
     [FONTS.bodyRegular]: require('./assets/fonts/ClashGrotesk-Regular.ttf'),
   });
+
+  console.log('[Wingr boot] App render', {
+    fontsLoaded,
+    screen,
+    showDebugBootScreen,
+  });
+
+  useEffect(() => {
+    console.log('[Wingr boot] App mounted');
+
+    if (!DEBUG_BOOT_PROBE) {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      console.log('[Wingr boot] Hiding debug boot screen');
+      setShowDebugBootScreen(false);
+    }, 1500);
+
+    return () => clearTimeout(timeoutId);
+  }, []);
+
+  useEffect(() => {
+    console.log('[Wingr boot] Fonts loaded state changed', fontsLoaded);
+  }, [fontsLoaded]);
 
   const generateRepliesForTone = async ({
     tone,
@@ -241,8 +306,23 @@ export default function App() {
     });
   };
 
+  if (showDebugBootScreen) {
+    return (
+      <View style={styles.debugBootScreen}>
+        <Text style={styles.debugBootTitle}>Wingr loaded</Text>
+        <Text style={styles.debugBootBody}>JS mounted. Waiting for app render...</Text>
+      </View>
+    );
+  }
+
   if (!fontsLoaded) {
-    return <View style={styles.loadingScreen} />;
+    console.log('[Wingr boot] Waiting for fonts');
+    return (
+      <View style={styles.debugBootScreen}>
+        <Text style={styles.debugBootTitle}>Wingr loaded</Text>
+        <Text style={styles.debugBootBody}>Loading fonts...</Text>
+      </View>
+    );
   }
 
   const applyConversationResult = (ocr: OcrResult, nextVibeCheck: VibeCheck) => {
@@ -536,11 +616,12 @@ export default function App() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="light" />
-      {screen === 'onboarding' ? (
-        <OnboardingFlow onComplete={() => setScreen('landing')} />
-      ) : null}
+    <BootErrorBoundary>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="light" />
+        {screen === 'onboarding' ? (
+          <OnboardingFlow onComplete={() => setScreen('landing')} />
+        ) : null}
 
       {screen === 'landing' ? (
         <LandingScreen onContinue={handlePickScreenshotForUpload} />
@@ -587,7 +668,8 @@ export default function App() {
         />
       ) : null}
 
-    </SafeAreaView>
+      </SafeAreaView>
+    </BootErrorBoundary>
   );
 }
 
@@ -1258,6 +1340,27 @@ const styles = StyleSheet.create({
   loadingScreen: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  debugBootBody: {
+    color: '#B7B7BE',
+    fontSize: 16,
+    lineHeight: 22,
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  debugBootScreen: {
+    alignItems: 'center',
+    backgroundColor: '#080808',
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  debugBootTitle: {
+    color: '#F6F7FB',
+    fontSize: 28,
+    fontWeight: '700',
+    lineHeight: 34,
+    textAlign: 'center',
   },
   screen: {
     flex: 1,

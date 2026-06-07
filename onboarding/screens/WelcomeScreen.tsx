@@ -3,11 +3,33 @@ import { CTAButton } from '../components/CTAButton';
 import type { OnboardingScreenProps } from '../types/onboarding';
 
 export function WelcomeScreen({ content, onNext }: OnboardingScreenProps) {
+  console.log('[Wingr boot] WelcomeScreen render', {
+    hasBody: Boolean(content.body),
+    hasTitle: Boolean(content.title),
+  });
+
   return (
     <View style={styles.screen}>
-      <Text style={styles.logo}>Wingr</Text>
+      <View style={styles.topSection}>
+        <Text style={styles.logo}>Wingr</Text>
 
-      <View style={styles.phoneWrap}>
+        <View style={styles.copy}>
+          <Text style={styles.title}>
+            {content.titleParts
+              ? content.titleParts.map((part, index) => (
+                  <Text
+                    key={`${part.text}-${index}`}
+                    style={part.color === 'blue' ? styles.titleBlue : styles.titleWhite}
+                  >
+                    {part.text}
+                  </Text>
+                ))
+              : content.title}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.middleSection}>
         <Image
           accessibilityIgnoresInvertColors
           resizeMode="contain"
@@ -16,14 +38,10 @@ export function WelcomeScreen({ content, onNext }: OnboardingScreenProps) {
         />
       </View>
 
-      <View style={styles.copy}>
-        <Text style={styles.title}>{content.title}</Text>
-      </View>
-
-      <View style={styles.ctaWrap}>
+      <View style={styles.bottomSection}>
         <CTAButton label={content.ctaLabel ?? 'Get Started'} onPress={onNext} />
+        <Text style={styles.body}>{content.body}</Text>
       </View>
-      <Text style={styles.body}>{content.body}</Text>
     </View>
   );
 }
@@ -37,11 +55,12 @@ const styles = StyleSheet.create({
     marginTop: 20,
     textAlign: 'center',
   },
-  copy: {
-    marginTop: 54,
+  bottomSection: {
+    height: 158,
+    justifyContent: 'center',
   },
-  ctaWrap: {
-    marginTop: 22,
+  copy: {
+    marginTop: 34,
   },
   logo: {
     color: '#1970FD',
@@ -51,20 +70,18 @@ const styles = StyleSheet.create({
     lineHeight: 25,
     textAlign: 'center',
   },
-  phoneImage: {
-    height: '100%',
-    width: '100%',
+  middleSection: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
   },
-  phoneWrap: {
-    alignSelf: 'center',
+  phoneImage: {
     height: 397,
-    marginTop: 52,
     width: 200,
   },
   screen: {
     backgroundColor: '#080808',
     flex: 1,
-    paddingBottom: 24,
     paddingHorizontal: 16,
     paddingTop: 4,
   },
@@ -75,5 +92,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 38,
     textAlign: 'center',
+  },
+  titleBlue: {
+    color: '#1970FD',
+  },
+  titleWhite: {
+    color: '#FFFFFF',
+  },
+  topSection: {
+    height: 220,
+    paddingTop: 34,
   },
 });
