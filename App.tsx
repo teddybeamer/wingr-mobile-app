@@ -1,10 +1,9 @@
-import './global.css';
+import "./global.css";
 
-import { StatusBar } from 'expo-status-bar';
-import { useFonts } from 'expo-font';
-import * as Clipboard from 'expo-clipboard';
-import * as ImagePicker from 'expo-image-picker';
-import { Component, type ReactNode, useEffect, useRef, useState } from 'react';
+import { StatusBar } from "expo-status-bar";
+import { useFonts } from "expo-font";
+import * as Clipboard from "expo-clipboard";
+import { Component, type ReactNode, useEffect, useState } from "react";
 import {
   AltArrowDown,
   ArrowLeft,
@@ -20,9 +19,9 @@ import {
   ShieldWarning,
   StarsMinimalistic,
   Waterdrop,
-} from '@solar-icons/react-native/Linear';
-import type { Icon as SolarIcon } from '@solar-icons/react-native/lib/index';
-import Svg, { Defs, Ellipse, FeGaussianBlur, Filter } from 'react-native-svg';
+} from "@solar-icons/react-native/Linear";
+import type { Icon as SolarIcon } from "@solar-icons/react-native/lib/index";
+import Svg, { Defs, Ellipse, FeGaussianBlur, Filter } from "react-native-svg";
 import {
   ActivityIndicator,
   Alert,
@@ -37,60 +36,61 @@ import {
   Text,
   TouchableOpacity,
   View,
-} from 'react-native';
-import {
-  extractScreenshotConversation,
-  generateReplies,
-  refineVibeCheck,
-} from './lib/wingr-ai';
-import {
-  needsSpeakerConfirmation,
-  rebuildOcrResultWithConfirmedUserSide,
-} from './lib/wingr-ocr';
+} from "react-native";
 import type {
-  OcrResult,
-  ParsedConversation,
   ReplyBatch,
   ReplyTone,
   RecommendedReplyTone,
   SuggestedReply,
   ToneOption,
   VibeCheck,
-} from './types/wingr';
-import { OnboardingFlow } from './onboarding/OnboardingFlow';
+} from "./types/wingr";
+import { OnboardingFlow } from "./onboarding/OnboardingFlow";
+import { useConversationFlow } from "./hooks/useConversationFlow";
+import {
+  RepliesContent,
+  VibeCheckCard,
+} from "./components/conversation/ConversationContent";
 
 const DEBUG_BOOT_PROBE = true;
 
-console.log('[Wingr boot] App module loaded');
+console.log("[Wingr boot] App module loaded");
 
 const FONTS = {
-  display: 'ClashDisplay',
-  body: 'ClashGrotesk',
-  bodyRegular: 'ClashGroteskRegular',
+  display: "ClashDisplay",
+  body: "ClashGrotesk",
+  bodyRegular: "ClashGroteskRegular",
 };
 
 const COLORS = {
-  background: '#080808',
-  blue: '#1970FD',
-  white: '#F6F7FB',
-  muted: '#B7B7BE',
-  border: '#5B5B64',
-  panel: '#101010',
-  panelRaised: '#151515',
-  green: '#21C57A',
-  yellow: '#F6B94B',
-  red: '#FF5A65',
-  purple: '#6552FF',
-  orange: '#D66A00',
-  teal: '#00B8AF',
-  teal700: '#0F766E',
-  teal800: '#115E59',
-  indigo700: '#4338CA',
-  indigo800: '#3730A3',
+  background: "#080808",
+  blue: "#1970FD",
+  white: "#F6F7FB",
+  muted: "#B7B7BE",
+  border: "#5B5B64",
+  panel: "#101010",
+  panelRaised: "#151515",
+  green: "#21C57A",
+  yellow: "#F6B94B",
+  red: "#FF5A65",
+  purple: "#6552FF",
+  orange: "#D66A00",
+  teal: "#00B8AF",
+  teal700: "#0F766E",
+  teal800: "#115E59",
+  indigo700: "#4338CA",
+  indigo800: "#3730A3",
 };
 
-type Screen = 'onboarding' | 'landing' | 'upload' | 'analyzing' | 'speakerConfirmation' | 'vibecheck' | 'replies';
-type MetricVariant = 'interest' | 'energy' | 'risk' | 'move';
+type Screen =
+  | "onboarding"
+  | "landing"
+  | "upload"
+  | "analyzing"
+  | "speakerConfirmation"
+  | "vibecheck"
+  | "replies";
+type MetricVariant = "interest" | "energy" | "risk" | "move";
 
 type BootErrorBoundaryProps = {
   children: ReactNode;
@@ -100,7 +100,10 @@ type BootErrorBoundaryState = {
   error: Error | null;
 };
 
-class BootErrorBoundary extends Component<BootErrorBoundaryProps, BootErrorBoundaryState> {
+class BootErrorBoundary extends Component<
+  BootErrorBoundaryProps,
+  BootErrorBoundaryState
+> {
   state: BootErrorBoundaryState = {
     error: null,
   };
@@ -110,7 +113,11 @@ class BootErrorBoundary extends Component<BootErrorBoundaryProps, BootErrorBound
   }
 
   componentDidCatch(error: Error, info: { componentStack: string }) {
-    console.error('[Wingr boot] Render error boundary caught', error, info.componentStack);
+    console.error(
+      "[Wingr boot] Render error boundary caught",
+      error,
+      info.componentStack,
+    );
   }
 
   render() {
@@ -128,22 +135,32 @@ class BootErrorBoundary extends Component<BootErrorBoundaryProps, BootErrorBound
 }
 
 const TONE_OPTIONS: ToneOption[] = [
-  { value: 'playful', label: 'Playful', icon: EmojiFunnyCircle },
-  { value: 'direct', label: 'Direct', icon: FireMinimalistic },
-  { value: 'casualSmallTalk', label: 'Small talk', icon: Waterdrop },
+  { value: "playful", label: "Playful", icon: EmojiFunnyCircle },
+  { value: "direct", label: "Direct", icon: FireMinimalistic },
+  { value: "casualSmallTalk", label: "Small talk", icon: Waterdrop },
 ];
 
 function getToneLabel(tone: ReplyTone | RecommendedReplyTone) {
-  return TONE_OPTIONS.find((option) => option.value === tone)?.label ?? 'Playful';
+  return (
+    TONE_OPTIONS.find((option) => option.value === tone)?.label ?? "Playful"
+  );
 }
 
-function getUnusedReplies(replyBatch: ReplyBatch, tone: ReplyTone, shownReplyIds: string[]) {
+function getUnusedReplies(
+  replyBatch: ReplyBatch,
+  tone: ReplyTone,
+  shownReplyIds: string[],
+) {
   const shownIds = new Set(shownReplyIds);
 
   return (replyBatch[tone] ?? []).filter((reply) => !shownIds.has(reply.id));
 }
 
-function getVisibleRepliesForTone(replyBatch: ReplyBatch, tone: ReplyTone, shownReplyIds: string[]) {
+function getVisibleRepliesForTone(
+  replyBatch: ReplyBatch,
+  tone: ReplyTone,
+  shownReplyIds: string[],
+) {
   return getUnusedReplies(replyBatch, tone, shownReplyIds).slice(0, 2);
 }
 
@@ -154,40 +171,53 @@ function mergeReplyBatch(currentBatch: ReplyBatch, nextBatch: ReplyBatch) {
   };
 }
 
-function appendShownReplyIds(currentShownReplyIds: string[], replies: SuggestedReply[]) {
+function appendShownReplyIds(
+  currentShownReplyIds: string[],
+  replies: SuggestedReply[],
+) {
   return [
     ...currentShownReplyIds,
-    ...replies.map((reply) => reply.id).filter((replyId) => !currentShownReplyIds.includes(replyId)),
+    ...replies
+      .map((reply) => reply.id)
+      .filter((replyId) => !currentShownReplyIds.includes(replyId)),
   ];
 }
 
 function getConversationEnergyCopy(vibeCheck: VibeCheck) {
   const rawEnergy = vibeCheck.conversationEnergy.trim();
   const lowerEnergy = rawEnergy.toLowerCase();
-  const debugTerms = ['detected', 'speaker', 'ocr', 'confidence', 'parsed'];
-  const looksLikeInternalOutput = debugTerms.some((term) => lowerEnergy.includes(term));
+  const debugTerms = ["detected", "speaker", "ocr", "confidence", "parsed"];
+  const looksLikeInternalOutput = debugTerms.some((term) =>
+    lowerEnergy.includes(term),
+  );
   const hasSituationLanguage =
     rawEnergy.length >= 55 &&
-    /\b(they|their|chat|conversation|reply|message|interest|momentum|move|room)\b/i.test(rawEnergy);
+    /\b(they|their|chat|conversation|reply|message|interest|momentum|move|room)\b/i.test(
+      rawEnergy,
+    );
 
   if (hasSituationLanguage && !looksLikeInternalOutput) {
     return rawEnergy;
   }
 
-  if (lowerEnergy.includes('dry') || lowerEnergy.includes('short') || lowerEnergy.includes('low')) {
+  if (
+    lowerEnergy.includes("dry") ||
+    lowerEnergy.includes("short") ||
+    lowerEnergy.includes("low")
+  ) {
     return "They're keeping it short, but there's still room to play.";
   }
 
-  if (lowerEnergy.includes('playful') || lowerEnergy.includes('light')) {
-    return 'The conversation is light and playful, but it needs a more confident next move.';
+  if (lowerEnergy.includes("playful") || lowerEnergy.includes("light")) {
+    return "The conversation is light and playful, but it needs a more confident next move.";
   }
 
-  if (lowerEnergy.includes('high') || lowerEnergy.includes('warm')) {
-    return 'There is good energy here, so keep momentum with a clear next move.';
+  if (lowerEnergy.includes("high") || lowerEnergy.includes("warm")) {
+    return "There is good energy here, so keep momentum with a clear next move.";
   }
 
-  if (vibeCheck.interestLevel === 'Unclear') {
-    return 'There is some signal here, but the next reply should make the vibe easier to read.';
+  if (vibeCheck.interestLevel === "Unclear") {
+    return "There is some signal here, but the next reply should make the vibe easier to read.";
   }
 
   return "There's some interest here, but the chat needs a sharper reply to keep momentum.";
@@ -203,70 +233,85 @@ const METRIC_VARIANTS: Record<
   }
 > = {
   interest: {
-    backgroundColor: '#4F46E5',
-    blobColors: ['rgba(55, 48, 163, 0.88)', 'rgba(67, 56, 202, 0.62)', 'rgba(55, 48, 163, 0.42)'],
-    iconColor: '#C7D2FE',
-    valueColor: '#6D5CFF',
+    backgroundColor: "#4F46E5",
+    blobColors: [
+      "rgba(55, 48, 163, 0.88)",
+      "rgba(67, 56, 202, 0.62)",
+      "rgba(55, 48, 163, 0.42)",
+    ],
+    iconColor: "#C7D2FE",
+    valueColor: "#6D5CFF",
   },
   energy: {
-    backgroundColor: '#D97706',
-    blobColors: ['rgba(146, 64, 14, 0.88)', 'rgba(180, 83, 9, 0.62)', 'rgba(146, 64, 14, 0.42)'],
-    iconColor: '#FDE68A',
-    valueColor: '#F6B94B',
+    backgroundColor: "#D97706",
+    blobColors: [
+      "rgba(146, 64, 14, 0.88)",
+      "rgba(180, 83, 9, 0.62)",
+      "rgba(146, 64, 14, 0.42)",
+    ],
+    iconColor: "#FDE68A",
+    valueColor: "#F6B94B",
   },
   risk: {
-    backgroundColor: '#DC2626',
-    blobColors: ['rgba(153, 27, 27, 0.88)', 'rgba(185, 28, 28, 0.62)', 'rgba(153, 27, 27, 0.42)'],
-    iconColor: '#FECACA',
-    valueColor: '#FF4D5E',
+    backgroundColor: "#DC2626",
+    blobColors: [
+      "rgba(153, 27, 27, 0.88)",
+      "rgba(185, 28, 28, 0.62)",
+      "rgba(153, 27, 27, 0.42)",
+    ],
+    iconColor: "#FECACA",
+    valueColor: "#FF4D5E",
   },
   move: {
-    backgroundColor: '#0D9488',
-    blobColors: ['rgba(17, 94, 89, 0.88)', 'rgba(15, 118, 110, 0.62)', 'rgba(17, 94, 89, 0.42)'],
-    iconColor: '#99F6E4',
-    valueColor: '#00C2B8',
+    backgroundColor: "#0D9488",
+    blobColors: [
+      "rgba(17, 94, 89, 0.88)",
+      "rgba(15, 118, 110, 0.62)",
+      "rgba(17, 94, 89, 0.42)",
+    ],
+    iconColor: "#99F6E4",
+    valueColor: "#00C2B8",
   },
 };
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('onboarding');
-  const [showDebugBootScreen, setShowDebugBootScreen] = useState(DEBUG_BOOT_PROBE);
-  const [selectedScreenshotUri, setSelectedScreenshotUri] = useState<string | null>(null);
-  const [chatTranscript, setChatTranscript] = useState('');
-  const [extraContext, setExtraContext] = useState('');
-  const [replyContext, setReplyContext] = useState('');
-  const [selectedTone, setSelectedTone] = useState<ReplyTone>('playful');
-  const [replyBatch, setReplyBatch] = useState<ReplyBatch>({});
-  const [visibleReplies, setVisibleReplies] = useState<SuggestedReply[]>([]);
-  const [shownReplyIds, setShownReplyIds] = useState<string[]>([]);
-  const [vibeCheck, setVibeCheck] = useState<VibeCheck | null>(null);
-  const [parsedConversation, setParsedConversation] = useState<ParsedConversation | null>(null);
-  const [pendingSpeakerOcr, setPendingSpeakerOcr] = useState<OcrResult | null>(null);
-  const [pendingSpeakerContext, setPendingSpeakerContext] = useState('');
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [isGeneratingReplies, setIsGeneratingReplies] = useState(false);
-  const analysisRequestIdRef = useRef(0);
+  const [screen, setScreen] = useState<Screen>("onboarding");
+  const [showDebugBootScreen, setShowDebugBootScreen] =
+    useState(DEBUG_BOOT_PROBE);
+  const conversation = useConversationFlow({ speakerPolicy: "confirm" });
+  const {
+    confirmSpeakerSide,
+    generateRepliesForSelectedTone,
+    pendingSpeakerOcr,
+    pickScreenshot,
+    refreshReplies,
+    repliesStatus,
+    selectedScreenshotUri,
+    selectedTone,
+    vibeCheck,
+    visibleReplies,
+  } = conversation;
   const [fontsLoaded] = useFonts({
-    [FONTS.display]: require('./assets/fonts/ClashDisplay-Variable.ttf'),
-    [FONTS.body]: require('./assets/fonts/ClashGrotesk-Variable.ttf'),
-    [FONTS.bodyRegular]: require('./assets/fonts/ClashGrotesk-Regular.ttf'),
+    [FONTS.display]: require("./assets/fonts/ClashDisplay-Variable.ttf"),
+    [FONTS.body]: require("./assets/fonts/ClashGrotesk-Variable.ttf"),
+    [FONTS.bodyRegular]: require("./assets/fonts/ClashGrotesk-Regular.ttf"),
   });
 
-  console.log('[Wingr boot] App render', {
+  console.log("[Wingr boot] App render", {
     fontsLoaded,
     screen,
     showDebugBootScreen,
   });
 
   useEffect(() => {
-    console.log('[Wingr boot] App mounted');
+    console.log("[Wingr boot] App mounted");
 
     if (!DEBUG_BOOT_PROBE) {
       return;
     }
 
     const timeoutId = setTimeout(() => {
-      console.log('[Wingr boot] Hiding debug boot screen');
+      console.log("[Wingr boot] Hiding debug boot screen");
       setShowDebugBootScreen(false);
     }, 1500);
 
@@ -274,49 +319,22 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    console.log('[Wingr boot] Fonts loaded state changed', fontsLoaded);
+    console.log("[Wingr boot] Fonts loaded state changed", fontsLoaded);
   }, [fontsLoaded]);
-
-  const generateRepliesForTone = async ({
-    tone,
-    nextContext,
-    nextScreenshotUri = selectedScreenshotUri,
-    nextParsedConversation = parsedConversation,
-    nextTranscriptText = chatTranscript,
-    nextVibeCheck = vibeCheck,
-  }: {
-    tone: ReplyTone;
-    nextContext: string;
-    nextScreenshotUri?: string | null;
-    nextParsedConversation?: ParsedConversation | null;
-    nextTranscriptText?: string;
-    nextVibeCheck?: VibeCheck | null;
-  }) => {
-    if (!nextVibeCheck || !nextTranscriptText) {
-      throw new Error('Vibe check is not ready yet.');
-    }
-
-    return generateReplies({
-      vibeCheck: nextVibeCheck,
-      selectedTone: tone,
-      screenshotUri: nextScreenshotUri ?? null,
-      parsedConversation: nextParsedConversation ?? undefined,
-      transcriptText: nextTranscriptText,
-      extraContext: nextContext,
-    });
-  };
 
   if (showDebugBootScreen) {
     return (
       <View style={styles.debugBootScreen}>
         <Text style={styles.debugBootTitle}>Wingr loaded</Text>
-        <Text style={styles.debugBootBody}>JS mounted. Waiting for app render...</Text>
+        <Text style={styles.debugBootBody}>
+          JS mounted. Waiting for app render...
+        </Text>
       </View>
     );
   }
 
   if (!fontsLoaded) {
-    console.log('[Wingr boot] Waiting for fonts');
+    console.log("[Wingr boot] Waiting for fonts");
     return (
       <View style={styles.debugBootScreen}>
         <Text style={styles.debugBootTitle}>Wingr loaded</Text>
@@ -325,181 +343,42 @@ export default function App() {
     );
   }
 
-  const applyConversationResult = (ocr: OcrResult, nextVibeCheck: VibeCheck) => {
-    setChatTranscript(ocr.transcriptText);
-    setParsedConversation(ocr.parsedConversation);
-    setReplyBatch({});
-    setVisibleReplies([]);
-    setShownReplyIds([]);
-    setSelectedTone(nextVibeCheck.bestTone);
-    setVibeCheck(nextVibeCheck);
-  };
-
-  const getCompletedVibeCheck = async ({
-    nextExtraContext,
-    parsedConversation: nextParsedConversation,
-    transcriptText,
-  }: {
-    nextExtraContext: string;
-    parsedConversation: ParsedConversation;
-    transcriptText: string;
-  }) => {
-    const completedVibeCheck = await refineVibeCheck({
-      extraContext: nextExtraContext || undefined,
-      parsedConversation: nextParsedConversation,
-      transcriptText,
-    });
-
-    console.info('[Wingr timing] vibe-check-result', {
-      result: 'completed',
-    });
-
-    return completedVibeCheck;
-  };
-
-  const getReplyVibeCheck = async () => {
-    if (vibeCheck) {
-      return vibeCheck;
-    }
-
-    throw new Error('Vibe check is not ready yet.');
-  };
-
-  const handleAnalyzeScreenshot = async (screenshotUri: string, nextExtraContext = '') => {
-    const requestId = analysisRequestIdRef.current + 1;
-    const trimmedContext = nextExtraContext.trim();
-
-    analysisRequestIdRef.current = requestId;
-    setExtraContext(nextExtraContext);
-    setAnalysisError(null);
-    setChatTranscript('');
-    setParsedConversation(null);
-    setPendingSpeakerOcr(null);
-    setPendingSpeakerContext('');
-    setVibeCheck(null);
-    setReplyBatch({});
-    setVisibleReplies([]);
-    setShownReplyIds([]);
-    setReplyContext(trimmedContext);
-    setIsGeneratingReplies(false);
-    setScreen('analyzing');
-
-    try {
-      const ocr = await extractScreenshotConversation(screenshotUri);
-
-      if (analysisRequestIdRef.current !== requestId) {
-        return;
-      }
-
-      setChatTranscript(ocr.transcriptText);
-
-      if (needsSpeakerConfirmation(ocr.parsedConversation)) {
-        setPendingSpeakerOcr(ocr);
-        setPendingSpeakerContext(nextExtraContext);
-        setScreen('speakerConfirmation');
-        return;
-      }
-
-      const completedVibeCheck = await getCompletedVibeCheck({
-        nextExtraContext,
-        parsedConversation: ocr.parsedConversation,
-        transcriptText: ocr.transcriptText,
-      });
-
-      if (analysisRequestIdRef.current !== requestId) {
-        return;
-      }
-
-      applyConversationResult(ocr, completedVibeCheck);
-      setScreen('vibecheck');
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : 'Wingr could not read that screenshot. Try another image.';
-
-      setAnalysisError(message);
-      Alert.alert('Could not read screenshot', 'Try another screenshot or upload again.');
-      setScreen('upload');
-    }
-  };
-
-  const handleConfirmSpeakerSide = async (userSide: 'left' | 'right') => {
+  const handleConfirmSpeakerSide = async (userSide: "left" | "right") => {
     if (!pendingSpeakerOcr) {
-      setScreen('upload');
+      setScreen("upload");
       return;
     }
 
-    const requestId = analysisRequestIdRef.current + 1;
-    const confirmedOcr = rebuildOcrResultWithConfirmedUserSide(pendingSpeakerOcr, userSide);
+    setScreen("analyzing");
+    const succeeded = await confirmSpeakerSide(userSide);
 
-    analysisRequestIdRef.current = requestId;
-    setScreen('analyzing');
-    setPendingSpeakerOcr(null);
-    setChatTranscript(confirmedOcr.transcriptText);
-
-    try {
-      const completedVibeCheck = await getCompletedVibeCheck({
-        nextExtraContext: pendingSpeakerContext,
-        parsedConversation: confirmedOcr.parsedConversation,
-        transcriptText: confirmedOcr.transcriptText,
-      });
-
-      if (analysisRequestIdRef.current !== requestId) {
-        return;
-      }
-
-      applyConversationResult(confirmedOcr, completedVibeCheck);
-      setPendingSpeakerContext('');
-      setScreen('vibecheck');
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : 'Wingr could not read that screenshot. Try another image.';
-
-      setAnalysisError(message);
-      Alert.alert('Could not read screenshot', 'Try another screenshot or upload again.');
-      setScreen('upload');
+    if (succeeded) {
+      setScreen("vibecheck");
+    } else {
+      Alert.alert(
+        "Could not read screenshot",
+        "Try another screenshot or upload again.",
+      );
+      setScreen("upload");
     }
   };
 
   const handleCancelSpeakerConfirmation = () => {
-    setPendingSpeakerOcr(null);
-    setPendingSpeakerContext('');
-    setScreen('upload');
-  };
-
-  const pickScreenshot = async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-    if (!permission.granted) {
-      Alert.alert(
-        'Photo access needed',
-        'Wingr needs access to your photos so you can upload a text screenshot.',
-      );
-      return;
-    }
-
-    return ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: false,
-      quality: 1,
-    });
+    conversation.cancelSpeakerConfirmation();
+    setScreen("upload");
   };
 
   const handlePickScreenshotForUpload = async () => {
-    const result = await pickScreenshot();
+    const screenshotUri = await pickScreenshot();
 
-    if (!result || result.canceled) {
+    if (!screenshotUri) {
+      if (conversation.error?.kind === "permission") {
+        Alert.alert("Photo access needed", conversation.error.message);
+      }
       return;
     }
 
-    const screenshotUri = result.assets[0].uri;
-
-    setSelectedScreenshotUri(screenshotUri);
-    setAnalysisError(null);
-    setScreen('upload');
+    setScreen("upload");
   };
 
   const handleCheckSelectedScreenshot = async () => {
@@ -508,166 +387,113 @@ export default function App() {
       return;
     }
 
-    await handleAnalyzeScreenshot(selectedScreenshotUri);
+    setScreen("analyzing");
+    const result = await conversation.analyzeScreenshot();
+
+    if (result === "needsConfirmation") {
+      setScreen("speakerConfirmation");
+    } else if (result === "ready") {
+      setScreen("vibecheck");
+    } else {
+      Alert.alert(
+        "Could not read screenshot",
+        conversation.error?.message ??
+          "Try another screenshot or upload again.",
+      );
+      setScreen("upload");
+    }
   };
 
   const handleGenerateReplies = async () => {
     if (!vibeCheck) {
-      Alert.alert('Vibe check needed', 'Upload a screenshot so Wingr can read the vibe first.');
-      return;
-    }
-
-    const nextContext = extraContext.trim();
-    const cachedReplies = getVisibleRepliesForTone(replyBatch, selectedTone, shownReplyIds);
-
-    setReplyContext(nextContext);
-    setScreen('replies');
-
-    if (cachedReplies.length === 2) {
-      setVisibleReplies(cachedReplies);
-      setShownReplyIds((currentShownReplyIds) => appendShownReplyIds(currentShownReplyIds, cachedReplies));
-      return;
-    }
-
-    setIsGeneratingReplies(true);
-    setVisibleReplies([]);
-
-    try {
-      const replyVibeCheck = await getReplyVibeCheck();
-      const nextReplyBatch = await generateRepliesForTone({
-        tone: selectedTone,
-        nextContext,
-        nextVibeCheck: replyVibeCheck,
-      });
-      const nextVisibleReplies = (nextReplyBatch[selectedTone] ?? []).slice(0, 2);
-
-      setReplyBatch((currentReplyBatch) => mergeReplyBatch(currentReplyBatch, nextReplyBatch));
-      setVisibleReplies(nextVisibleReplies);
-      setShownReplyIds((currentShownReplyIds) =>
-        appendShownReplyIds(currentShownReplyIds, nextVisibleReplies),
+      Alert.alert(
+        "Vibe check needed",
+        "Upload a screenshot so Wingr can read the vibe first.",
       );
-    } catch {
-      Alert.alert('Could not generate replies', 'Try again in a moment.');
-      setScreen('vibecheck');
-    } finally {
-      setIsGeneratingReplies(false);
+      return;
+    }
+
+    setScreen("replies");
+    const succeeded = await generateRepliesForSelectedTone();
+
+    if (!succeeded) {
+      Alert.alert("Could not generate replies", "Try again in a moment.");
+      setScreen("vibecheck");
     }
   };
 
   const handleToneChange = async (tone: ReplyTone) => {
-    setSelectedTone(tone);
-    const cachedReplies = getVisibleRepliesForTone(replyBatch, tone, shownReplyIds);
+    const succeeded = await conversation.changeTone(tone);
 
-    if (cachedReplies.length === 2) {
-      setVisibleReplies(cachedReplies);
-      setShownReplyIds((currentShownReplyIds) => appendShownReplyIds(currentShownReplyIds, cachedReplies));
-      return;
+    if (!succeeded) {
+      Alert.alert("Could not refresh replies", "Try again in a moment.");
     }
 
-    setIsGeneratingReplies(true);
-
-    try {
-      const nextReplyBatch = await generateRepliesForTone({
-        tone,
-        nextContext: replyContext,
-      });
-      const nextVisibleReplies = (nextReplyBatch[tone] ?? []).slice(0, 2);
-
-      setReplyBatch((currentReplyBatch) => mergeReplyBatch(currentReplyBatch, nextReplyBatch));
-      setVisibleReplies(nextVisibleReplies);
-      setShownReplyIds((currentShownReplyIds) =>
-        appendShownReplyIds(currentShownReplyIds, nextVisibleReplies),
-      );
-    } catch (error) {
-      throw error;
-    } finally {
-      setIsGeneratingReplies(false);
-    }
+    return succeeded;
   };
 
   const handleRefreshReplies = async () => {
-    const cachedReplies = getVisibleRepliesForTone(replyBatch, selectedTone, shownReplyIds);
+    const succeeded = await refreshReplies();
 
-    if (cachedReplies.length === 2) {
-      setVisibleReplies(cachedReplies);
-      setShownReplyIds((currentShownReplyIds) => appendShownReplyIds(currentShownReplyIds, cachedReplies));
-      return;
+    if (!succeeded) {
+      Alert.alert("Could not refresh replies", "Try again in a moment.");
     }
 
-    setIsGeneratingReplies(true);
-
-    try {
-      const nextReplyBatch = await generateRepliesForTone({
-        tone: selectedTone,
-        nextContext: replyContext,
-      });
-      const nextVisibleReplies = (nextReplyBatch[selectedTone] ?? []).slice(0, 2);
-
-      setReplyBatch((currentReplyBatch) => mergeReplyBatch(currentReplyBatch, nextReplyBatch));
-      setVisibleReplies(nextVisibleReplies);
-      setShownReplyIds((currentShownReplyIds) =>
-        appendShownReplyIds(currentShownReplyIds, nextVisibleReplies),
-      );
-    } catch (error) {
-      throw error;
-    } finally {
-      setIsGeneratingReplies(false);
-    }
+    return succeeded;
   };
 
   return (
     <BootErrorBoundary>
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="light" />
-        {screen === 'onboarding' ? (
-          <OnboardingFlow onComplete={() => setScreen('landing')} />
+        {screen === "onboarding" ? (
+          <OnboardingFlow onComplete={() => setScreen("landing")} />
         ) : null}
 
-      {screen === 'landing' ? (
-        <LandingScreen onContinue={handlePickScreenshotForUpload} />
-      ) : null}
+        {screen === "landing" ? (
+          <LandingScreen onContinue={handlePickScreenshotForUpload} />
+        ) : null}
 
-      {screen === 'upload' ? (
-        <UploadScreenshotScreen
-          onBack={() => setScreen('landing')}
-          onChangeScreenshot={handlePickScreenshotForUpload}
-          onCheckVibe={handleCheckSelectedScreenshot}
-          selectedScreenshotUri={selectedScreenshotUri}
-        />
-      ) : null}
+        {screen === "upload" ? (
+          <UploadScreenshotScreen
+            onBack={() => setScreen("landing")}
+            onChangeScreenshot={handlePickScreenshotForUpload}
+            onCheckVibe={handleCheckSelectedScreenshot}
+            selectedScreenshotUri={selectedScreenshotUri}
+          />
+        ) : null}
 
-      {screen === 'analyzing' ? (
-        <AnalyzingScreen selectedScreenshotUri={selectedScreenshotUri} />
-      ) : null}
+        {screen === "analyzing" ? (
+          <AnalyzingScreen selectedScreenshotUri={selectedScreenshotUri} />
+        ) : null}
 
-      {screen === 'speakerConfirmation' ? (
-        <SpeakerConfirmationScreen
-          onBack={handleCancelSpeakerConfirmation}
-          onConfirm={handleConfirmSpeakerSide}
-          selectedScreenshotUri={selectedScreenshotUri}
-        />
-      ) : null}
+        {screen === "speakerConfirmation" ? (
+          <SpeakerConfirmationScreen
+            onBack={handleCancelSpeakerConfirmation}
+            onConfirm={handleConfirmSpeakerSide}
+            selectedScreenshotUri={selectedScreenshotUri}
+          />
+        ) : null}
 
-      {screen === 'vibecheck' && vibeCheck ? (
-        <VibeCheckScreen
-          onBack={() => setScreen('upload')}
-          isGeneratingReplies={isGeneratingReplies}
-          onGenerateReplies={handleGenerateReplies}
-          vibeCheck={vibeCheck}
-        />
-      ) : null}
+        {screen === "vibecheck" && vibeCheck ? (
+          <VibeCheckScreen
+            onBack={() => setScreen("upload")}
+            isGeneratingReplies={repliesStatus === "generating"}
+            onGenerateReplies={handleGenerateReplies}
+            vibeCheck={vibeCheck}
+          />
+        ) : null}
 
-      {screen === 'replies' && vibeCheck ? (
-        <RepliesScreen
-          isGeneratingReplies={isGeneratingReplies}
-          onBack={() => setScreen('vibecheck')}
-          onRefreshReplies={handleRefreshReplies}
-          onToneChange={handleToneChange}
-          replies={visibleReplies}
-          selectedTone={selectedTone}
-        />
-      ) : null}
-
+        {screen === "replies" && vibeCheck ? (
+          <RepliesScreen
+            isGeneratingReplies={repliesStatus === "generating"}
+            onBack={() => setScreen("vibecheck")}
+            onRefreshReplies={handleRefreshReplies}
+            onToneChange={handleToneChange}
+            replies={visibleReplies}
+            selectedTone={selectedTone}
+          />
+        ) : null}
       </SafeAreaView>
     </BootErrorBoundary>
   );
@@ -689,7 +515,7 @@ function LandingScreen({ onContinue }: { onContinue: () => void }) {
               accessibilityIgnoresInvertColors
               className="h-full w-full"
               resizeMode="cover"
-              source={require('./assets/images/landing-screen-image.png')}
+              source={require("./assets/images/landing-screen-image.png")}
             />
           </View>
 
@@ -698,7 +524,10 @@ function LandingScreen({ onContinue }: { onContinue: () => void }) {
               Get better replies
             </Text>
 
-            <Text className="font-bodyRegular text-landing-body text-[#A1A1AA]" numberOfLines={2}>
+            <Text
+              className="font-bodyRegular text-landing-body text-[#A1A1AA]"
+              numberOfLines={2}
+            >
               Check the energy, interest, and best move before you reply.
             </Text>
 
@@ -802,12 +631,20 @@ function UploadScreenshotScreen({
   );
 }
 
-function AnalyzingScreen({ selectedScreenshotUri }: { selectedScreenshotUri: string | null }) {
+function AnalyzingScreen({
+  selectedScreenshotUri,
+}: {
+  selectedScreenshotUri: string | null;
+}) {
   return (
     <View style={[styles.screen, styles.analyzingScreen]}>
       <Text style={styles.vibeHeaderTitle}>Reading chat</Text>
       {selectedScreenshotUri ? (
-        <Image resizeMode="cover" source={{ uri: selectedScreenshotUri }} style={styles.analyzingImage} />
+        <Image
+          resizeMode="cover"
+          source={{ uri: selectedScreenshotUri }}
+          style={styles.analyzingImage}
+        />
       ) : null}
       <ActivityIndicator color={COLORS.blue} size="large" />
       <Text style={styles.analyzingTitle}>Extracting the conversation...</Text>
@@ -824,7 +661,7 @@ function SpeakerConfirmationScreen({
   selectedScreenshotUri,
 }: {
   onBack: () => void;
-  onConfirm: (userSide: 'left' | 'right') => void;
+  onConfirm: (userSide: "left" | "right") => void;
   selectedScreenshotUri: string | null;
 }) {
   return (
@@ -835,7 +672,10 @@ function SpeakerConfirmationScreen({
           accessibilityLabel="Go back to upload"
           hitSlop={12}
           onPress={onBack}
-          style={({ pressed }) => [styles.backButton, pressed && styles.uploadButtonPressed]}
+          style={({ pressed }) => [
+            styles.backButton,
+            pressed && styles.uploadButtonPressed,
+          ]}
         >
           <ArrowLeft color={COLORS.white} size={22} />
         </Pressable>
@@ -854,9 +694,12 @@ function SpeakerConfirmationScreen({
         ) : null}
 
         <View style={styles.speakerConfirmationCard}>
-          <Text style={styles.speakerConfirmationTitle}>Just checking — which side is you?</Text>
+          <Text style={styles.speakerConfirmationTitle}>
+            Just checking — which side is you?
+          </Text>
           <Text style={styles.speakerConfirmationText}>
-            Wingr needs this once so it does not write replies to your own message.
+            Wingr needs this once so it does not write replies to your own
+            message.
           </Text>
 
           <View style={styles.speakerConfirmationButtons}>
@@ -864,20 +707,27 @@ function SpeakerConfirmationScreen({
               activeOpacity={0.88}
               accessibilityRole="button"
               accessibilityLabel="Right side is me"
-              onPress={() => onConfirm('right')}
+              onPress={() => onConfirm("right")}
               style={styles.speakerConfirmationButton}
             >
-              <Text style={styles.speakerConfirmationButtonText}>Right side</Text>
+              <Text style={styles.speakerConfirmationButtonText}>
+                Right side
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               activeOpacity={0.88}
               accessibilityRole="button"
               accessibilityLabel="Left side is me"
-              onPress={() => onConfirm('left')}
-              style={[styles.speakerConfirmationButton, styles.speakerConfirmationSecondaryButton]}
+              onPress={() => onConfirm("left")}
+              style={[
+                styles.speakerConfirmationButton,
+                styles.speakerConfirmationSecondaryButton,
+              ]}
             >
-              <Text style={styles.speakerConfirmationButtonText}>Left side</Text>
+              <Text style={styles.speakerConfirmationButtonText}>
+                Left side
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -899,7 +749,7 @@ function VibeCheckScreen({
 }) {
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
       style={styles.keyboardScreen}
     >
       <ScrollView
@@ -915,7 +765,10 @@ function VibeCheckScreen({
             accessibilityLabel="Go back to upload"
             hitSlop={12}
             onPress={onBack}
-            style={({ pressed }) => [styles.backButton, pressed && styles.uploadButtonPressed]}
+            style={({ pressed }) => [
+              styles.backButton,
+              pressed && styles.uploadButtonPressed,
+            ]}
           >
             <ArrowLeft color={COLORS.white} size={22} />
           </Pressable>
@@ -923,38 +776,7 @@ function VibeCheckScreen({
           <View style={styles.backButton} />
         </View>
 
-        <View style={styles.vibeCard}>
-          <View style={styles.vibeCardTitleRow}>
-            <Text style={styles.vibeCardTitle}>Vibe check</Text>
-          </View>
-          <Text style={styles.vibeSummaryText}>{vibeCheck.summary}</Text>
-          <VibeMetric
-            icon={Heart}
-            label="Their interest"
-            value={vibeCheck.interestLevel}
-            variant="interest"
-            withMeter
-          />
-          <VibeMetric
-            icon={Bolt}
-            label="Conversation energy"
-            value={getConversationEnergyCopy(vibeCheck)}
-            variant="energy"
-          />
-          <VibeMetric
-            icon={ChatRound}
-            label="Best tone"
-            value={getToneLabel(vibeCheck.bestTone)}
-            variant="move"
-          />
-          <VibeMetric
-            icon={ShieldWarning}
-            label="Risk"
-            value={vibeCheck.risk}
-            isLast
-            variant="risk"
-          />
-        </View>
+        <VibeCheckCard vibeCheck={vibeCheck} />
 
         <TouchableOpacity
           activeOpacity={0.88}
@@ -1006,7 +828,7 @@ function VibeMetric({
         <Text
           style={[
             styles.metricValue,
-            variant === 'energy' && styles.metricValueBody,
+            variant === "energy" && styles.metricValueBody,
             { color: config.valueColor },
           ]}
         >
@@ -1032,7 +854,12 @@ function GlowIconContainer({
   const config = METRIC_VARIANTS[variant];
 
   return (
-    <View style={[styles.glowIconContainer, { backgroundColor: config.backgroundColor }]}>
+    <View
+      style={[
+        styles.glowIconContainer,
+        { backgroundColor: config.backgroundColor },
+      ]}
+    >
       <Svg
         height="34"
         pointerEvents="none"
@@ -1041,13 +868,31 @@ function GlowIconContainer({
         width="34"
       >
         <Defs>
-          <Filter height="280%" id="blobBlurTopLeft" width="280%" x="-90%" y="-90%">
+          <Filter
+            height="280%"
+            id="blobBlurTopLeft"
+            width="280%"
+            x="-90%"
+            y="-90%"
+          >
             <FeGaussianBlur stdDeviation="14" />
           </Filter>
-          <Filter height="280%" id="blobBlurTopRight" width="280%" x="-90%" y="-90%">
+          <Filter
+            height="280%"
+            id="blobBlurTopRight"
+            width="280%"
+            x="-90%"
+            y="-90%"
+          >
             <FeGaussianBlur stdDeviation="14" />
           </Filter>
-          <Filter height="280%" id="blobBlurBottom" width="280%" x="-90%" y="-90%">
+          <Filter
+            height="280%"
+            id="blobBlurBottom"
+            width="280%"
+            x="-90%"
+            y="-90%"
+          >
             <FeGaussianBlur stdDeviation="16" />
           </Filter>
         </Defs>
@@ -1096,37 +941,11 @@ function RepliesScreen({
 }: {
   isGeneratingReplies: boolean;
   onBack: () => void;
-  onRefreshReplies: () => Promise<void>;
-  onToneChange: (tone: ReplyTone) => Promise<void>;
+  onRefreshReplies: () => Promise<boolean>;
+  onToneChange: (tone: ReplyTone) => Promise<boolean>;
   replies: SuggestedReply[];
   selectedTone: ReplyTone;
 }) {
-  const [isToneSheetOpen, setIsToneSheetOpen] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [copiedReplyId, setCopiedReplyId] = useState<string | null>(null);
-  const selectedToneLabel = getToneLabel(selectedTone);
-
-  const handleCopyReply = async (reply: SuggestedReply) => {
-    const didCopy = await Clipboard.setStringAsync(reply.text);
-
-    if (didCopy) {
-      setCopiedReplyId(reply.id);
-    }
-  };
-
-  const handleRegenerateReplies = async () => {
-    setIsRefreshing(true);
-
-    try {
-      await onRefreshReplies();
-      setCopiedReplyId(null);
-    } catch {
-      Alert.alert('Could not refresh replies', 'Try again in a moment.');
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
   return (
     <View style={[styles.screen, styles.repliesScreen]}>
       <View style={styles.vibeHeader}>
@@ -1135,7 +954,10 @@ function RepliesScreen({
           accessibilityLabel="Go back to Vibe Check"
           hitSlop={12}
           onPress={onBack}
-          style={({ pressed }) => [styles.backButton, pressed && styles.uploadButtonPressed]}
+          style={({ pressed }) => [
+            styles.backButton,
+            pressed && styles.uploadButtonPressed,
+          ]}
         >
           <ArrowLeft color={COLORS.white} size={22} />
         </Pressable>
@@ -1148,81 +970,14 @@ function RepliesScreen({
         contentContainerStyle={styles.repliesScrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.repliesControlsRow}>
-          <TouchableOpacity
-            activeOpacity={0.88}
-            accessibilityRole="button"
-            accessibilityLabel="Get new replies"
-            disabled={isRefreshing || isGeneratingReplies}
-            onPress={handleRegenerateReplies}
-            style={[
-              styles.newRepliesButton,
-              (isRefreshing || isGeneratingReplies) && styles.disabledButton,
-            ]}
-          >
-            {isRefreshing || isGeneratingReplies ? (
-              <ActivityIndicator color={COLORS.white} />
-            ) : (
-              <>
-                <Refresh color={COLORS.white} size={16} />
-                <Text style={styles.newRepliesButtonText}>New Replies</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.88}
-            accessibilityRole="button"
-            accessibilityLabel="Change reply tone"
-            onPress={() => setIsToneSheetOpen(true)}
-            style={styles.toneSelector}
-          >
-            <StarsMinimalistic color="#D6D6DB" size={14} />
-            <Text numberOfLines={1} style={styles.toneSelectorText}>
-              {selectedToneLabel}
-            </Text>
-            <AltArrowDown color="#D6D6DB" size={16} />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.replyCards}>
-          {replies.length === 0 && isGeneratingReplies ? (
-            <View style={styles.repliesLoadingCard}>
-              <ActivityIndicator color={COLORS.blue} />
-              <Text style={styles.repliesLoadingText}>Writing replies...</Text>
-            </View>
-          ) : null}
-
-          {replies.slice(0, 2).map((reply, index) => (
-            <ReplyCard
-              copied={copiedReplyId === reply.id}
-              key={reply.id}
-              onCopy={() => handleCopyReply(reply)}
-              recommended={index === 0}
-              reply={reply}
-            />
-          ))}
-        </View>
+        <RepliesContent
+          isGenerating={isGeneratingReplies}
+          onRefreshReplies={onRefreshReplies}
+          onToneChange={onToneChange}
+          replies={replies}
+          selectedTone={selectedTone}
+        />
       </ScrollView>
-
-      <ToneBottomSheet
-        onClose={() => setIsToneSheetOpen(false)}
-        onSelect={async (tone) => {
-          setIsToneSheetOpen(false);
-          setIsRefreshing(true);
-
-          try {
-            await onToneChange(tone);
-            setCopiedReplyId(null);
-          } catch {
-            Alert.alert('Could not refresh replies', 'Try again in a moment.');
-          } finally {
-            setIsRefreshing(false);
-          }
-        }}
-        selectedTone={selectedTone}
-        visible={isToneSheetOpen}
-      />
     </View>
   );
 }
@@ -1239,7 +994,9 @@ function ReplyCard({
   reply: SuggestedReply;
 }) {
   return (
-    <View style={[styles.replyCard, recommended && styles.recommendedReplyCard]}>
+    <View
+      style={[styles.replyCard, recommended && styles.recommendedReplyCard]}
+    >
       {recommended ? (
         <View style={styles.recommendedBadge}>
           <StarsMinimalistic color="#4D8CFF" size={14} />
@@ -1247,7 +1004,12 @@ function ReplyCard({
         </View>
       ) : null}
 
-      <View style={[styles.replyCardBody, !recommended && styles.replyCardBodySecondary]}>
+      <View
+        style={[
+          styles.replyCardBody,
+          !recommended && styles.replyCardBodySecondary,
+        ]}
+      >
         <Text style={styles.replyText}>{reply.text}</Text>
 
         {recommended && reply.whyItWorks ? (
@@ -1270,7 +1032,7 @@ function ReplyCard({
         ) : (
           <Copy color={COLORS.white} size={16} />
         )}
-        <Text style={styles.copyButtonText}>{copied ? 'Copied' : 'Copy'}</Text>
+        <Text style={styles.copyButtonText}>{copied ? "Copied" : "Copy"}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -1288,8 +1050,17 @@ function ToneBottomSheet({
   visible: boolean;
 }) {
   return (
-    <Modal animationType="slide" onRequestClose={onClose} transparent visible={visible}>
-      <Pressable accessibilityRole="button" onPress={onClose} style={styles.sheetBackdrop}>
+    <Modal
+      animationType="slide"
+      onRequestClose={onClose}
+      transparent
+      visible={visible}
+    >
+      <Pressable
+        accessibilityRole="button"
+        onPress={onClose}
+        style={styles.sheetBackdrop}
+      >
         <Pressable style={styles.sheetPanel}>
           <View style={styles.sheetHandle} />
           <Text style={styles.sheetTitle}>Choose tone</Text>
@@ -1311,16 +1082,24 @@ function ToneBottomSheet({
                   ]}
                 >
                   <View style={styles.toneOptionLeft}>
-                    <ToneIcon color={selected ? COLORS.blue : '#D6D6DB'} size={20} />
+                    <ToneIcon
+                      color={selected ? COLORS.blue : "#D6D6DB"}
+                      size={20}
+                    />
                     <Text
                       numberOfLines={1}
-                      style={[styles.toneOptionText, selected && styles.toneOptionTextSelected]}
+                      style={[
+                        styles.toneOptionText,
+                        selected && styles.toneOptionTextSelected,
+                      ]}
                     >
                       {option.label}
                     </Text>
                   </View>
                   <View style={styles.toneOptionCheckSlot}>
-                    {selected ? <CheckCircle color={COLORS.blue} size={21} /> : null}
+                    {selected ? (
+                      <CheckCircle color={COLORS.blue} size={21} />
+                    ) : null}
                   </View>
                 </TouchableOpacity>
               );
@@ -1342,25 +1121,25 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
   },
   debugBootBody: {
-    color: '#B7B7BE',
+    color: "#B7B7BE",
     fontSize: 16,
     lineHeight: 22,
     marginTop: 10,
-    textAlign: 'center',
+    textAlign: "center",
   },
   debugBootScreen: {
-    alignItems: 'center',
-    backgroundColor: '#080808',
+    alignItems: "center",
+    backgroundColor: "#080808",
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: "center",
     paddingHorizontal: 24,
   },
   debugBootTitle: {
-    color: '#F6F7FB',
+    color: "#F6F7FB",
     fontSize: 28,
-    fontWeight: '700',
+    fontWeight: "700",
     lineHeight: 34,
-    textAlign: 'center',
+    textAlign: "center",
   },
   screen: {
     flex: 1,
@@ -1372,15 +1151,15 @@ const styles = StyleSheet.create({
     color: COLORS.blue,
     fontFamily: FONTS.display,
     fontSize: 24,
-    fontWeight: '700',
+    fontWeight: "700",
     lineHeight: 30,
-    textAlign: 'center',
+    textAlign: "center",
   },
   heroImage: {
-    alignSelf: 'center',
+    alignSelf: "center",
     height: 405,
     marginTop: 36,
-    width: '100%',
+    width: "100%",
   },
   uploadSection: {
     gap: 14,
@@ -1390,7 +1169,7 @@ const styles = StyleSheet.create({
     color: COLORS.blue,
     fontFamily: FONTS.display,
     fontSize: 27,
-    fontWeight: '700',
+    fontWeight: "700",
     lineHeight: 33,
   },
   errorText: {
@@ -1400,80 +1179,80 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   uploadButton: {
-    alignItems: 'center',
+    alignItems: "center",
     backgroundColor: COLORS.panel,
     borderColor: COLORS.border,
     borderRadius: 18,
-    borderStyle: 'dashed',
+    borderStyle: "dashed",
     borderWidth: 1,
     height: 160,
-    justifyContent: 'center',
-    overflow: 'hidden',
+    justifyContent: "center",
+    overflow: "hidden",
   },
   uploadButtonPressed: {
     opacity: 0.84,
     transform: [{ scale: 0.99 }],
   },
   uploadEmptyState: {
-    alignItems: 'center',
+    alignItems: "center",
     gap: 16,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
   uploadText: {
     color: COLORS.white,
     fontFamily: FONTS.body,
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: "600",
     lineHeight: 24,
-    textAlign: 'center',
+    textAlign: "center",
   },
   uploadSubtext: {
     color: COLORS.muted,
     fontFamily: FONTS.body,
     fontSize: 15,
-    fontWeight: '500',
+    fontWeight: "500",
     lineHeight: 20,
     marginTop: 2,
-    textAlign: 'center',
+    textAlign: "center",
   },
   plusButton: {
-    alignItems: 'center',
+    alignItems: "center",
     borderColor: COLORS.white,
     borderRadius: 7,
     borderWidth: 1,
     height: 21,
-    justifyContent: 'center',
+    justifyContent: "center",
     width: 21,
   },
   plusText: {
     color: COLORS.white,
     fontFamily: FONTS.body,
     fontSize: 18,
-    fontWeight: '500',
+    fontWeight: "500",
     lineHeight: 20,
   },
   selectedPreview: {
-    height: '100%',
-    justifyContent: 'center',
-    width: '100%',
+    height: "100%",
+    justifyContent: "center",
+    width: "100%",
   },
   selectedImage: {
     opacity: 0.44,
   },
   selectedOverlay: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.42)',
+    alignItems: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.42)",
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
   analyzingScreen: {
-    alignItems: 'center',
+    alignItems: "center",
     gap: 18,
-    justifyContent: 'center',
+    justifyContent: "center",
     paddingBottom: 48,
   },
   analyzingImage: {
-    backgroundColor: '#24242A',
+    backgroundColor: "#24242A",
     borderRadius: 20,
     height: 260,
     opacity: 0.68,
@@ -1483,9 +1262,9 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontFamily: FONTS.display,
     fontSize: 24,
-    fontWeight: '700',
+    fontWeight: "700",
     lineHeight: 30,
-    textAlign: 'center',
+    textAlign: "center",
   },
   analyzingText: {
     color: COLORS.muted,
@@ -1493,18 +1272,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 22,
     maxWidth: 280,
-    textAlign: 'center',
+    textAlign: "center",
   },
   speakerConfirmationScreen: {
     paddingHorizontal: 16,
   },
   speakerConfirmationBody: {
-    alignItems: 'center',
+    alignItems: "center",
     gap: 18,
     paddingTop: 28,
   },
   speakerConfirmationImage: {
-    backgroundColor: '#24242A',
+    backgroundColor: "#24242A",
     borderRadius: 20,
     height: 300,
     opacity: 0.72,
@@ -1512,49 +1291,49 @@ const styles = StyleSheet.create({
   },
   speakerConfirmationCard: {
     backgroundColor: COLORS.panelRaised,
-    borderColor: '#2B2B2F',
+    borderColor: "#2B2B2F",
     borderRadius: 12,
     borderWidth: 1,
     gap: 12,
     padding: 16,
-    width: '100%',
+    width: "100%",
   },
   speakerConfirmationTitle: {
     color: COLORS.white,
     fontFamily: FONTS.display,
     fontSize: 24,
-    fontWeight: '700',
+    fontWeight: "700",
     lineHeight: 30,
-    textAlign: 'center',
+    textAlign: "center",
   },
   speakerConfirmationText: {
     color: COLORS.muted,
     fontFamily: FONTS.bodyRegular,
     fontSize: 15,
     lineHeight: 20,
-    textAlign: 'center',
+    textAlign: "center",
   },
   speakerConfirmationButtons: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 12,
     paddingTop: 4,
   },
   speakerConfirmationButton: {
-    alignItems: 'center',
+    alignItems: "center",
     backgroundColor: COLORS.blue,
     borderRadius: 999,
     flex: 1,
     height: 48,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
   speakerConfirmationSecondaryButton: {
-    backgroundColor: '#454545',
+    backgroundColor: "#454545",
   },
   speakerConfirmationButtonText: {
     color: COLORS.white,
     fontFamily: FONTS.body,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
     lineHeight: 20,
   },
   keyboardScreen: {
@@ -1566,23 +1345,23 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
   },
   vibeHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
   },
   backButton: {
-    alignItems: 'center',
+    alignItems: "center",
     height: 34,
-    justifyContent: 'center',
+    justifyContent: "center",
     width: 34,
   },
   vibeHeaderTitle: {
     color: COLORS.blue,
     fontFamily: FONTS.display,
     fontSize: 22,
-    fontWeight: '700',
+    fontWeight: "700",
     lineHeight: 28,
-    textAlign: 'center',
+    textAlign: "center",
   },
   vibeCard: {
     backgroundColor: COLORS.panelRaised,
@@ -1591,32 +1370,32 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   vibeCardTitleRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
+    alignItems: "center",
+    flexDirection: "row",
     gap: 12,
-    justifyContent: 'space-between',
+    justifyContent: "space-between",
     marginBottom: 4,
   },
   vibeCardTitle: {
     color: COLORS.blue,
     fontFamily: FONTS.display,
     fontSize: 26,
-    fontWeight: '700',
+    fontWeight: "700",
     lineHeight: 32,
   },
   vibeSummaryText: {
     color: COLORS.white,
     fontFamily: FONTS.body,
     fontSize: 15,
-    fontWeight: '500',
+    fontWeight: "500",
     lineHeight: 21,
     marginBottom: 6,
   },
   metricRow: {
-    alignItems: 'center',
-    borderBottomColor: '#29292E',
+    alignItems: "center",
+    borderBottomColor: "#29292E",
     borderBottomWidth: 1,
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 12,
     minHeight: 67,
     paddingHorizontal: 0,
@@ -1626,33 +1405,33 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0,
   },
   glowIconContainer: {
-    backgroundColor: '#062F2C',
+    backgroundColor: "#062F2C",
     borderRadius: 10,
     height: 34,
-    overflow: 'hidden',
-    position: 'relative',
+    overflow: "hidden",
+    position: "relative",
     width: 34,
   },
   glowSvg: {
     height: 34,
     left: 0,
-    position: 'absolute',
+    position: "absolute",
     top: 0,
     width: 34,
   },
   metricIconForeground: {
-    alignItems: 'center',
-    height: '100%',
-    justifyContent: 'center',
-    position: 'relative',
-    width: '100%',
+    alignItems: "center",
+    height: "100%",
+    justifyContent: "center",
+    position: "relative",
+    width: "100%",
     zIndex: 2,
   },
   metricCopy: {
     flex: 1,
   },
   metricLabel: {
-    color: '#C9C9CF',
+    color: "#C9C9CF",
     fontFamily: FONTS.bodyRegular,
     fontSize: 13,
     lineHeight: 17,
@@ -1660,38 +1439,38 @@ const styles = StyleSheet.create({
   metricValue: {
     fontFamily: FONTS.display,
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: "700",
     lineHeight: 22,
   },
   metricValueBody: {
     fontFamily: FONTS.body,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
     lineHeight: 21,
   },
   meterTrack: {
-    backgroundColor: '#56565C',
+    backgroundColor: "#56565C",
     borderRadius: 999,
     height: 6,
-    overflow: 'hidden',
+    overflow: "hidden",
     width: 110,
   },
   meterFill: {
     backgroundColor: COLORS.purple,
     borderRadius: 999,
-    height: '100%',
-    width: '50%',
+    height: "100%",
+    width: "50%",
   },
   generateButton: {
-    alignItems: 'center',
+    alignItems: "center",
     backgroundColor: COLORS.blue,
     borderRadius: 999,
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 12,
     height: 48,
-    justifyContent: 'center',
+    justifyContent: "center",
     marginTop: 2,
-    width: '100%',
+    width: "100%",
   },
   generateButtonPressed: {
     opacity: 0.9,
@@ -1704,40 +1483,40 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontFamily: FONTS.body,
     fontSize: 17,
-    fontWeight: '600',
+    fontWeight: "600",
     lineHeight: 22,
   },
   repliesScreen: {
     paddingHorizontal: 16,
   },
   repliesScrollContent: {
-    alignItems: 'center',
+    alignItems: "center",
     gap: 16,
     paddingBottom: 24,
     paddingTop: 22,
   },
   repliesControlsRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
+    alignItems: "center",
+    flexDirection: "row",
     gap: 12,
-    width: '100%',
+    width: "100%",
   },
   toneSelector: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    borderColor: '#B7B7BE',
+    alignItems: "center",
+    alignSelf: "flex-start",
+    borderColor: "#B7B7BE",
     borderRadius: 999,
     borderWidth: 1,
     flexShrink: 0,
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 9,
     height: 40,
-    justifyContent: 'center',
+    justifyContent: "center",
     paddingHorizontal: 22,
     width: 190,
   },
   toneSelectorText: {
-    color: '#D6D6DB',
+    color: "#D6D6DB",
     fontFamily: FONTS.bodyRegular,
     fontSize: 13,
     lineHeight: 17,
@@ -1745,55 +1524,55 @@ const styles = StyleSheet.create({
   },
   replyCards: {
     gap: 14,
-    width: '100%',
+    width: "100%",
   },
   repliesLoadingCard: {
-    alignItems: 'center',
-    backgroundColor: '#151515',
-    borderColor: '#2B2B2F',
+    alignItems: "center",
+    backgroundColor: "#151515",
+    borderColor: "#2B2B2F",
     borderRadius: 20,
     borderWidth: 1,
     gap: 12,
     minHeight: 164,
-    justifyContent: 'center',
+    justifyContent: "center",
     padding: 20,
-    width: '100%',
+    width: "100%",
   },
   repliesLoadingText: {
-    color: '#D6D6DB',
+    color: "#D6D6DB",
     fontFamily: FONTS.body,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
     lineHeight: 21,
   },
   replyCard: {
-    backgroundColor: '#151515',
-    borderColor: '#2B2B2F',
+    backgroundColor: "#151515",
+    borderColor: "#2B2B2F",
     borderRadius: 12,
     borderWidth: 1,
     padding: 10,
-    width: '100%',
+    width: "100%",
   },
   recommendedReplyCard: {
-    backgroundColor: '#0C111D',
+    backgroundColor: "#0C111D",
     borderColor: COLORS.blue,
     borderWidth: 1,
   },
   recommendedBadge: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: '#15265E',
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "#15265E",
     borderRadius: 999,
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 5,
     height: 22,
     paddingHorizontal: 10,
   },
   recommendedBadgeText: {
-    color: '#4D8CFF',
+    color: "#4D8CFF",
     fontFamily: FONTS.bodyRegular,
     fontSize: 12,
-    fontWeight: '400',
+    fontWeight: "400",
     lineHeight: 15,
   },
   replyCardBody: {
@@ -1810,69 +1589,69 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontFamily: FONTS.display,
     fontSize: 23,
-    fontWeight: '700',
+    fontWeight: "700",
     lineHeight: 30,
   },
   whyItWorks: {
     gap: 2,
   },
   whyItWorksTitle: {
-    color: '#D6D6DB',
+    color: "#D6D6DB",
     fontFamily: FONTS.body,
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
     lineHeight: 17,
   },
   whyItWorksText: {
-    color: '#D6D6DB',
+    color: "#D6D6DB",
     fontFamily: FONTS.bodyRegular,
     fontSize: 13,
     lineHeight: 16,
   },
   copyButton: {
-    alignItems: 'center',
+    alignItems: "center",
     backgroundColor: COLORS.blue,
     borderRadius: 999,
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 10,
     height: 48,
-    justifyContent: 'center',
+    justifyContent: "center",
     marginTop: 26,
-    width: '100%',
+    width: "100%",
   },
   copyButtonText: {
     color: COLORS.white,
     fontFamily: FONTS.body,
     fontSize: 19,
-    fontWeight: '600',
+    fontWeight: "600",
     lineHeight: 24,
   },
   newRepliesButton: {
-    alignItems: 'center',
-    backgroundColor: '#454545',
+    alignItems: "center",
+    backgroundColor: "#454545",
     borderRadius: 999,
     flex: 1,
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 8,
     height: 40,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
   newRepliesButtonText: {
     color: COLORS.white,
     fontFamily: FONTS.body,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
     lineHeight: 20,
   },
   sheetBackdrop: {
-    backgroundColor: 'rgba(0, 0, 0, 0.58)',
+    backgroundColor: "rgba(0, 0, 0, 0.58)",
     flex: 1,
-    justifyContent: 'flex-end',
+    justifyContent: "flex-end",
   },
   sheetPanel: {
-    alignItems: 'stretch',
-    backgroundColor: '#111113',
-    borderTopColor: '#2B2B2F',
+    alignItems: "stretch",
+    backgroundColor: "#111113",
+    borderTopColor: "#2B2B2F",
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
     borderTopWidth: 1,
@@ -1882,8 +1661,8 @@ const styles = StyleSheet.create({
     paddingTop: 12,
   },
   sheetHandle: {
-    alignSelf: 'center',
-    backgroundColor: '#4A4A50',
+    alignSelf: "center",
+    backgroundColor: "#4A4A50",
     borderRadius: 999,
     height: 5,
     width: 48,
@@ -1892,52 +1671,52 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontFamily: FONTS.display,
     fontSize: 24,
-    fontWeight: '700',
+    fontWeight: "700",
     lineHeight: 30,
-    textAlign: 'center',
+    textAlign: "center",
   },
   toneOptions: {
     gap: 12,
-    width: '100%',
+    width: "100%",
   },
   toneOption: {
-    alignItems: 'center',
-    backgroundColor: '#18181B',
-    borderColor: '#2B2B2F',
+    alignItems: "center",
+    backgroundColor: "#18181B",
+    borderColor: "#2B2B2F",
     borderRadius: 18,
     borderWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     minHeight: 64,
     paddingHorizontal: 24,
-    width: '100%',
+    width: "100%",
   },
   toneOptionSelected: {
-    backgroundColor: '#0C1427',
+    backgroundColor: "#0C1427",
     borderColor: COLORS.blue,
   },
   toneOptionLeft: {
-    alignItems: 'center',
+    alignItems: "center",
     flex: 1,
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 12,
     minWidth: 0,
   },
   toneOptionText: {
-    color: 'rgba(255, 255, 255, 0.92)',
+    color: "rgba(255, 255, 255, 0.92)",
     flex: 1,
     fontFamily: FONTS.body,
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: "600",
     lineHeight: 24,
     minWidth: 0,
   },
   toneOptionTextSelected: {
-    color: '#6EA0FF',
+    color: "#6EA0FF",
   },
   toneOptionCheckSlot: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     marginLeft: 12,
     width: 24,
   },

@@ -1,14 +1,16 @@
+import type { ConversationFlow } from "../../hooks/useConversationFlow";
+
 export type OnboardingStepId =
-  | 'welcome'
-  | 'problem'
-  | 'change'
-  | 'wouldYouSend'
-  | 'privacy'
-  | 'uploadScreenshot'
-  | 'vibecheck'
-  | 'replies'
-  | 'rating'
-  | 'paywall';
+  | "welcome"
+  | "problem"
+  | "change"
+  | "wouldYouSend"
+  | "privacy"
+  | "uploadScreenshot"
+  | "vibecheck"
+  | "replies"
+  | "rating"
+  | "paywall";
 
 export type OnboardingChoice = {
   id: string;
@@ -17,14 +19,14 @@ export type OnboardingChoice = {
 };
 
 export type OnboardingTitlePart = {
-  color?: 'blue' | 'white';
+  color?: "blue" | "white";
   text: string;
 };
 
 export type OnboardingChatMessage = {
   id: string;
   text: string;
-  side: 'user' | 'other';
+  side: "user" | "other";
 };
 
 export type OnboardingStepContent = {
@@ -50,12 +52,17 @@ export type OnboardingFlowStep = {
 export type OnboardingScreenProps = {
   canGoBack: boolean;
   content: OnboardingStepContent;
+  conversation: ConversationFlow;
   currentIndex: number;
   isLastStep: boolean;
   canContinue: boolean;
+  ctaDisabled?: boolean;
+  ctaLabel?: string;
+  ctaLoading?: boolean;
   onBack: () => void;
   onComplete: () => void;
   onNext: () => void;
+  onPrimaryAction?: () => void | Promise<void>;
   onSelectChoice: (choiceId: string) => void;
   onSkip: () => void;
   selectedChoiceId?: string;

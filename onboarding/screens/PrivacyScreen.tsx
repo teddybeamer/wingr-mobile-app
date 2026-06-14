@@ -1,22 +1,26 @@
-import { Shield, TrashBinMinimalistic } from '@solar-icons/react-native/Linear';
+import {
+  CloudCross,
+  ShieldMinimalistic,
+  TrashBinMinimalistic,
+} from '@solar-icons/react-native/Linear';
 import { StyleSheet, Text, View } from 'react-native';
 import { OnboardingScreenScaffold } from './OnboardingScreenScaffold';
 import type { OnboardingScreenProps } from '../types/onboarding';
 
 const privacyItems = [
   {
-    body: 'Screenshots are deleted\nafter analysis.',
+    body: 'Screenshots are deleted after analysis.',
     icon: TrashBinMinimalistic,
     title: 'Not stored',
   },
   {
-    body: "Your chats don't teach\nthe ai.",
-    icon: Shield,
+    body: "Your chats don't teach the AI.",
+    icon: ShieldMinimalistic,
     title: 'Not used for training',
   },
   {
     body: 'Your data stays yours.',
-    icon: TrashBinMinimalistic,
+    icon: CloudCross,
     title: 'Never sold',
   },
 ];
@@ -48,9 +52,9 @@ export function PrivacyScreen(props: OnboardingScreenProps) {
 const styles = StyleSheet.create({
   body: {
     color: '#E3E3E3',
-    fontFamily: 'ClashGrotesk',
+    fontFamily: 'ClashGroteskRegular',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '400',
     lineHeight: 20,
   },
   card: {
@@ -59,9 +63,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#181818',
     borderRadius: 12,
     flexDirection: 'row',
-    gap: 22,
-    minHeight: 88,
-    paddingHorizontal: 16,
+    gap: 16,
+    padding: 16,
     width: '76%',
   },
   copy: {
