@@ -52,6 +52,11 @@ export type MessageBoundingBox = {
   height: number;
 };
 
+export type MessageLanguageEvidence = {
+  tag: string;
+  lineCount: number;
+};
+
 export type DetectedMessage = {
   id: string;
   text: string;
@@ -60,6 +65,7 @@ export type DetectedMessage = {
   confidence: number;
   xPosition: MessageXPosition;
   boundingBox: MessageBoundingBox;
+  languageEvidence?: MessageLanguageEvidence[];
 };
 
 export type ParsedConversation = {

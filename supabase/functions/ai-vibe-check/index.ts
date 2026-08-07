@@ -1,6 +1,9 @@
 import { handleCors } from '../_shared/cors.ts';
 import { error, json, readJson } from '../_shared/http.ts';
-import { inferTranscriptLanguage } from '../_shared/language.ts';
+import {
+  inferTranscriptLanguage,
+  resolveConversationLanguage,
+} from '../_shared/language.ts';
 import { callOpenRouterStructured } from '../_shared/openrouter.ts';
 import { withSafeVibeCheckTranscript } from '../_shared/prompt-budget.ts';
 import {
@@ -11,8 +14,17 @@ import {
 import { needsSpeakerConfirmation } from '../_shared/speaker-attribution.ts';
 import type { GeminiVibeCheck, VibeCheckRequest } from '../_shared/types.ts';
 
-function normalizeTargetLanguage(targetLanguage: string | undefined, transcriptText: string) {
-  return targetLanguage?.trim() || inferTranscriptLanguage(transcriptText) || 'English';
+function normalizeTargetLanguage(
+  targetLanguage: string | undefined,
+  transcriptText: string,
+  parsedConversation: VibeCheckRequest['parsedConversation'],
+) {
+  return (
+    resolveConversationLanguage(parsedConversation) ??
+    targetLanguage?.trim() ??
+    inferTranscriptLanguage(transcriptText) ??
+    'English'
+  );
 }
 
 Deno.serve(async (request) => {
@@ -49,7 +61,11 @@ Deno.serve(async (request) => {
 
       vibeCheck = {
         ...rawVibeCheck,
-        targetLanguage: normalizeTargetLanguage(rawVibeCheck.targetLanguage, safeBody.transcriptText),
+        targetLanguage: normalizeTargetLanguage(
+          rawVibeCheck.targetLanguage,
+          safeBody.transcriptText,
+          safeBody.parsedConversation,
+        ),
       };
     } catch (aiError) {
       console.error('ai-vibe-check fallback', aiError);
@@ -62,7 +78,11 @@ Deno.serve(async (request) => {
       const mockVibeCheck = getMockGeminiVibeCheck();
       vibeCheck = {
         ...mockVibeCheck,
-        targetLanguage: normalizeTargetLanguage(mockVibeCheck.targetLanguage, safeBody.transcriptText),
+        targetLanguage: normalizeTargetLanguage(
+          mockVibeCheck.targetLanguage,
+          safeBody.transcriptText,
+          safeBody.parsedConversation,
+        ),
       };
     }
 

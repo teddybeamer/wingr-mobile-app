@@ -369,6 +369,7 @@ function getAnalyzePayload(
   parsedConversation?: OcrResult['parsedConversation'],
 ) {
   return {
+    conversation: parsedConversation?.structuredConversation,
     extraContext,
     parsedConversation,
     transcriptText: cleanTranscriptForAi(transcriptText),
@@ -387,6 +388,7 @@ function getRepliesPayload({
   const structuredContext = contextNotes ?? getContextNotes(extraContext);
 
   return {
+    conversation: parsedConversation?.structuredConversation,
     contextNotes: structuredContext,
     extraContext,
     parsedConversation,

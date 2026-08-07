@@ -48,11 +48,21 @@ export type MessageSender = 'me' | 'them' | 'unknown';
 export type MessageSpeaker = 'user' | 'other' | 'unknown';
 export type MessageXPosition = 'left' | 'right' | 'center';
 
+export type StructuredConversationMessage = {
+  speaker: MessageSender;
+  text: string;
+};
+
 export type MessageBoundingBox = {
   x: number;
   y: number;
   width: number;
   height: number;
+};
+
+export type MessageLanguageEvidence = {
+  tag: string;
+  lineCount: number;
 };
 
 export type DetectedMessage = {
@@ -63,13 +73,16 @@ export type DetectedMessage = {
   confidence: number;
   xPosition: MessageXPosition;
   boundingBox: MessageBoundingBox;
+  languageEvidence?: MessageLanguageEvidence[];
 };
 
 export type ParsedConversation = {
   messages: DetectedMessage[];
+  structuredConversation: StructuredConversationMessage[];
   latestMessageSender: MessageSender;
   shouldGenerateDirectReply: boolean;
   speakerAttributionConfidence: number;
+  speakerAttributionResolved: boolean;
 };
 
 export type OcrResult = {

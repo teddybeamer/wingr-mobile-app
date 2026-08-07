@@ -1,4 +1,8 @@
-import { normalizeVibeCheckLanguage, repliesLookWrongLanguage } from './language.ts';
+import {
+  normalizeVibeCheckLanguage,
+  repliesLookWrongLanguage,
+  resolveConversationLanguage,
+} from './language.ts';
 import { callOpenRouterStructured } from './openrouter.ts';
 import { withSafeReplyTranscript } from './prompt-budget.ts';
 import {
@@ -68,9 +72,18 @@ function getMockBatchForRequest(request: RepliesRequest, selectedTones: ReplyTon
 
 export async function generateReplyBatch(request: RepliesRequest, selectedTones: ReplyTone[]) {
   const safeRequest = withSafeReplyTranscript(request);
+  const normalizedVibeCheck = normalizeVibeCheckLanguage(
+    safeRequest.vibeCheck,
+    safeRequest.transcriptText,
+  );
   const normalizedRequest = {
     ...safeRequest,
-    vibeCheck: normalizeVibeCheckLanguage(safeRequest.vibeCheck, safeRequest.transcriptText),
+    vibeCheck: {
+      ...normalizedVibeCheck,
+      targetLanguage:
+        resolveConversationLanguage(safeRequest.parsedConversation) ??
+        normalizedVibeCheck.targetLanguage,
+    },
   };
 
   try {

@@ -9,7 +9,7 @@ const DEFAULT_DEEPSEEK_MODEL = 'deepseek/deepseek-v3.2';
 const DEFAULT_VIBE_CHECK_MODEL = 'google/gemini-2.5-flash-lite';
 const DEFAULT_OPENROUTER_TIMEOUT_MS = 20_000;
 const WINGR_SYSTEM_PROMPT =
-  'You are Wingr AI. Return concise, emotionally intelligent output that strictly matches the required JSON schema.';
+  'You are Wingr AI. Help users continue dating conversations naturally with human, emotionally intelligent, confident replies that are easy to send and keep the conversation moving. Return output that strictly matches the required JSON schema.';
 
 type OpenRouterTask = 'reply' | 'vibeCheck';
 

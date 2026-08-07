@@ -1,28 +1,56 @@
 import type {
   Rect,
   Text as RecognizedText,
-} from '@infinitered/react-native-mlkit-text-recognition';
+} from "@infinitered/react-native-mlkit-text-recognition";
 import type {
   DetectedMessage,
   MessageSender,
   MessageSpeaker,
   MessageXPosition,
+  MessageLanguageEvidence,
   OcrResult,
   ParsedConversation,
-} from '../types/wingr';
+  StructuredConversationMessage,
+} from "../types/wingr";
 
-type OcrLine = {
-  id: string;
+export type OcrLineInput = {
   text: string;
   frame: Rect;
+  recognizedLanguages?: string[];
+};
+
+type OcrLine = OcrLineInput & {
+  id: string;
 };
 
 type Bubble = {
   id: string;
   lines: OcrLine[];
   frame: Rect;
-  sender: DetectedMessage['sender'];
+};
+
+type ColumnId = "left" | "right";
+
+type ChatColumn = {
+  id: ColumnId;
+  center: number;
+  members: Bubble[];
+};
+
+type ColumnAssignment = {
+  column: ColumnId | null;
   confidence: number;
+};
+
+type ColumnMapping = {
+  confidence: number;
+  meColumn: ColumnId | null;
+  resolved: boolean;
+};
+
+type ParsedMessageLayout = {
+  mapping: ColumnMapping;
+  messages: DetectedMessage[];
 };
 
 type ConversationGeometry = {
@@ -35,31 +63,29 @@ type ConversationGeometry = {
 };
 
 const UI_LABELS = new Set([
-  'back',
-  'chat',
-  'chats',
-  'contact',
-  'contacts',
-  'delivered',
-  'done',
-  'edit',
-  'imessage',
-  'message',
-  'messages',
-  'now',
-  'online',
-  'profil',
-  'profile',
-  'read',
-  'search',
-  'send',
-  'sent',
-  'today',
-  'typing',
-  'yesterday',
+  "back",
+  "chat",
+  "chats",
+  "contact",
+  "contacts",
+  "delivered",
+  "done",
+  "edit",
+  "imessage",
+  "message",
+  "messages",
+  "now",
+  "online",
+  "profil",
+  "profile",
+  "read",
+  "search",
+  "send",
+  "sent",
+  "today",
+  "typing",
+  "yesterday",
 ]);
-
-const SPEAKER_CONFIRMATION_THRESHOLD = 0.62;
 
 function getWidth(frame: Rect) {
   return frame.right - frame.left;
@@ -73,7 +99,7 @@ function getCenterX(frame: Rect) {
   return frame.left + getWidth(frame) / 2;
 }
 
-function getBoundingBox(frame: Rect): DetectedMessage['boundingBox'] {
+function getBoundingBox(frame: Rect): DetectedMessage["boundingBox"] {
   return {
     height: getHeight(frame),
     width: getWidth(frame),
@@ -82,35 +108,21 @@ function getBoundingBox(frame: Rect): DetectedMessage['boundingBox'] {
   };
 }
 
-function getXPosition(frame: Rect, geometry: Pick<ConversationGeometry, 'minLeft' | 'width'>): MessageXPosition {
-  const centerX = getCenterX(frame);
-  const pageMidpoint = geometry.minLeft + geometry.width / 2;
-  const centerDeadZone = geometry.width * 0.12;
-
-  if (centerX > pageMidpoint + centerDeadZone) {
-    return 'right';
-  }
-
-  if (centerX < pageMidpoint - centerDeadZone) {
-    return 'left';
-  }
-
-  return 'center';
-}
-
 function getSpeakerFromSender(sender: MessageSender): MessageSpeaker {
-  if (sender === 'me') {
-    return 'user';
+  if (sender === "me") {
+    return "user";
   }
 
-  if (sender === 'them') {
-    return 'other';
+  if (sender === "them") {
+    return "other";
   }
 
-  return 'unknown';
+  return "unknown";
 }
 
-function getFrameFromBoundingBox(boundingBox: DetectedMessage['boundingBox']): Rect {
+function getFrameFromBoundingBox(
+  boundingBox: DetectedMessage["boundingBox"],
+): Rect {
   return {
     bottom: boundingBox.y + boundingBox.height,
     left: boundingBox.x,
@@ -123,16 +135,25 @@ function normalizeText(text: string) {
   return text
     .replace(/[“”]/g, '"')
     .replace(/[‘’]/g, "'")
-    .replace(/\s+/g, ' ')
+    .replace(/\s+/g, " ")
     .trim();
 }
 
+function normalizeLanguageTag(tag: string) {
+  const normalized = tag.trim().replace(/_/g, "-").toLowerCase();
+
+  return normalized && normalized !== "und" ? normalized : null;
+}
+
 function normalizeForLookup(text: string) {
-  return normalizeText(text).replace(/[^\p{L}\p{N}]+/gu, ' ').trim().toLowerCase();
+  return normalizeText(text)
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function getWordTokens(text: string) {
-  return normalizeForLookup(text).split(' ').filter(Boolean);
+  return normalizeForLookup(text).split(" ").filter(Boolean);
 }
 
 function getDigitGroups(text: string) {
@@ -149,7 +170,9 @@ function isStandaloneTimestamp(text: string) {
     /^\d{1,2}\.\d{2}\s?(am|pm)$/.test(normalized) ||
     /^(today|yesterday)\s+\d{1,2}:\d{2}(\s?(am|pm))?$/.test(normalized) ||
     /^(today|yesterday)\s+\d{1,2}\.\d{2}(\s?(am|pm))?$/.test(normalized) ||
-    /^(mon|tue|wed|thu|fri|sat|sun),?\s+\d{1,2}[:.]\d{2}(\s?(am|pm))?$/.test(normalized)
+    /^(mon|tue|wed|thu|fri|sat|sun),?\s+\d{1,2}[:.]\d{2}(\s?(am|pm))?$/.test(
+      normalized,
+    )
   );
 }
 
@@ -163,13 +186,20 @@ function isStatusBarNoise(text: string) {
   );
 }
 
+function isOutgoingReceiptLine(text: string) {
+  const normalized = normalizeText(text).toLowerCase();
+
+  return (
+    /^(delivered|read|seen|sent|opened)(\s+\d{1,2}[:.]\d{2}(\s?(am|pm))?)?$/.test(
+      normalized,
+    ) || /^(✓|✓✓)$/.test(normalized)
+  );
+}
+
 function isDateDivider(text: string) {
   const normalized = normalizeForLookup(text);
 
-  return (
-    UI_LABELS.has(normalized) ||
-    isDateLikeMetadata(text)
-  );
+  return UI_LABELS.has(normalized) || isDateLikeMetadata(text);
 }
 
 function isDateLikeMetadata(text: string) {
@@ -192,17 +222,30 @@ function isDateLikeMetadata(text: string) {
   );
 }
 
-function looksLikeHeaderName(text: string, frame: Rect, geometry: ConversationGeometry) {
+function looksLikeHeaderName(
+  text: string,
+  frame: Rect,
+  geometry: ConversationGeometry,
+) {
   const normalized = normalizeText(text);
   const topRatio = (frame.top - geometry.minTop) / Math.max(geometry.height, 1);
   const widthRatio = getWidth(frame) / Math.max(geometry.width, 1);
-  const centerDistance = Math.abs(getCenterX(frame) - (geometry.minLeft + geometry.width / 2));
+  const centerDistance = Math.abs(
+    getCenterX(frame) - (geometry.minLeft + geometry.width / 2),
+  );
   const nearCenter = centerDistance < geometry.width * 0.25;
-  const words = normalized.split(' ');
+  const words = normalized.split(" ");
   const isShortTitle = words.length <= 4 && normalized.length <= 34;
-  const hasSentenceShape = /[?.!,:;]$/.test(normalized) || normalized.length > 34;
+  const hasSentenceShape =
+    /[?.!,:;]$/.test(normalized) || normalized.length > 34;
 
-  return topRatio < 0.18 && nearCenter && widthRatio < 0.55 && isShortTitle && !hasSentenceShape;
+  return (
+    topRatio < 0.18 &&
+    nearCenter &&
+    widthRatio < 0.55 &&
+    isShortTitle &&
+    !hasSentenceShape
+  );
 }
 
 function isObviousUiLine(line: OcrLine, geometry: ConversationGeometry) {
@@ -212,7 +255,12 @@ function isObviousUiLine(line: OcrLine, geometry: ConversationGeometry) {
     return true;
   }
 
-  if (isStandaloneTimestamp(text) || isStatusBarNoise(text) || isDateDivider(text)) {
+  if (
+    isStandaloneTimestamp(text) ||
+    isStatusBarNoise(text) ||
+    isDateDivider(text) ||
+    isOutgoingReceiptLine(text)
+  ) {
     return true;
   }
 
@@ -245,6 +293,7 @@ function flattenLines(recognizedText: RecognizedText): OcrLine[] {
     .map((line, index) => ({
       id: `line-${index + 1}`,
       frame: line.frame,
+      recognizedLanguages: line.recognizedLanguages,
       text: normalizeText(line.text),
     }))
     .filter((line) => line.text.length > 0)
@@ -270,7 +319,8 @@ function cleanOcrLines(lines: OcrLine[]) {
       return false;
     }
 
-    const bottomRatio = (line.frame.bottom - geometry.minTop) / Math.max(geometry.height, 1);
+    const bottomRatio =
+      (line.frame.bottom - geometry.minTop) / Math.max(geometry.height, 1);
 
     return bottomRatio < 0.94 || looksLikeConversationText(line.text);
   });
@@ -280,13 +330,17 @@ function cleanOcrLines(lines: OcrLine[]) {
 
 function looksLikeConversationText(text: string) {
   const normalized = normalizeText(text);
-  const words = normalized.split(' ').filter(Boolean);
+  const words = normalized.split(" ").filter(Boolean);
 
-  return normalized.length >= 18 || words.length >= 4 || /[?.!,]$/.test(normalized);
+  return (
+    normalized.length >= 18 || words.length >= 4 || /[?.!,]$/.test(normalized)
+  );
 }
 
 function stripTopChrome(lines: OcrLine[]) {
-  const firstConversationIndex = lines.findIndex((line) => looksLikeConversationText(line.text));
+  const firstConversationIndex = lines.findIndex((line) =>
+    looksLikeConversationText(line.text),
+  );
 
   if (firstConversationIndex <= 0) {
     return lines;
@@ -298,7 +352,7 @@ function stripTopChrome(lines: OcrLine[]) {
     }
 
     const normalized = normalizeText(line.text);
-    const words = normalized.split(' ').filter(Boolean);
+    const words = normalized.split(" ").filter(Boolean);
     const hasMessagePunctuation = /[?.!,]$/.test(normalized);
 
     return normalized.length > 22 || words.length > 3 || hasMessagePunctuation;
@@ -314,474 +368,476 @@ function unionFrame(lines: OcrLine[]): Rect {
   };
 }
 
-function verticalGap(previous: OcrLine, next: OcrLine) {
-  return next.frame.top - previous.frame.bottom;
+function bubbleText(bubble: Bubble) {
+  return bubble.lines
+    .map((line) => line.text)
+    .join(" ")
+    .replace(/\s+([?.!,])/g, "$1");
 }
 
-function overlapRatio(previous: OcrLine, next: OcrLine) {
-  const overlap = Math.min(previous.frame.right, next.frame.right) - Math.max(previous.frame.left, next.frame.left);
-  const smallerWidth = Math.min(getWidth(previous.frame), getWidth(next.frame));
+function getLineLanguageTag(line: OcrLine) {
+  const tags = new Set(
+    (line.recognizedLanguages ?? [])
+      .map(normalizeLanguageTag)
+      .filter((tag): tag is string => Boolean(tag)),
+  );
+
+  return tags.size === 1 ? [...tags][0] : null;
+}
+
+function getBubbleLanguageEvidence(
+  bubble: Bubble,
+): MessageLanguageEvidence[] {
+  const counts = new Map<string, number>();
+
+  for (const line of bubble.lines) {
+    const tag = getLineLanguageTag(line);
+
+    if (tag) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+
+  return [...counts.entries()]
+    .map(([tag, lineCount]) => ({ lineCount, tag }))
+    .sort(
+      (first, second) =>
+        second.lineCount - first.lineCount || first.tag.localeCompare(second.tag),
+    );
+}
+
+function median(values: number[]) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+function horizontalOverlapRatio(first: Rect, second: Rect) {
+  const overlap =
+    Math.min(first.right, second.right) - Math.max(first.left, second.left);
+  const smallerWidth = Math.min(getWidth(first), getWidth(second));
 
   return Math.max(overlap, 0) / Math.max(smallerWidth, 1);
 }
 
-function lineAlignmentScore(previous: OcrLine, next: OcrLine, geometry: ConversationGeometry) {
-  const leftDelta = Math.abs(previous.frame.left - next.frame.left);
-  const rightDelta = Math.abs(previous.frame.right - next.frame.right);
-  const centerDelta = Math.abs(getCenterX(previous.frame) - getCenterX(next.frame));
-  const alignedEdge = Math.min(leftDelta, rightDelta);
+function getBubbleMergeScore(
+  bubble: Bubble,
+  nextLine: OcrLine,
+  geometry: ConversationGeometry,
+  typicalLineHeight: number,
+) {
+  const previousLine = bubble.lines[bubble.lines.length - 1];
+  const verticalGap = nextLine.frame.top - previousLine.frame.bottom;
+  const lineHeight = Math.max(
+    getHeight(previousLine.frame),
+    getHeight(nextLine.frame),
+    typicalLineHeight,
+    10,
+  );
+  const maximumWrappedLineGap = Math.max(3, lineHeight * 0.45);
 
-  if (alignedEdge <= geometry.width * 0.08 || overlapRatio(previous, next) > 0.35) {
-    return 1;
+  if (verticalGap < -lineHeight * 0.35 || verticalGap > maximumWrappedLineGap) {
+    return null;
   }
 
-  if (centerDelta <= geometry.width * 0.18) {
-    return 0.6;
+  const leftDelta = Math.abs(previousLine.frame.left - nextLine.frame.left);
+  const rightDelta = Math.abs(previousLine.frame.right - nextLine.frame.right);
+  const edgeTolerance = Math.max(8, geometry.width * 0.07);
+  const overlap = horizontalOverlapRatio(previousLine.frame, nextLine.frame);
+  const alignedEdges = Math.min(leftDelta, rightDelta) <= edgeTolerance;
+
+  if (!alignedEdges && overlap < 0.45) {
+    return null;
   }
 
-  return 0;
+  const alignmentScore = alignedEdges ? 2 : 1;
+  const overlapScore = overlap >= 0.6 ? 1 : 0;
+  const gapScore =
+    1 - Math.max(verticalGap, 0) / Math.max(maximumWrappedLineGap, 1);
+
+  return alignmentScore + overlapScore + gapScore;
 }
 
-function shouldMergeIntoBubble(previous: OcrLine, next: OcrLine, geometry: ConversationGeometry) {
-  const gap = verticalGap(previous, next);
-  const lineHeight = Math.max(getHeight(previous.frame), getHeight(next.frame), 12);
-
-  if (gap < -lineHeight * 0.45 || gap > lineHeight * 1.45) {
-    return false;
-  }
-
-  return lineAlignmentScore(previous, next, geometry) > 0;
-}
-
-function inferSender(frame: Rect, geometry: ConversationGeometry) {
-  const centerX = getCenterX(frame);
-  const pageMidpoint = geometry.minLeft + geometry.width / 2;
-  const edgeInset = geometry.width * 0.16;
-  const centerDeadZone = geometry.width * 0.12;
-  let rightScore = 0;
-  let leftScore = 0;
-
-  if (frame.right > geometry.maxRight - edgeInset) {
-    rightScore += 0.45;
-  }
-
-  if (frame.left < geometry.minLeft + edgeInset) {
-    leftScore += 0.45;
-  }
-
-  if (centerX > pageMidpoint + centerDeadZone) {
-    rightScore += 0.45;
-  }
-
-  if (centerX < pageMidpoint - centerDeadZone) {
-    leftScore += 0.45;
-  }
-
-  if (frame.left > pageMidpoint) {
-    rightScore += 0.2;
-  }
-
-  if (frame.right < pageMidpoint) {
-    leftScore += 0.2;
-  }
-
-  const delta = Math.abs(rightScore - leftScore);
-
-  if (delta < 0.25) {
-    return { confidence: 0.35, sender: 'unknown' as const };
-  }
-
-  const confidence = Math.min(0.95, 0.45 + delta);
-
-  return {
-    confidence,
-    sender: rightScore > leftScore ? ('me' as const) : ('them' as const),
-  };
-}
-
-function parseBubbles(lines: OcrLine[]) {
+function groupLinesIntoBubbles(lines: OcrLine[]) {
   if (lines.length === 0) {
     return [];
   }
 
   const geometry = getLineGeometry(lines);
-  const groupedLines = lines.reduce<OcrLine[][]>((groups, line) => {
-    const previousGroup = groups[groups.length - 1];
-    const previousLine = previousGroup?.[previousGroup.length - 1];
-
-    if (previousLine && shouldMergeIntoBubble(previousLine, line, geometry)) {
-      previousGroup.push(line);
-    } else {
-      groups.push([line]);
-    }
-
-    return groups;
-  }, []);
-
-  const bubbles = groupedLines.map((group, index): Bubble => {
-    const frame = unionFrame(group);
-    const { confidence, sender } = inferSender(frame, geometry);
-
-    return {
-      confidence,
-      frame,
-      id: `bubble-${index + 1}`,
-      lines: group,
-      sender,
-    };
-  });
-
-  const metadataFilteredBubbles = filterMetadataBubbles(bubbles, geometry);
-  const clusteredBubbles = applyClusterSenderInference(metadataFilteredBubbles, geometry);
-
-  return applyKnownSenderAlignmentInference(clusteredBubbles, geometry);
-}
-
-function bubbleText(bubble: Bubble) {
-  return bubble.lines.map((line) => line.text).join(' ').replace(/\s+([?.!,])/g, '$1');
-}
-
-function isLowContentMetadataText(text: string) {
-  const normalized = normalizeText(text);
-  const tokens = getWordTokens(normalized);
-
-  return (
-    normalized.length <= 18 &&
-    tokens.length <= 3 &&
-    !/[?!]$/.test(normalized) &&
-    !/\p{Extended_Pictographic}/u.test(normalized) &&
-    !isStandaloneTimestamp(normalized)
+  const typicalLineHeight = median(
+    lines.map((line) => Math.max(getHeight(line.frame), 10)),
   );
-}
+  const bubbles: Bubble[] = [];
 
-function looksLikeReceiptBubble(bubble: Bubble, previousBubble: Bubble | undefined, geometry: ConversationGeometry) {
-  if (!previousBubble || !isLowContentMetadataText(bubbleText(bubble))) {
-    return false;
-  }
+  for (const line of lines) {
+    let bestBubble: Bubble | null = null;
+    let bestScore = -Infinity;
 
-  const gap = bubble.frame.top - previousBubble.frame.bottom;
-  const closeToPrevious = gap >= -6 && gap <= Math.max(getHeight(previousBubble.frame) * 0.75, 42);
-  const narrow = getWidth(bubble.frame) <= geometry.width * 0.42;
-  const shorterThanMessage = getHeight(bubble.frame) <= Math.max(getHeight(previousBubble.frame) * 0.72, 18);
-  const nearPreviousSide =
-    Math.abs(getCenterX(bubble.frame) - getCenterX(previousBubble.frame)) <= geometry.width * 0.42 ||
-    Math.abs(bubble.frame.right - previousBubble.frame.right) <= geometry.width * 0.2;
-
-  return closeToPrevious && narrow && shorterThanMessage && nearPreviousSide;
-}
-
-function looksLikeCenteredSeparatorBubble(bubble: Bubble, geometry: ConversationGeometry) {
-  const text = bubbleText(bubble);
-  const pageMidpoint = geometry.minLeft + geometry.width / 2;
-  const centerDistance = Math.abs(getCenterX(bubble.frame) - pageMidpoint);
-
-  return (
-    isLowContentMetadataText(text) &&
-    centerDistance <= geometry.width * 0.18 &&
-    getWidth(bubble.frame) <= geometry.width * 0.5
-  );
-}
-
-function filterMetadataBubbles(bubbles: Bubble[], geometry: ConversationGeometry) {
-  const keptBubbles: Bubble[] = [];
-  const outgoingAnchorFrames: Rect[] = [];
-
-  bubbles.forEach((bubble) => {
-    const text = bubbleText(bubble);
-    const previousBubble = keptBubbles[keptBubbles.length - 1];
-
-    if (isDateLikeMetadata(text) || isStandaloneTimestamp(text)) {
-      return;
-    }
-
-    if (looksLikeCenteredSeparatorBubble(bubble, geometry)) {
-      return;
-    }
-
-    if (looksLikeReceiptBubble(bubble, previousBubble, geometry)) {
-      if (previousBubble) {
-        previousBubble.sender = 'me';
-        previousBubble.confidence = Math.max(previousBubble.confidence, 0.88);
-        outgoingAnchorFrames.push(previousBubble.frame);
-      }
-
-      return;
-    }
-
-    keptBubbles.push(bubble);
-  });
-
-  return applyOutgoingAnchorInference(keptBubbles, outgoingAnchorFrames, geometry);
-}
-
-function applyOutgoingAnchorInference(
-  bubbles: Bubble[],
-  outgoingAnchorFrames: Rect[],
-  geometry: ConversationGeometry,
-) {
-  if (outgoingAnchorFrames.length === 0) {
-    return bubbles;
-  }
-
-  return bubbles.map((bubble) => {
-    const pageMidpoint = geometry.minLeft + geometry.width / 2;
-    const matchesOutgoingAnchor = outgoingAnchorFrames.some((anchorFrame) => {
-      const rightDelta = Math.abs(bubble.frame.right - anchorFrame.right);
-      const centerDelta = Math.abs(getCenterX(bubble.frame) - getCenterX(anchorFrame));
-      const leftOfAnchorByMuch = bubble.frame.left < anchorFrame.left - geometry.width * 0.06;
-      const clearlyRightSide = getCenterX(bubble.frame) > pageMidpoint + geometry.width * 0.025;
-      const confidentlyIncoming = bubble.sender === 'them' && bubble.confidence >= 0.55;
-      const verticalDistance = Math.abs(bubble.frame.top - anchorFrame.top);
-      const nearSameMessageCluster =
-        verticalDistance <= Math.max(getHeight(anchorFrame) * 1.25, geometry.height * 0.16);
-
-      if (confidentlyIncoming) {
-        return false;
-      }
-
-      return (
-        rightDelta <= geometry.width * 0.14 &&
-        centerDelta <= geometry.width * 0.18 &&
-        !leftOfAnchorByMuch &&
-        clearlyRightSide &&
-        nearSameMessageCluster
+    for (const bubble of bubbles) {
+      const score = getBubbleMergeScore(
+        bubble,
+        line,
+        geometry,
+        typicalLineHeight,
       );
-    });
 
-    if (!matchesOutgoingAnchor) {
-      return bubble;
+      if (score !== null && score > bestScore) {
+        bestBubble = bubble;
+        bestScore = score;
+      }
     }
 
-    return {
-      ...bubble,
-        confidence: Math.max(bubble.confidence, 0.82),
-      sender: 'me' as const,
-    };
-  });
+    if (bestBubble) {
+      bestBubble.lines.push(line);
+      bestBubble.frame = unionFrame(bestBubble.lines);
+    } else {
+      bubbles.push({
+        frame: { ...line.frame },
+        id: `bubble-${bubbles.length + 1}`,
+        lines: [line],
+      });
+    }
+  }
+
+  return bubbles;
 }
 
-function applyClusterSenderInference(bubbles: Bubble[], geometry: ConversationGeometry) {
-  const conversationalBubbles = bubbles.filter((bubble) => bubbleText(bubble).length >= 6);
-
-  if (conversationalBubbles.length < 2) {
-    return bubbles;
+function learnChatColumns(
+  bubbles: Bubble[],
+  geometry: ConversationGeometry,
+): ChatColumn[] {
+  if (bubbles.length === 0) {
+    return [];
   }
 
-  const centers = conversationalBubbles.map((bubble) => getCenterX(bubble.frame)).sort((a, b) => a - b);
-  const leftMost = centers[0];
-  const rightMost = centers[centers.length - 1];
-  const spread = rightMost - leftMost;
+  const centers = bubbles.map((bubble) => getCenterX(bubble.frame));
+  const leftSeed = Math.min(...centers);
+  const rightSeed = Math.max(...centers);
+  const minimumSeparation = Math.max(24, geometry.width * 0.14);
 
-  if (spread < geometry.width * 0.14) {
-    return bubbles;
+  if (bubbles.length < 2 || rightSeed - leftSeed < minimumSeparation) {
+    return [{ id: "left", center: median(centers), members: bubbles }];
   }
 
-  const split = leftMost + spread / 2;
-  const margin = Math.max(geometry.width * 0.025, 8);
+  let leftCenter = leftSeed;
+  let rightCenter = rightSeed;
+  let leftMembers: Bubble[] = [];
+  let rightMembers: Bubble[] = [];
 
-  return bubbles.map((bubble) => {
-    const centerX = getCenterX(bubble.frame);
-    const distanceFromSplit = Math.abs(centerX - split);
+  for (let iteration = 0; iteration < 4; iteration += 1) {
+    leftMembers = [];
+    rightMembers = [];
 
-    if (bubble.sender !== 'unknown' && bubble.confidence >= 0.8) {
-      return bubble;
+    for (const bubble of bubbles) {
+      const center = getCenterX(bubble.frame);
+
+      if (Math.abs(center - leftCenter) <= Math.abs(center - rightCenter)) {
+        leftMembers.push(bubble);
+      } else {
+        rightMembers.push(bubble);
+      }
     }
 
-    if (distanceFromSplit < margin) {
-      return bubble;
+    if (leftMembers.length === 0 || rightMembers.length === 0) {
+      return [{ id: "left", center: median(centers), members: bubbles }];
     }
 
-    const clusterSender: DetectedMessage['sender'] = centerX > split ? 'me' : 'them';
-    const clusterConfidence = Math.min(0.9, 0.58 + distanceFromSplit / Math.max(spread, 1) * 0.5);
-
-    if (bubble.sender === 'unknown' || bubble.confidence < clusterConfidence) {
-      return {
-        ...bubble,
-        confidence: clusterConfidence,
-        sender: clusterSender,
-      };
-    }
-
-    return bubble;
-  });
-}
-
-function getAlignmentDeltas(frame: Rect, knownFrames: Rect[], geometry: ConversationGeometry) {
-  if (knownFrames.length === 0) {
-    return null;
+    leftCenter = median(leftMembers.map((bubble) => getCenterX(bubble.frame)));
+    rightCenter = median(
+      rightMembers.map((bubble) => getCenterX(bubble.frame)),
+    );
   }
 
-  const left = Math.min(...knownFrames.map((knownFrame) => Math.abs(frame.left - knownFrame.left))) / geometry.width;
-  const right = Math.min(...knownFrames.map((knownFrame) => Math.abs(frame.right - knownFrame.right))) / geometry.width;
-  const center =
-    Math.min(...knownFrames.map((knownFrame) => Math.abs(getCenterX(frame) - getCenterX(knownFrame)))) /
-    geometry.width;
-  const score = Math.min(
-    ...knownFrames.map((knownFrame) => {
-      const leftDelta = Math.abs(frame.left - knownFrame.left) / geometry.width;
-      const rightDelta = Math.abs(frame.right - knownFrame.right) / geometry.width;
-      const centerDelta = Math.abs(getCenterX(frame) - getCenterX(knownFrame)) / geometry.width;
-
-      return leftDelta * 0.9 + rightDelta * 0.8 + centerDelta;
-    }),
-  );
-
-  return { center, left, right, score };
-}
-
-function countCloserAlignmentVotes(
-  candidate: ReturnType<typeof getAlignmentDeltas>,
-  other: ReturnType<typeof getAlignmentDeltas>,
-) {
-  if (!candidate) {
-    return 0;
+  if (rightCenter - leftCenter < minimumSeparation) {
+    return [{ id: "left", center: median(centers), members: bubbles }];
   }
-
-  if (!other) {
-    return 3;
-  }
-
-  const margin = 0.015;
 
   return [
-    candidate.left + margin < other.left,
-    candidate.right + margin < other.right,
-    candidate.center + margin < other.center,
-  ].filter(Boolean).length;
+    { id: "left", center: leftCenter, members: leftMembers },
+    { id: "right", center: rightCenter, members: rightMembers },
+  ];
 }
 
-function chooseSenderFromKnownAlignment(bubble: Bubble, bubbles: Bubble[], geometry: ConversationGeometry) {
-  const knownYouFrames = bubbles
-    .filter((candidate) => candidate.sender === 'me' && candidate.confidence >= 0.72)
-    .map((candidate) => candidate.frame);
-  const knownThemFrames = bubbles
-    .filter((candidate) => candidate.sender === 'them' && candidate.confidence >= 0.55)
-    .map((candidate) => candidate.frame);
-  const youDeltas = getAlignmentDeltas(bubble.frame, knownYouFrames, geometry);
-  const themDeltas = getAlignmentDeltas(bubble.frame, knownThemFrames, geometry);
-  const youVotes = countCloserAlignmentVotes(youDeltas, themDeltas);
-  const themVotes = countCloserAlignmentVotes(themDeltas, youDeltas);
-
-  if (
-    youDeltas &&
-    youDeltas.score <= 0.16 &&
-    youVotes >= 2 &&
-    (!themDeltas || youDeltas.score <= themDeltas.score + 0.02)
-  ) {
-    return 'me' as const;
+function assignBubbleToColumn(
+  bubble: Bubble,
+  columns: ChatColumn[],
+): ColumnAssignment {
+  if (columns.length === 0) {
+    return { column: null, confidence: 0 };
   }
 
-  if (
-    themDeltas &&
-    themDeltas.score <= 0.16 &&
-    themVotes >= 2 &&
-    (!youDeltas || themDeltas.score <= youDeltas.score + 0.02)
-  ) {
-    return 'them' as const;
+  if (columns.length === 1) {
+    return { column: columns[0].id, confidence: 0.72 };
   }
 
-  return null;
+  const [leftColumn, rightColumn] = columns;
+  const center = getCenterX(bubble.frame);
+  const leftDistance = Math.abs(center - leftColumn.center);
+  const rightDistance = Math.abs(center - rightColumn.center);
+  const nearestColumn =
+    leftDistance <= rightDistance ? leftColumn : rightColumn;
+  const nearestDistance = Math.min(leftDistance, rightDistance);
+  const otherDistance = Math.max(leftDistance, rightDistance);
+  const separation = Math.max(
+    Math.abs(rightColumn.center - leftColumn.center),
+    1,
+  );
+  const discrimination = Math.max(
+    0,
+    Math.min(1, (otherDistance - nearestDistance) / separation),
+  );
+
+  return {
+    column: nearestColumn.id,
+    confidence: 0.38 + discrimination * 0.57,
+  };
 }
 
-function applyKnownSenderAlignmentInference(bubbles: Bubble[], geometry: ConversationGeometry) {
-  return bubbles.map((bubble) => {
-    if (bubble.sender !== 'unknown' || bubble.confidence >= 0.55) {
-      return bubble;
+function findOutgoingAnchorBubbleIds(
+  rawLines: OcrLine[],
+  bubbles: Bubble[],
+  geometry: ConversationGeometry,
+) {
+  const anchors = new Set<string>();
+  const maximumReceiptGap = Math.max(
+    42,
+    median(bubbles.map((bubble) => getHeight(bubble.frame))) * 2.5,
+  );
+
+  for (const receipt of rawLines) {
+    if (!isOutgoingReceiptLine(receipt.text)) {
+      continue;
     }
 
-    const sender = chooseSenderFromKnownAlignment(bubble, bubbles, geometry);
+    const candidates = bubbles
+      .map((bubble) => {
+        const verticalGap = receipt.frame.top - bubble.frame.bottom;
+        const rightDelta = Math.abs(receipt.frame.right - bubble.frame.right);
+        const centerDelta = Math.abs(
+          getCenterX(receipt.frame) - getCenterX(bubble.frame),
+        );
+        const horizontallyAligned =
+          rightDelta <= geometry.width * 0.24 ||
+          centerDelta <= geometry.width * 0.22;
 
-    if (!sender) {
-      return bubble;
+        return { bubble, horizontallyAligned, verticalGap };
+      })
+      .filter(
+        (candidate) =>
+          candidate.verticalGap >= -4 &&
+          candidate.verticalGap <= maximumReceiptGap &&
+          candidate.horizontallyAligned,
+      )
+      .sort((first, second) => first.verticalGap - second.verticalGap);
+
+    if (candidates[0]) {
+      anchors.add(candidates[0].bubble.id);
+    }
+  }
+
+  return anchors;
+}
+
+function resolveColumnMapping(
+  columns: ChatColumn[],
+  bubbles: Bubble[],
+  outgoingAnchorBubbleIds: Set<string>,
+): ColumnMapping {
+  const anchorColumns = new Set<ColumnId>();
+
+  for (const bubble of bubbles) {
+    if (!outgoingAnchorBubbleIds.has(bubble.id)) {
+      continue;
     }
 
+    const assignment = assignBubbleToColumn(bubble, columns);
+
+    if (assignment.column && assignment.confidence >= 0.6) {
+      anchorColumns.add(assignment.column);
+    }
+  }
+
+  if (anchorColumns.size === 1) {
     return {
-      ...bubble,
-      confidence: Math.max(bubble.confidence, 0.72),
-      sender,
+      confidence: 0.95,
+      meColumn: [...anchorColumns][0],
+      resolved: true,
     };
-  });
+  }
+
+  if (anchorColumns.size > 1) {
+    return { confidence: 0, meColumn: null, resolved: false };
+  }
+
+  if (columns.length === 2) {
+    return {
+      confidence: 0.82,
+      meColumn: "right",
+      resolved: true,
+    };
+  }
+
+  return { confidence: 0, meColumn: null, resolved: false };
 }
 
-function parseMessages(lines: OcrLine[]): DetectedMessage[] {
-  const bubbles = parseBubbles(lines);
-  const geometry = bubbles.length > 0 ? getLineGeometry(bubbles.flatMap((bubble) => bubble.lines)) : null;
+function parseMessages(
+  lines: OcrLine[],
+  rawLines: OcrLine[],
+): ParsedMessageLayout {
+  if (lines.length === 0) {
+    return {
+      mapping: { confidence: 0, meColumn: null, resolved: false },
+      messages: [],
+    };
+  }
 
-  return bubbles
-    .map((bubble, index) => {
-      const sender = bubble.confidence >= 0.55 ? bubble.sender : ('unknown' as const);
+  const bubbles = groupLinesIntoBubbles(lines);
+  const geometry = getLineGeometry(lines);
+  const columns = learnChatColumns(bubbles, geometry);
+  const outgoingAnchorBubbleIds = findOutgoingAnchorBubbleIds(
+    rawLines,
+    bubbles,
+    geometry,
+  );
+  const mapping = resolveColumnMapping(
+    columns,
+    bubbles,
+    outgoingAnchorBubbleIds,
+  );
 
-      return {
-        boundingBox: getBoundingBox(bubble.frame),
-        confidence: bubble.confidence,
-        id: `message-${index + 1}`,
-        sender,
-        speaker: getSpeakerFromSender(sender),
-        text: bubbleText(bubble),
-        xPosition: geometry ? getXPosition(bubble.frame, geometry) : 'center',
-      };
-    })
-    .filter((message) => message.text.length > 1);
+  return {
+    mapping,
+    messages: bubbles
+      .map((bubble, index) => {
+        const assignment = assignBubbleToColumn(bubble, columns);
+        const languageEvidence = getBubbleLanguageEvidence(bubble);
+        const xPosition: MessageXPosition = assignment.column ?? "center";
+        const sender =
+          mapping.resolved && assignment.column
+            ? assignment.column === mapping.meColumn
+              ? ("me" as const)
+              : ("them" as const)
+            : ("unknown" as const);
+        const confidence = mapping.resolved
+          ? Math.min(0.98, mapping.confidence * assignment.confidence)
+          : assignment.confidence * 0.35;
+
+        return {
+          boundingBox: getBoundingBox(bubble.frame),
+          confidence,
+          id: `message-${index + 1}`,
+          sender,
+          speaker: getSpeakerFromSender(sender),
+          text: bubbleText(bubble),
+          xPosition,
+          ...(languageEvidence.length > 0 ? { languageEvidence } : {}),
+        };
+      })
+      .filter((message) => message.text.length > 1),
+  };
 }
 
-function formatTranscript(messages: DetectedMessage[]) {
-  return messages
-    .map((message) => {
-      const senderLabel =
-        message.sender === 'me' ? 'ME' : message.sender === 'them' ? 'THEM' : 'UNKNOWN';
-
-      return `${senderLabel}: ${message.text}`;
-    })
-    .join('\n');
+function buildStructuredConversation(
+  messages: DetectedMessage[],
+): StructuredConversationMessage[] {
+  return messages.map((message) => ({
+    speaker: message.sender,
+    text: message.text,
+  }));
 }
 
-function getLatestMessageSender(messages: DetectedMessage[]): MessageSender {
-  return messages[messages.length - 1]?.sender ?? 'unknown';
+function formatTranscript(
+  structuredConversation: StructuredConversationMessage[],
+) {
+  return structuredConversation
+    .map((message) => `${message.speaker.toUpperCase()}: ${message.text}`)
+    .join("\n");
 }
 
-function getSpeakerAttributionConfidence(messages: DetectedMessage[]) {
+function getLatestMessageSender(
+  structuredConversation: StructuredConversationMessage[],
+) {
+  return (
+    structuredConversation[structuredConversation.length - 1]?.speaker ??
+    "unknown"
+  );
+}
+
+function getSpeakerAttributionConfidence(
+  messages: DetectedMessage[],
+  mapping: ColumnMapping,
+) {
   if (messages.length === 0) {
     return 0;
   }
 
   const averageConfidence =
-    messages.reduce((total, message) => total + message.confidence, 0) / messages.length;
-  const unknownPenalty = messages.filter((message) => message.sender === 'unknown').length / messages.length * 0.35;
+    messages.reduce((total, message) => total + message.confidence, 0) /
+    messages.length;
+  const unknownPenalty =
+    (messages.filter((message) => message.sender === "unknown").length /
+      messages.length) *
+    0.35;
   const latestMessage = messages[messages.length - 1];
-  const latestPenalty = latestMessage.sender === 'unknown' ? 0.2 : Math.max(0, 0.62 - latestMessage.confidence) * 0.35;
+  const latestPenalty =
+    latestMessage.sender === "unknown"
+      ? 0.2
+      : Math.max(0, 0.62 - latestMessage.confidence) * 0.35;
 
-  return Math.max(0, Math.min(1, averageConfidence - unknownPenalty - latestPenalty));
+  return Math.max(
+    0,
+    Math.min(
+      1,
+      averageConfidence -
+        unknownPenalty -
+        latestPenalty +
+        mapping.confidence * 0.12,
+    ),
+  );
 }
 
-export function buildParsedConversation(messages: DetectedMessage[]): ParsedConversation {
-  const latestMessageSender = getLatestMessageSender(messages);
+export function buildParsedConversation(
+  messages: DetectedMessage[],
+  mapping: ColumnMapping = {
+    confidence: messages.every((message) => message.sender !== "unknown")
+      ? 0.9
+      : 0,
+    meColumn: null,
+    resolved: messages.every((message) => message.sender !== "unknown"),
+  },
+): ParsedConversation {
+  const structuredConversation = buildStructuredConversation(messages);
+  const latestMessageSender = getLatestMessageSender(structuredConversation);
 
   return {
     latestMessageSender,
     messages,
-    shouldGenerateDirectReply: latestMessageSender === 'them',
-    speakerAttributionConfidence: getSpeakerAttributionConfidence(messages),
+    speakerAttributionResolved: mapping.resolved,
+    shouldGenerateDirectReply: latestMessageSender === "them",
+    speakerAttributionConfidence: getSpeakerAttributionConfidence(
+      messages,
+      mapping,
+    ),
+    structuredConversation,
   };
 }
 
-export function needsSpeakerConfirmation(parsedConversation: ParsedConversation) {
-  const confidentMeMessages = parsedConversation.messages.filter(
-    (message) => message.sender === 'me' && message.confidence >= 0.62,
-  ).length;
-  const confidentThemMessages = parsedConversation.messages.filter(
-    (message) => message.sender === 'them' && message.confidence >= 0.62,
-  ).length;
-
+export function needsSpeakerConfirmation(
+  parsedConversation: ParsedConversation,
+) {
   return (
-    parsedConversation.speakerAttributionConfidence < SPEAKER_CONFIRMATION_THRESHOLD ||
-    parsedConversation.latestMessageSender === 'unknown' ||
-    (parsedConversation.speakerAttributionConfidence < 0.8 &&
-      (confidentMeMessages === 0 || confidentThemMessages === 0))
+    !parsedConversation.speakerAttributionResolved ||
+    parsedConversation.messages.length === 0
   );
 }
 
 function getMessageGeometry(messages: DetectedMessage[]) {
-  const frames = messages.map((message) => getFrameFromBoundingBox(message.boundingBox));
+  const frames = messages.map((message) =>
+    getFrameFromBoundingBox(message.boundingBox),
+  );
 
   return {
     maxRight: Math.max(...frames.map((frame) => frame.right)),
@@ -791,20 +847,26 @@ function getMessageGeometry(messages: DetectedMessage[]) {
 
 export function rebuildOcrResultWithConfirmedUserSide(
   ocr: OcrResult,
-  userSide: 'left' | 'right',
+  userSide: "left" | "right",
 ): OcrResult {
   if (ocr.detectedMessages.length === 0) {
     return ocr;
   }
 
   const geometry = getMessageGeometry(ocr.detectedMessages);
-  const midpoint = geometry.minLeft + (geometry.maxRight - geometry.minLeft) / 2;
+  const midpoint =
+    geometry.minLeft + (geometry.maxRight - geometry.minLeft) / 2;
   const messages = ocr.detectedMessages.map((message): DetectedMessage => {
     const frame = getFrameFromBoundingBox(message.boundingBox);
-    const side = getCenterX(frame) >= midpoint ? 'right' : 'left';
-    const sender: MessageSender = side === userSide ? 'me' : 'them';
-    const midpointDistance = Math.abs(getCenterX(frame) - midpoint) / Math.max(geometry.maxRight - geometry.minLeft, 1);
-    const confidence = Math.max(message.confidence, midpointDistance < 0.05 ? 0.72 : 0.9);
+    const side = getCenterX(frame) >= midpoint ? "right" : "left";
+    const sender: MessageSender = side === userSide ? "me" : "them";
+    const midpointDistance =
+      Math.abs(getCenterX(frame) - midpoint) /
+      Math.max(geometry.maxRight - geometry.minLeft, 1);
+    const confidence = Math.max(
+      message.confidence,
+      midpointDistance < 0.05 ? 0.72 : 0.9,
+    );
 
     return {
       ...message,
@@ -814,8 +876,14 @@ export function rebuildOcrResultWithConfirmedUserSide(
       xPosition: side,
     };
   });
-  const parsedConversation = buildParsedConversation(messages);
-  const transcriptText = formatTranscript(messages);
+  const parsedConversation = buildParsedConversation(messages, {
+    confidence: 0.98,
+    meColumn: userSide,
+    resolved: true,
+  });
+  const transcriptText = formatTranscript(
+    parsedConversation.structuredConversation,
+  );
 
   return {
     ...ocr,
@@ -826,39 +894,77 @@ export function rebuildOcrResultWithConfirmedUserSide(
   };
 }
 
-export async function extractChatTextFromImage(screenshotUri: string): Promise<OcrResult> {
-  if (!screenshotUri) {
-    throw new Error('No screenshot selected.');
-  }
+export function reconstructConversationFromOcrLines(
+  lineInputs: OcrLineInput[],
+): OcrResult {
+  const rawLines = lineInputs
+    .map((line, index) => ({
+      frame: line.frame,
+      id: `line-${index + 1}`,
+      recognizedLanguages: line.recognizedLanguages,
+      text: normalizeText(line.text),
+    }))
+    .filter((line) => line.text.length > 0)
+    .sort((first, second) => {
+      const topDelta = first.frame.top - second.frame.top;
 
-  let recognizedText: RecognizedText;
+      if (Math.abs(topDelta) > 8) {
+        return topDelta;
+      }
 
-  try {
-    const { recognizeText } = await import('@infinitered/react-native-mlkit-text-recognition');
-    recognizedText = await recognizeText(screenshotUri);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : 'Unknown OCR error.';
-    throw new Error(
-      `On-device OCR failed. Make sure you are using an Expo Development Build with Google ML Kit installed. ${detail}`,
-    );
-  }
-
-  const rawText = recognizedText.text?.trim() ?? '';
-  const cleanedLines = cleanOcrLines(flattenLines(recognizedText));
-  const detectedMessages = parseMessages(cleanedLines);
-  const parsedConversation = buildParsedConversation(detectedMessages);
-  const transcriptText = formatTranscript(detectedMessages);
-
-  if (!transcriptText.trim()) {
-    throw new Error('No readable conversation text was detected in that screenshot.');
-  }
+      return first.frame.left - second.frame.left;
+    });
+  const cleanedLines = cleanOcrLines(rawLines);
+  const { mapping, messages: detectedMessages } = parseMessages(
+    cleanedLines,
+    rawLines,
+  );
+  const parsedConversation = buildParsedConversation(detectedMessages, mapping);
 
   return {
     confidence: parsedConversation.speakerAttributionConfidence,
     detectedMessages,
     parsedConversation,
+    rawText: rawLines.map((line) => line.text).join("\n"),
+    source: "onDevice",
+    transcriptText: formatTranscript(parsedConversation.structuredConversation),
+  };
+}
+
+export async function extractChatTextFromImage(
+  screenshotUri: string,
+): Promise<OcrResult> {
+  if (!screenshotUri) {
+    throw new Error("No screenshot selected.");
+  }
+
+  let recognizedText: RecognizedText;
+
+  try {
+    const { recognizeText } =
+      await import("@infinitered/react-native-mlkit-text-recognition");
+    recognizedText = await recognizeText(screenshotUri);
+  } catch (error) {
+    const detail =
+      error instanceof Error ? error.message : "Unknown OCR error.";
+    throw new Error(
+      `On-device OCR failed. Make sure you are using an Expo Development Build with Google ML Kit installed. ${detail}`,
+    );
+  }
+
+  const reconstruction = reconstructConversationFromOcrLines(
+    flattenLines(recognizedText),
+  );
+  const rawText = recognizedText.text?.trim() ?? reconstruction.rawText;
+
+  if (!reconstruction.transcriptText.trim()) {
+    throw new Error(
+      "No readable conversation text was detected in that screenshot.",
+    );
+  }
+
+  return {
+    ...reconstruction,
     rawText,
-    source: 'onDevice',
-    transcriptText,
   };
 }

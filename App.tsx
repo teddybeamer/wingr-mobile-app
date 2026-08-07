@@ -53,6 +53,7 @@ import {
 } from "./components/conversation/ConversationContent";
 
 const DEBUG_BOOT_PROBE = true;
+const DEV_SKIP_ONBOARDING = true;
 
 console.log("[Wingr boot] App module loaded");
 
@@ -275,7 +276,9 @@ const METRIC_VARIANTS: Record<
 };
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>("onboarding");
+  const [screen, setScreen] = useState<Screen>(
+    __DEV__ && DEV_SKIP_ONBOARDING ? "landing" : "onboarding",
+  );
   const [showDebugBootScreen, setShowDebugBootScreen] =
     useState(DEBUG_BOOT_PROBE);
   const conversation = useConversationFlow({ speakerPolicy: "confirm" });
