@@ -38,26 +38,17 @@ function hasWrongLanguageInBatch(replyBatch: ReplyBatch, request: RepliesRequest
 }
 
 function getMockFollowUpReplies(selectedTone: ReplyTone) {
-  const map: Record<ReplyTone, [string, string]> = {
-    playful: [
-      'Actually, I need your honest answer on that.',
-      'Leaving that there while I pretend to be patient.',
-    ],
-    direct: [
-      'No rush, but I would like to hear what you think.',
-      'I meant that. Your turn when you get a second.',
-    ],
-    casualSmallTalk: [
-      'Anyway, what are you up to now?',
-      'Also, how is your day going?',
-    ],
+  const map: Record<ReplyTone, string> = {
+    playful: 'Actually, I need your honest answer on that.',
+    direct: 'No rush, but I would like to hear what you think.',
+    casualSmallTalk: 'Anyway, what are you up to now?',
   };
 
-  return map[selectedTone].map((text, index) => ({
-    id: `${selectedTone}-follow-up-${index + 1}`,
-    text,
+  return [{
+    id: `${selectedTone}-follow-up-1`,
+    text: map[selectedTone],
     tone: selectedTone,
-  }));
+  }];
 }
 
 function getMockBatchForRequest(request: RepliesRequest, selectedTones: ReplyTone[]) {

@@ -262,11 +262,6 @@ function getFallbackReplies(request: RepliesRequest): SuggestedReply[] {
         text: 'That detail deserves a dog story. What is the latest one?',
         tone: request.selectedTone,
       },
-      {
-        id: 'ownership-safe-dog-2',
-        text: 'Okay, quick dog question: big dogs or tiny dogs?',
-        tone: request.selectedTone,
-      },
     ];
   }
 
@@ -276,24 +271,19 @@ function getFallbackReplies(request: RepliesRequest): SuggestedReply[] {
       text: 'Okay, I have to ask about that. What is the story?',
       tone: request.selectedTone,
     },
-    {
-      id: 'ownership-safe-context-2',
-      text: 'That sounds like it needs a follow-up. Tell me more?',
-      tone: request.selectedTone,
-    },
   ];
 }
 
 export function getOwnershipSafeReplies(replies: SuggestedReply[], request: RepliesRequest) {
   const safeReplies = replies.filter((reply) => getReplyOwnershipIssues(reply.text, request).length === 0);
 
-  if (safeReplies.length >= 2) {
-    return safeReplies.slice(0, 2);
+  if (safeReplies.length >= 1) {
+    return safeReplies.slice(0, 1);
   }
 
   const fallbackReplies = getFallbackReplies(request).filter(
     (reply) => getReplyOwnershipIssues(reply.text, request).length === 0,
   );
 
-  return [...safeReplies, ...fallbackReplies].slice(0, 2);
+  return [...safeReplies, ...fallbackReplies].slice(0, 1);
 }

@@ -13,7 +13,6 @@ import {
 import type {
   OcrResult,
   ParsedConversation,
-  ReplyBatch,
   ReplyTone,
   SuggestedReply,
   VibeCheck,
@@ -32,33 +31,6 @@ type UseConversationFlowOptions = {
   speakerPolicy?: SpeakerPolicy;
 };
 
-function getUnusedReplies(
-  replyBatch: ReplyBatch,
-  tone: ReplyTone,
-  shownReplyIds: string[],
-) {
-  const shownIds = new Set(shownReplyIds);
-
-  return (replyBatch[tone] ?? []).filter((reply) => !shownIds.has(reply.id));
-}
-
-function getVisibleRepliesForTone(
-  replyBatch: ReplyBatch,
-  tone: ReplyTone,
-  shownReplyIds: string[],
-) {
-  return getUnusedReplies(replyBatch, tone, shownReplyIds).slice(0, 2);
-}
-
-function appendShownReplyIds(currentIds: string[], replies: SuggestedReply[]) {
-  return [
-    ...currentIds,
-    ...replies
-      .map((reply) => reply.id)
-      .filter((replyId) => !currentIds.includes(replyId)),
-  ];
-}
-
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message.trim()
     ? error.message
@@ -75,9 +47,12 @@ export function useConversationFlow({
   const [extraContext, setExtraContext] = useState("");
   const [replyContext, setReplyContext] = useState("");
   const [selectedTone, setSelectedTone] = useState<ReplyTone>("playful");
-  const [replyBatch, setReplyBatch] = useState<ReplyBatch>({});
-  const [visibleReplies, setVisibleReplies] = useState<SuggestedReply[]>([]);
-  const [shownReplyIds, setShownReplyIds] = useState<string[]>([]);
+  const [generatedReplies, setGeneratedReplies] = useState<SuggestedReply[]>(
+    [],
+  );
+  const [lastGeneratedReplyId, setLastGeneratedReplyId] = useState<
+    string | null
+  >(null);
   const [vibeCheck, setVibeCheck] = useState<VibeCheck | null>(null);
   const [parsedConversation, setParsedConversation] =
     useState<ParsedConversation | null>(null);
@@ -89,17 +64,18 @@ export function useConversationFlow({
   const [repliesStatus, setRepliesStatus] = useState<RepliesStatus>("idle");
   const [error, setError] = useState<ConversationFlowError | null>(null);
   const analysisRequestIdRef = useRef(0);
+  const replyRequestIdRef = useRef(0);
   const speakerAttributionUncertainRef = useRef(false);
 
   const resetGeneratedState = () => {
+    replyRequestIdRef.current += 1;
     setChatTranscript("");
     setParsedConversation(null);
     setPendingSpeakerOcr(null);
     setPendingSpeakerContext("");
     setVibeCheck(null);
-    setReplyBatch({});
-    setVisibleReplies([]);
-    setShownReplyIds([]);
+    setGeneratedReplies([]);
+    setLastGeneratedReplyId(null);
     setSelectedTone("playful");
     setReplyContext("");
     setAnalysisStatus("idle");
@@ -164,11 +140,11 @@ export function useConversationFlow({
     nextVibeCheck: VibeCheck,
     attributionUncertain: boolean,
   ) => {
+    replyRequestIdRef.current += 1;
     setChatTranscript(ocr.transcriptText || "");
     setParsedConversation(ocr.parsedConversation ?? null);
-    setReplyBatch({});
-    setVisibleReplies([]);
-    setShownReplyIds([]);
+    setGeneratedReplies([]);
+    setLastGeneratedReplyId(null);
     setSelectedTone(nextVibeCheck.bestTone ?? "playful");
     setVibeCheck(nextVibeCheck);
     setAnalysisStatus("ready");
@@ -200,9 +176,9 @@ export function useConversationFlow({
     setPendingSpeakerOcr(null);
     setPendingSpeakerContext("");
     setVibeCheck(null);
-    setReplyBatch({});
-    setVisibleReplies([]);
-    setShownReplyIds([]);
+    replyRequestIdRef.current += 1;
+    setGeneratedReplies([]);
+    setLastGeneratedReplyId(null);
 
     let failureKind: ConversationFlowError["kind"] = "ocr";
 
@@ -340,102 +316,85 @@ export function useConversationFlow({
     });
   };
 
-  const showRepliesForTone = async (tone: ReplyTone, nextContext: string) => {
-    const cachedReplies = getVisibleRepliesForTone(
-      replyBatch,
-      tone,
-      shownReplyIds,
-    );
+  const appendReplyForTone = async (
+    tone: ReplyTone,
+    nextContext: string,
+    fallbackMessage: string,
+  ) => {
+    const requestId = replyRequestIdRef.current + 1;
 
-    if (cachedReplies.length > 0) {
-      setVisibleReplies(cachedReplies);
-      setShownReplyIds((currentIds) =>
-        appendShownReplyIds(currentIds, cachedReplies),
-      );
+    replyRequestIdRef.current = requestId;
+    setLastGeneratedReplyId(null);
+    setRepliesStatus("generating");
+    setError(null);
+
+    try {
+      const nextReplyBatch = await generateRepliesForTone(tone, nextContext);
+
+      if (replyRequestIdRef.current !== requestId) {
+        return false;
+      }
+
+      const nextReply = nextReplyBatch[tone]?.[0];
+
+      if (!nextReply) {
+        throw new Error(
+          "Wingr could not create a safe reply from that screenshot.",
+        );
+      }
+
+      const generatedReply = {
+        ...nextReply,
+        id: `${nextReply.id || tone}-${requestId}`,
+      };
+
+      setGeneratedReplies((currentReplies) => [
+        ...currentReplies,
+        generatedReply,
+      ]);
+      setLastGeneratedReplyId(generatedReply.id);
       setRepliesStatus("ready");
-      return cachedReplies;
+      return true;
+    } catch (generationError) {
+      if (replyRequestIdRef.current !== requestId) {
+        return false;
+      }
+
+      setRepliesStatus("error");
+      setError({
+        kind: "replies",
+        message: getErrorMessage(generationError, fallbackMessage),
+      });
+      return false;
     }
-
-    const nextReplyBatch = await generateRepliesForTone(tone, nextContext);
-    const nextVisibleReplies = (nextReplyBatch[tone] ?? []).slice(0, 2);
-
-    if (nextVisibleReplies.length === 0) {
-      throw new Error(
-        "Wingr could not create a safe reply from that screenshot.",
-      );
-    }
-
-    setReplyBatch((currentBatch) => ({ ...currentBatch, ...nextReplyBatch }));
-    setVisibleReplies(nextVisibleReplies);
-    setShownReplyIds((currentIds) =>
-      appendShownReplyIds(currentIds, nextVisibleReplies),
-    );
-    setRepliesStatus("ready");
-    return nextVisibleReplies;
   };
 
   const generateRepliesForSelectedTone = async () => {
     const nextContext = extraContext.trim();
 
     setReplyContext(nextContext);
-    setRepliesStatus("generating");
-    setError(null);
-
-    try {
-      await showRepliesForTone(selectedTone, nextContext);
-      return true;
-    } catch (generationError) {
-      setRepliesStatus("error");
-      setError({
-        kind: "replies",
-        message: getErrorMessage(
-          generationError,
-          "Wingr could not generate replies.",
-        ),
-      });
-      return false;
-    }
+    return appendReplyForTone(
+      selectedTone,
+      nextContext,
+      "Wingr could not generate a reply.",
+    );
   };
 
   const changeTone = async (tone: ReplyTone) => {
     setSelectedTone(tone);
-    setRepliesStatus("generating");
-    setError(null);
-
-    try {
-      await showRepliesForTone(tone, replyContext);
-      return true;
-    } catch (generationError) {
-      setRepliesStatus("error");
-      setError({
-        kind: "replies",
-        message: getErrorMessage(
-          generationError,
-          "Wingr could not refresh that tone.",
-        ),
-      });
-      return false;
-    }
+    return appendReplyForTone(
+      tone,
+      replyContext,
+      "Wingr could not generate a reply in that tone.",
+    );
   };
 
   const refreshReplies = async () => {
-    setRepliesStatus("generating");
-    setError(null);
-
-    try {
-      await showRepliesForTone(selectedTone, replyContext);
-      return true;
-    } catch (generationError) {
-      setRepliesStatus("error");
-      setError({
-        kind: "replies",
-        message: getErrorMessage(
-          generationError,
-          "Wingr could not refresh replies.",
-        ),
-      });
-      return false;
-    }
+    return appendReplyForTone(
+      selectedTone,
+      replyContext,
+      "Wingr could not generate a new reply.",
+    );
   };
 
   const clearError = () => setError(null);
@@ -450,7 +409,9 @@ export function useConversationFlow({
     confirmSpeakerSide,
     error,
     extraContext,
+    generatedReplies,
     generateRepliesForSelectedTone,
+    lastGeneratedReplyId,
     parsedConversation,
     pendingSpeakerOcr,
     pickScreenshot,
@@ -461,7 +422,6 @@ export function useConversationFlow({
     selectedTone,
     setError,
     vibeCheck,
-    visibleReplies,
   };
 }
 

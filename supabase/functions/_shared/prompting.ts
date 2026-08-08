@@ -130,8 +130,8 @@ export function createReplyBatchSchema(selectedTones: ReplyTone[]) {
       tone,
       {
         items: replyItemSchema,
-        maxItems: 2,
-        minItems: 2,
+        maxItems: 1,
+        minItems: 1,
         type: 'array',
       },
     ]),
@@ -305,7 +305,7 @@ export function buildReplyBatchPrompt(
   const notes = normalizeContextNotes(contextNotes ?? getContextNotes(extraContext));
   const targetLanguage = normalizeTargetLanguage(vibeCheck.targetLanguage);
   const languageInstruction = getReplyLanguageInstruction(transcriptText, targetLanguage);
-  const toneInstructions = selectedTones.map((tone) => `- ${tone}: generate exactly 2 distinct replies`).join('\n');
+  const toneInstructions = selectedTones.map((tone) => `- ${tone}: generate exactly 1 reply`).join('\n');
 
   return [
     'Generate a batch of reply suggestions for the user in this dating chat.',
@@ -323,7 +323,8 @@ export function buildReplyBatchPrompt(
     `- Every reply must be written in ${targetLanguage}. This is a hard requirement for every tone.`,
     '- Tone names, saved style preferences, vibe check text, and system labels may be English; do not use those as the reply language.',
     '- Do not translate the conversation into English unless the transcript itself is primarily English.',
-    '- Keep each reply realistic to send and distinct from the others in the same tone.',
+    '- Keep every reply realistic to send.',
+    '- When multiple tones are requested, make their replies meaningfully distinct.',
     '- Match THEM\'s conversational effort rather than simply matching message length.',
     '- Replies should generally feel proportional to THEM\'s effort, energy, and level of investment.',
     '- Default to a roughly similar message length, pacing, and energy as THEM\'s latest message.',
@@ -375,7 +376,7 @@ export function buildReplyLanguageRepairPrompt(
     buildReplyBatchPrompt(request, selectedTones),
     '',
     'Language repair:',
-    `- The previous attempt did not follow the language requirement. Rewrite exactly two replies in ${targetLanguage}.`,
+    `- The previous attempt did not follow the language requirement. Rewrite exactly one reply in ${targetLanguage} for each requested tone.`,
     '- Do not write any English words unless they are names, app names, game names, or quoted terms already present in the transcript.',
     '- Do not carry over random OCR-looking tokens or unclear mixed-symbol words from the previous replies.',
     '- Do not mention ME\'s name unless that name appears naturally in the actual chat messages.',
@@ -401,7 +402,7 @@ function getReplyLanguageInstruction(transcriptText: string, targetLanguage: str
     '- Do not switch reply language because of one isolated message or phrase in another language.',
     '- Only use the latest real message from THEM as a tie-breaker when there is no clear dominant language.',
     '- If the conversation clearly transitions to a new language and the recent conversation consistently uses it, use the newer language.',
-    `- Write both suggested replies in ${targetLanguage}, using the same script and a natural casual texting register.`,
+    `- Write one suggested reply in ${targetLanguage}, using the same script and a natural casual texting register.`,
     '- Examples: Danish transcript -> Danish replies; Spanish transcript -> Spanish replies; French transcript -> French replies.',
     '- Keep names, app names, games, slang, and quoted words as they naturally appear in the conversation.',
     `Transcript language source text:\n${stripSpeakerLabels(transcriptText)}`,
@@ -467,26 +468,17 @@ export function getMockVibeCheck(): VibeCheck {
 }
 
 export function getMockReplies(selectedTone: RepliesRequest['selectedTone']): SuggestedReply[] {
-  const map: Record<RepliesRequest['selectedTone'], [string, string]> = {
-    playful: [
-      "Damn... You're slowly becoming my favorite notification",
-      "Haha okay, I'll take that. What are you actually up to today?",
-    ],
-    direct: [
-      'I like talking to you. Want to actually make a plan this week?',
-      'Okay, real answer then. When are you free?',
-    ],
-    casualSmallTalk: [
-      "Haha fair. How's your day actually going?",
-      "Okay, I'll take it. What have you been up to today?",
-    ],
+  const map: Record<RepliesRequest['selectedTone'], string> = {
+    playful: "Damn... You're slowly becoming my favorite notification",
+    direct: 'I like talking to you. Want to actually make a plan this week?',
+    casualSmallTalk: "Haha fair. How's your day actually going?",
   };
 
-  return map[selectedTone].map((text, index) => ({
-    id: `${selectedTone}-${index + 1}`,
-    text,
+  return [{
+    id: `${selectedTone}-1`,
+    text: map[selectedTone],
     tone: selectedTone,
-  }));
+  }];
 }
 
 export function getMockReplyBatch(selectedTones: ReplyTone[]): ReplyBatch {

@@ -15,19 +15,10 @@ import type {
   VibeCheck,
 } from '../types/wingr';
 
-const REPLIES_BY_TONE: Record<ReplyTone, [string, string]> = {
-  playful: [
-    "Damn... You're slowly becoming my favorite notification",
-    "Haha okay, I'll take that. What are you actually up to today?",
-  ],
-  direct: [
-    "I like talking to you. Want to actually make a plan this week?",
-    "Okay, real answer then. When are you free?",
-  ],
-  casualSmallTalk: [
-    "Haha fair. How's your day actually going?",
-    "Okay, I'll take it. What have you been up to today?",
-  ],
+const REPLIES_BY_TONE: Record<ReplyTone, string> = {
+  playful: "Damn... You're slowly becoming my favorite notification",
+  direct: 'I like talking to you. Want to actually make a plan this week?',
+  casualSmallTalk: "Haha fair. How's your day actually going?",
 };
 
 const WHY_BY_TONE: Record<ReplyTone, string> = {
@@ -36,19 +27,10 @@ const WHY_BY_TONE: Record<ReplyTone, string> = {
   casualSmallTalk: 'Easy to answer and keeps the conversation moving.',
 };
 
-const FOLLOW_UPS_BY_TONE: Record<ReplyTone, [string, string]> = {
-  playful: [
-    'Actually, I need your honest answer on that.',
-    'Leaving that there while I pretend to be patient.',
-  ],
-  direct: [
-    'No rush, but I would like to hear what you think.',
-    'I meant that. Your turn when you get a second.',
-  ],
-  casualSmallTalk: [
-    'Anyway, what are you up to now?',
-    'Also, how is your day going?',
-  ],
+const FOLLOW_UPS_BY_TONE: Record<ReplyTone, string> = {
+  playful: 'Actually, I need your honest answer on that.',
+  direct: 'No rush, but I would like to hear what you think.',
+  casualSmallTalk: 'Anyway, what are you up to now?',
 };
 
 const FOLLOW_UP_WHY_BY_TONE: Record<ReplyTone, string> = {
@@ -399,11 +381,11 @@ function getRepliesPayload({
   };
 }
 
-function normalizeReplyBatch(replyBatch?: ReplyBatch): ReplyBatch {
+export function normalizeReplyBatch(replyBatch?: ReplyBatch): ReplyBatch {
   return {
-    casualSmallTalk: replyBatch?.casualSmallTalk?.slice(0, 2),
-    direct: replyBatch?.direct?.slice(0, 2),
-    playful: replyBatch?.playful?.slice(0, 2),
+    casualSmallTalk: replyBatch?.casualSmallTalk?.slice(0, 1),
+    direct: replyBatch?.direct?.slice(0, 1),
+    playful: replyBatch?.playful?.slice(0, 1),
   };
 }
 
@@ -520,11 +502,11 @@ export async function generateReplies({
     : WHY_BY_TONE;
 
   return normalizeReplyBatch({
-    [selectedTone]: localReplies[selectedTone].map((text, index) => ({
-      id: `${selectedTone}-${index + 1}-${Date.now()}`,
-      text,
+    [selectedTone]: [{
+      id: `${selectedTone}-1-${Date.now()}`,
+      text: localReplies[selectedTone],
       tone: selectedTone,
       whyItWorks: localWhys[selectedTone],
-    })),
+    }],
   });
 }

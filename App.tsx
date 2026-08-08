@@ -1,9 +1,10 @@
 import "./global.css";
 
 import { StatusBar } from "expo-status-bar";
+import { BlurView } from "expo-blur";
 import { useFonts } from "expo-font";
 import * as Clipboard from "expo-clipboard";
-import { Component, type ReactNode, useEffect, useState } from "react";
+import { Component, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   AltArrowDown,
   ArrowLeft,
@@ -35,6 +36,7 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 import type {
@@ -48,6 +50,8 @@ import type {
 import { OnboardingFlow } from "./onboarding/OnboardingFlow";
 import { useConversationFlow } from "./hooks/useConversationFlow";
 import {
+  InlineErrorCard,
+  ReplyActionBar,
   RepliesContent,
   VibeCheckCard,
 } from "./components/conversation/ConversationContent";
@@ -82,6 +86,38 @@ const COLORS = {
   indigo700: "#4338CA",
   indigo800: "#3730A3",
 };
+
+const REPLIES_SCREEN = {
+  actionBarFallbackHeight: 70,
+  blue950: "#172554",
+  neutral600: "#525252",
+  revealGap: 16,
+};
+
+const REPLIES_BACKGROUND_BLUR = {
+  ellipse: {
+    height: 650,
+    top: 40,
+    width: 180,
+  },
+  filterPadding: 200,
+  stdDeviation: 75,
+} as const;
+
+const REPLIES_BACKGROUND_BLUR_CANVAS = {
+  height:
+    REPLIES_BACKGROUND_BLUR.ellipse.height +
+    REPLIES_BACKGROUND_BLUR.filterPadding * 2,
+  width:
+    REPLIES_BACKGROUND_BLUR.ellipse.width +
+    REPLIES_BACKGROUND_BLUR.filterPadding * 2,
+  x:
+    REPLIES_BACKGROUND_BLUR.filterPadding +
+    REPLIES_BACKGROUND_BLUR.ellipse.width / 2,
+  y:
+    REPLIES_BACKGROUND_BLUR.filterPadding +
+    REPLIES_BACKGROUND_BLUR.ellipse.height / 2,
+} as const;
 
 type Screen =
   | "onboarding"
@@ -284,7 +320,10 @@ export default function App() {
   const conversation = useConversationFlow({ speakerPolicy: "confirm" });
   const {
     confirmSpeakerSide,
+    error,
+    generatedReplies,
     generateRepliesForSelectedTone,
+    lastGeneratedReplyId,
     pendingSpeakerOcr,
     pickScreenshot,
     refreshReplies,
@@ -292,7 +331,6 @@ export default function App() {
     selectedScreenshotUri,
     selectedTone,
     vibeCheck,
-    visibleReplies,
   } = conversation;
   const [fontsLoaded] = useFonts({
     [FONTS.display]: require("./assets/fonts/ClashDisplay-Variable.ttf"),
@@ -417,32 +455,15 @@ export default function App() {
     }
 
     setScreen("replies");
-    const succeeded = await generateRepliesForSelectedTone();
-
-    if (!succeeded) {
-      Alert.alert("Could not generate replies", "Try again in a moment.");
-      setScreen("vibecheck");
-    }
+    await generateRepliesForSelectedTone();
   };
 
   const handleToneChange = async (tone: ReplyTone) => {
-    const succeeded = await conversation.changeTone(tone);
-
-    if (!succeeded) {
-      Alert.alert("Could not refresh replies", "Try again in a moment.");
-    }
-
-    return succeeded;
+    return conversation.changeTone(tone);
   };
 
   const handleRefreshReplies = async () => {
-    const succeeded = await refreshReplies();
-
-    if (!succeeded) {
-      Alert.alert("Could not refresh replies", "Try again in a moment.");
-    }
-
-    return succeeded;
+    return refreshReplies();
   };
 
   return (
@@ -490,10 +511,14 @@ export default function App() {
         {screen === "replies" && vibeCheck ? (
           <RepliesScreen
             isGeneratingReplies={repliesStatus === "generating"}
+            lastGeneratedReplyId={lastGeneratedReplyId}
             onBack={() => setScreen("vibecheck")}
             onRefreshReplies={handleRefreshReplies}
             onToneChange={handleToneChange}
-            replies={visibleReplies}
+            replies={generatedReplies}
+            replyError={error?.kind === "replies" ? error.message : null}
+            selectedScreenshotUri={selectedScreenshotUri}
+            vibeCheck={vibeCheck}
             selectedTone={selectedTone}
           />
         ) : null}
@@ -936,51 +961,253 @@ function GlowIconContainer({
 
 function RepliesScreen({
   isGeneratingReplies,
+  lastGeneratedReplyId,
   onBack,
   onRefreshReplies,
   onToneChange,
   replies,
+  replyError,
+  selectedScreenshotUri,
   selectedTone,
+  vibeCheck,
 }: {
   isGeneratingReplies: boolean;
+  lastGeneratedReplyId: string | null;
   onBack: () => void;
   onRefreshReplies: () => Promise<boolean>;
   onToneChange: (tone: ReplyTone) => Promise<boolean>;
   replies: SuggestedReply[];
+  replyError: string | null;
+  selectedScreenshotUri: string | null;
   selectedTone: ReplyTone;
+  vibeCheck: VibeCheck;
 }) {
+  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollOffsetRef = useRef(0);
+  const scrollViewportHeightRef = useRef(0);
+  const actionBarHeightRef = useRef(REPLIES_SCREEN.actionBarFallbackHeight);
+  const repliesConversationOffsetYRef = useRef<number | null>(null);
+  const repliesContentOffsetYRef = useRef<number | null>(null);
+  const pendingReplyLayoutRef = useRef<{
+    height: number;
+    y: number;
+  } | null>(null);
+  const [actionBarHeight, setActionBarHeight] = useState(
+    REPLIES_SCREEN.actionBarFallbackHeight,
+  );
+
+  const revealPendingReply = () => {
+    const layout = pendingReplyLayoutRef.current;
+    const repliesConversationOffsetY = repliesConversationOffsetYRef.current;
+    const repliesContentOffsetY = repliesContentOffsetYRef.current;
+    const visibleViewportHeight =
+      scrollViewportHeightRef.current - actionBarHeightRef.current;
+
+    if (
+      !layout ||
+      repliesConversationOffsetY === null ||
+      repliesContentOffsetY === null ||
+      visibleViewportHeight <= 0
+    ) {
+      return;
+    }
+
+    const requiredOffset = Math.max(
+      0,
+      repliesConversationOffsetY +
+        repliesContentOffsetY +
+        layout.y +
+        layout.height +
+        REPLIES_SCREEN.revealGap -
+        visibleViewportHeight,
+    );
+
+    pendingReplyLayoutRef.current = null;
+
+    if (requiredOffset <= scrollOffsetRef.current + 2) {
+      return;
+    }
+
+    scrollOffsetRef.current = requiredOffset;
+    scrollViewRef.current?.scrollTo({ animated: true, y: requiredOffset });
+  };
+
+  const requestReplyReveal = (layout: { height: number; y: number }) => {
+    pendingReplyLayoutRef.current = layout;
+    requestAnimationFrame(revealPendingReply);
+  };
+
+  const handleActionBarLayout = (height: number) => {
+    const nextHeight = Math.ceil(height);
+
+    if (Math.abs(actionBarHeightRef.current - nextHeight) < 1) {
+      return;
+    }
+
+    actionBarHeightRef.current = nextHeight;
+    setActionBarHeight(nextHeight);
+    requestAnimationFrame(revealPendingReply);
+  };
+
   return (
     <View style={[styles.screen, styles.repliesScreen]}>
-      <View style={styles.vibeHeader}>
+      <RepliesBackgroundBlur />
+
+      <View style={styles.repliesHeader}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Go back to Vibe Check"
           hitSlop={12}
           onPress={onBack}
           style={({ pressed }) => [
-            styles.backButton,
+            styles.repliesBackButton,
             pressed && styles.uploadButtonPressed,
           ]}
         >
           <ArrowLeft color={COLORS.white} size={22} />
         </Pressable>
-        <Text style={styles.vibeHeaderTitle}>Replies</Text>
-        <View style={styles.backButton} />
+        <Text style={styles.repliesHeaderTitle}>Replies</Text>
+        <View style={styles.repliesHeaderSpacer} />
       </View>
 
       <ScrollView
         bounces={false}
-        contentContainerStyle={styles.repliesScrollContent}
+        contentContainerStyle={[
+          styles.repliesScrollContent,
+          { paddingBottom: actionBarHeight + 24 },
+        ]}
+        onLayout={(event) => {
+          scrollViewportHeightRef.current = event.nativeEvent.layout.height;
+          revealPendingReply();
+        }}
+        onScroll={(event) => {
+          scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+        }}
+        ref={scrollViewRef}
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
       >
-        <RepliesContent
-          isGenerating={isGeneratingReplies}
-          onRefreshReplies={onRefreshReplies}
-          onToneChange={onToneChange}
-          replies={replies}
-          selectedTone={selectedTone}
-        />
+        <View
+          onLayout={(event) => {
+            repliesConversationOffsetYRef.current = event.nativeEvent.layout.y;
+            revealPendingReply();
+          }}
+          style={styles.repliesConversation}
+        >
+          {selectedScreenshotUri ? (
+            <View style={styles.repliesScreenshotFrame}>
+              <Image
+                accessibilityIgnoresInvertColors
+                resizeMode="contain"
+                source={{ uri: selectedScreenshotUri }}
+                style={styles.repliesScreenshot}
+              />
+            </View>
+          ) : null}
+          <VibeCheckCard
+            presentation="inlineExpandable"
+            vibeCheck={vibeCheck}
+          />
+          <RepliesContent
+            isGenerating={isGeneratingReplies}
+            lastGeneratedReplyId={lastGeneratedReplyId}
+            onContentLayout={(layout) => {
+              repliesContentOffsetYRef.current = layout.y;
+              revealPendingReply();
+            }}
+            onRefreshReplies={onRefreshReplies}
+            onReplyLayout={requestReplyReveal}
+            onToneChange={onToneChange}
+            replies={replies}
+            selectedTone={selectedTone}
+            presentation="mainFeed"
+            showControls={false}
+            showTypingIndicator
+          />
+          {replyError ? (
+            <InlineErrorCard
+              message={replyError}
+              onPrimaryAction={() => {
+                void onRefreshReplies();
+              }}
+              primaryLabel="Try again"
+            />
+          ) : null}
+        </View>
       </ScrollView>
+
+      <View
+        onLayout={(event) => {
+          handleActionBarLayout(event.nativeEvent.layout.height);
+        }}
+        style={styles.repliesActionBarShell}
+      >
+        <BlurView
+          blurReductionFactor={1}
+          experimentalBlurMethod={
+            Platform.OS === "android" ? "dimezisBlurView" : undefined
+          }
+          intensity={20}
+          pointerEvents="none"
+          style={styles.repliesActionBarBlur}
+          tint="dark"
+        />
+        <View pointerEvents="none" style={styles.repliesActionBarTint} />
+        <View style={styles.repliesActionBarContent}>
+          <ReplyActionBar
+            isGenerating={isGeneratingReplies}
+            onRefreshReplies={onRefreshReplies}
+            onToneChange={onToneChange}
+            selectedTone={selectedTone}
+          />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function RepliesBackgroundBlur() {
+  const { width: viewportWidth } = useWindowDimensions();
+
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        styles.repliesBackgroundBlur,
+        {
+          left:
+            (viewportWidth - REPLIES_BACKGROUND_BLUR.ellipse.width) / 2,
+        },
+      ]}
+    >
+      <Svg
+        height={REPLIES_BACKGROUND_BLUR_CANVAS.height}
+        pointerEvents="none"
+        style={styles.repliesBackgroundBlurSvg}
+        width={REPLIES_BACKGROUND_BLUR_CANVAS.width}
+      >
+        <Defs>
+          <Filter
+            filterUnits="userSpaceOnUse"
+            height={REPLIES_BACKGROUND_BLUR_CANVAS.height}
+            id="replies-background-blur"
+            primitiveUnits="userSpaceOnUse"
+            width={REPLIES_BACKGROUND_BLUR_CANVAS.width}
+            x={0}
+            y={0}
+          >
+            <FeGaussianBlur stdDeviation={REPLIES_BACKGROUND_BLUR.stdDeviation} />
+          </Filter>
+        </Defs>
+        <Ellipse
+          cx={REPLIES_BACKGROUND_BLUR_CANVAS.x}
+          cy={REPLIES_BACKGROUND_BLUR_CANVAS.y}
+          fill={REPLIES_SCREEN.blue950}
+          filter="url(#replies-background-blur)"
+          rx={REPLIES_BACKGROUND_BLUR.ellipse.width / 2}
+          ry={REPLIES_BACKGROUND_BLUR.ellipse.height / 2}
+        />
+      </Svg>
     </View>
   );
 }
@@ -1490,13 +1717,99 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   repliesScreen: {
+    overflow: "hidden",
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    position: "relative",
+  },
+  repliesHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    height: 60,
+    justifyContent: "space-between",
     paddingHorizontal: 16,
+    paddingVertical: 4,
+    zIndex: 1,
+  },
+  repliesHeaderTitle: {
+    color: COLORS.blue,
+    fontFamily: FONTS.display,
+    fontSize: 20,
+    fontWeight: "700",
+    lineHeight: 24,
+    textAlign: "center",
+  },
+  repliesBackButton: {
+    alignItems: "center",
+    backgroundColor: "#404040",
+    borderRadius: 18,
+    height: 36,
+    justifyContent: "center",
+    width: 36,
+  },
+  repliesHeaderSpacer: {
+    height: 36,
+    width: 36,
+  },
+  repliesBackgroundBlur: {
+    height: REPLIES_BACKGROUND_BLUR.ellipse.height,
+    position: "absolute",
+    top: REPLIES_BACKGROUND_BLUR.ellipse.top,
+    width: REPLIES_BACKGROUND_BLUR.ellipse.width,
+  },
+  repliesBackgroundBlurSvg: {
+    left: -REPLIES_BACKGROUND_BLUR.filterPadding,
+    position: "absolute",
+    top: -REPLIES_BACKGROUND_BLUR.filterPadding,
   },
   repliesScrollContent: {
     alignItems: "center",
-    gap: 16,
-    paddingBottom: 24,
-    paddingTop: 22,
+    paddingHorizontal: 16,
+    paddingTop: 20,
+  },
+  repliesConversation: {
+    gap: 8,
+    width: "100%",
+  },
+  repliesScreenshotFrame: {
+    alignSelf: "center",
+    backgroundColor: "#171717",
+    borderRadius: 11,
+    height: 182,
+    overflow: "hidden",
+    width: 84,
+  },
+  repliesScreenshot: {
+    height: "100%",
+    width: "100%",
+  },
+  repliesActionBarShell: {
+    borderTopColor: REPLIES_SCREEN.neutral600,
+    borderTopWidth: 1,
+    bottom: 0,
+    elevation: 0,
+    left: 0,
+    overflow: "hidden",
+    padding: 16,
+    position: "absolute",
+    right: 0,
+    shadowColor: "#000000",
+    shadowOffset: { height: -2, width: 0 },
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    zIndex: 2,
+  },
+  repliesActionBarBlur: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  repliesActionBarTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.50)",
+  },
+  repliesActionBarContent: {
+    position: "relative",
+    width: "100%",
+    zIndex: 1,
   },
   repliesControlsRow: {
     alignItems: "center",

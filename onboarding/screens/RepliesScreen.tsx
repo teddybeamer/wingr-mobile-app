@@ -7,7 +7,7 @@ import { OnboardingScreenScaffold } from "./OnboardingScreenScaffold";
 
 export function RepliesScreen(props: OnboardingScreenProps) {
   const { conversation } = props;
-  const hasReplies = conversation.visibleReplies.length > 0;
+  const hasReplies = conversation.generatedReplies.length > 0;
 
   return (
     <OnboardingScreenScaffold {...props}>
@@ -17,7 +17,7 @@ export function RepliesScreen(props: OnboardingScreenProps) {
           maxReplies={1}
           onRefreshReplies={conversation.refreshReplies}
           onToneChange={conversation.changeTone}
-          replies={conversation.visibleReplies}
+          replies={conversation.generatedReplies}
           selectedTone={conversation.selectedTone}
           showControls={false}
         />

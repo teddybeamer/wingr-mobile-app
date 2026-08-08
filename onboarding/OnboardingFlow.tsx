@@ -68,7 +68,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       ? conversation.analysisStatus === "ready" &&
         Boolean(conversation.vibeCheck)
       : isRepliesStep
-        ? conversation.visibleReplies.length > 0
+        ? conversation.generatedReplies.length > 0
         : canContinue;
   const ctaLoading = isVibeStep && conversation.repliesStatus === "generating";
 
