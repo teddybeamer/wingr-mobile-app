@@ -89,7 +89,7 @@ const COLORS = {
 
 const REPLIES_SCREEN = {
   actionBarFallbackHeight: 70,
-  blue950: "#172554",
+  indigo950: "#1E1B4B",
   neutral600: "#525252",
   revealGap: 16,
 };
@@ -98,9 +98,9 @@ const REPLIES_BACKGROUND_BLUR = {
   ellipse: {
     height: 650,
     top: 40,
-    width: 180,
+    width: 187,
   },
-  filterPadding: 200,
+  filterPadding: 150,
   stdDeviation: 75,
 } as const;
 
@@ -1202,7 +1202,7 @@ function RepliesBackgroundBlur() {
         <Ellipse
           cx={REPLIES_BACKGROUND_BLUR_CANVAS.x}
           cy={REPLIES_BACKGROUND_BLUR_CANVAS.y}
-          fill={REPLIES_SCREEN.blue950}
+          fill={REPLIES_SCREEN.indigo950}
           filter="url(#replies-background-blur)"
           rx={REPLIES_BACKGROUND_BLUR.ellipse.width / 2}
           ry={REPLIES_BACKGROUND_BLUR.ellipse.height / 2}
