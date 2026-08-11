@@ -382,11 +382,7 @@ export function useConversationFlow({
 
   const changeTone = async (tone: ReplyTone) => {
     setSelectedTone(tone);
-    return appendReplyForTone(
-      tone,
-      replyContext,
-      "Wingr could not generate a reply in that tone.",
-    );
+    return true;
   };
 
   const refreshReplies = async () => {

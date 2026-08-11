@@ -7,19 +7,15 @@ import * as Clipboard from "expo-clipboard";
 import { Component, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   AltArrowDown,
-  ArrowLeft,
   ArrowRight,
   Bolt,
   CheckCircle,
   ChatRound,
   Copy,
-  EmojiFunnyCircle,
-  FireMinimalistic,
   Heart,
   Refresh,
   ShieldWarning,
   StarsMinimalistic,
-  Waterdrop,
 } from "@solar-icons/react-native/Linear";
 import type { Icon as SolarIcon } from "@solar-icons/react-native/lib/index";
 import Svg, { Defs, Ellipse, FeGaussianBlur, Filter } from "react-native-svg";
@@ -27,7 +23,6 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -48,6 +43,7 @@ import type {
   VibeCheck,
 } from "./types/wingr";
 import { OnboardingFlow } from "./onboarding/OnboardingFlow";
+import { BackButton } from "./components/BackButton";
 import { useConversationFlow } from "./hooks/useConversationFlow";
 import {
   InlineErrorCard,
@@ -88,9 +84,10 @@ const COLORS = {
 };
 
 const REPLIES_SCREEN = {
-  actionBarFallbackHeight: 70,
+  actionBarBottomOffset: 40,
+  actionBarFallbackHeight: 61,
+  actionBarScrollGap: 24,
   indigo950: "#1E1B4B",
-  neutral600: "#525252",
   revealGap: 16,
 };
 
@@ -125,7 +122,6 @@ type Screen =
   | "upload"
   | "analyzing"
   | "speakerConfirmation"
-  | "vibecheck"
   | "replies";
 type MetricVariant = "interest" | "energy" | "risk" | "move";
 
@@ -172,9 +168,9 @@ class BootErrorBoundary extends Component<
 }
 
 const TONE_OPTIONS: ToneOption[] = [
-  { value: "playful", label: "Playful", icon: EmojiFunnyCircle },
-  { value: "direct", label: "Direct", icon: FireMinimalistic },
-  { value: "casualSmallTalk", label: "Small talk", icon: Waterdrop },
+  { value: "playful", label: "Playful", emoji: "🔥" },
+  { value: "direct", label: "Direct", emoji: "🎯" },
+  { value: "casualSmallTalk", label: "Casual", emoji: "😊" },
 ];
 
 function getToneLabel(tone: ReplyTone | RecommendedReplyTone) {
@@ -317,6 +313,10 @@ export default function App() {
   );
   const [showDebugBootScreen, setShowDebugBootScreen] =
     useState(DEBUG_BOOT_PROBE);
+  const initialReplyGenerationIdRef = useRef(0);
+  const initialReplyGenerationStartedIdRef = useRef<number | null>(null);
+  const [queuedInitialReplyGenerationId, setQueuedInitialReplyGenerationId] =
+    useState<number | null>(null);
   const conversation = useConversationFlow({ speakerPolicy: "confirm" });
   const {
     confirmSpeakerSide,
@@ -363,6 +363,48 @@ export default function App() {
     console.log("[Wingr boot] Fonts loaded state changed", fontsLoaded);
   }, [fontsLoaded]);
 
+  const cancelQueuedInitialReplyGeneration = () => {
+    initialReplyGenerationIdRef.current += 1;
+    initialReplyGenerationStartedIdRef.current = null;
+    setQueuedInitialReplyGenerationId(null);
+  };
+
+  const queueInitialReplyGeneration = () => {
+    const generationId = initialReplyGenerationIdRef.current + 1;
+
+    initialReplyGenerationIdRef.current = generationId;
+    initialReplyGenerationStartedIdRef.current = null;
+    setQueuedInitialReplyGenerationId(generationId);
+    setScreen("replies");
+  };
+
+  useEffect(() => {
+    if (
+      queuedInitialReplyGenerationId === null ||
+      screen !== "replies" ||
+      !vibeCheck ||
+      initialReplyGenerationStartedIdRef.current ===
+        queuedInitialReplyGenerationId
+    ) {
+      return;
+    }
+
+    const generationId = queuedInitialReplyGenerationId;
+
+    initialReplyGenerationStartedIdRef.current = generationId;
+    void generateRepliesForSelectedTone().finally(() => {
+      if (initialReplyGenerationIdRef.current === generationId) {
+        initialReplyGenerationStartedIdRef.current = null;
+        setQueuedInitialReplyGenerationId(null);
+      }
+    });
+  }, [
+    generateRepliesForSelectedTone,
+    queuedInitialReplyGenerationId,
+    screen,
+    vibeCheck,
+  ]);
+
   if (showDebugBootScreen) {
     return (
       <View style={styles.debugBootScreen}>
@@ -385,6 +427,8 @@ export default function App() {
   }
 
   const handleConfirmSpeakerSide = async (userSide: "left" | "right") => {
+    cancelQueuedInitialReplyGeneration();
+
     if (!pendingSpeakerOcr) {
       setScreen("upload");
       return;
@@ -394,7 +438,7 @@ export default function App() {
     const succeeded = await confirmSpeakerSide(userSide);
 
     if (succeeded) {
-      setScreen("vibecheck");
+      queueInitialReplyGeneration();
     } else {
       Alert.alert(
         "Could not read screenshot",
@@ -405,6 +449,7 @@ export default function App() {
   };
 
   const handleCancelSpeakerConfirmation = () => {
+    cancelQueuedInitialReplyGeneration();
     conversation.cancelSpeakerConfirmation();
     setScreen("upload");
   };
@@ -423,6 +468,8 @@ export default function App() {
   };
 
   const handleCheckSelectedScreenshot = async () => {
+    cancelQueuedInitialReplyGeneration();
+
     if (!selectedScreenshotUri) {
       await handlePickScreenshotForUpload();
       return;
@@ -434,7 +481,7 @@ export default function App() {
     if (result === "needsConfirmation") {
       setScreen("speakerConfirmation");
     } else if (result === "ready") {
-      setScreen("vibecheck");
+      queueInitialReplyGeneration();
     } else {
       Alert.alert(
         "Could not read screenshot",
@@ -443,19 +490,6 @@ export default function App() {
       );
       setScreen("upload");
     }
-  };
-
-  const handleGenerateReplies = async () => {
-    if (!vibeCheck) {
-      Alert.alert(
-        "Vibe check needed",
-        "Upload a screenshot so Wingr can read the vibe first.",
-      );
-      return;
-    }
-
-    setScreen("replies");
-    await generateRepliesForSelectedTone();
   };
 
   const handleToneChange = async (tone: ReplyTone) => {
@@ -499,20 +533,17 @@ export default function App() {
           />
         ) : null}
 
-        {screen === "vibecheck" && vibeCheck ? (
-          <VibeCheckScreen
-            onBack={() => setScreen("upload")}
-            isGeneratingReplies={repliesStatus === "generating"}
-            onGenerateReplies={handleGenerateReplies}
-            vibeCheck={vibeCheck}
-          />
-        ) : null}
-
         {screen === "replies" && vibeCheck ? (
           <RepliesScreen
-            isGeneratingReplies={repliesStatus === "generating"}
+            isGeneratingReplies={
+              repliesStatus === "generating" ||
+              queuedInitialReplyGenerationId !== null
+            }
             lastGeneratedReplyId={lastGeneratedReplyId}
-            onBack={() => setScreen("vibecheck")}
+            onBack={() => {
+              cancelQueuedInitialReplyGeneration();
+              setScreen("upload");
+            }}
             onRefreshReplies={handleRefreshReplies}
             onToneChange={handleToneChange}
             replies={generatedReplies}
@@ -591,20 +622,13 @@ function UploadScreenshotScreen({
   return (
     <View className="flex-1 bg-[#080808] px-4 pt-4">
       <View className="flex-row items-center justify-between">
-        <Pressable
-          accessibilityLabel="Go back"
-          accessibilityRole="button"
-          className="h-10 w-10 items-center justify-center rounded-full bg-white/[0.10]"
-          onPress={onBack}
-        >
-          <ArrowLeft color="#FFFFFF" size={20} />
-        </Pressable>
+        <BackButton onPress={onBack} />
 
         <Text className="font-display text-[18px] font-bold leading-[22px] text-blue-700">
           Upload Screenshot
         </Text>
 
-        <View className="h-10 w-10" />
+        <View className="h-9 w-9" />
       </View>
 
       <View className="mt-9 items-center">
@@ -695,18 +719,7 @@ function SpeakerConfirmationScreen({
   return (
     <View style={[styles.screen, styles.speakerConfirmationScreen]}>
       <View style={styles.vibeHeader}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Go back to upload"
-          hitSlop={12}
-          onPress={onBack}
-          style={({ pressed }) => [
-            styles.backButton,
-            pressed && styles.uploadButtonPressed,
-          ]}
-        >
-          <ArrowLeft color={COLORS.white} size={22} />
-        </Pressable>
+        <BackButton accessibilityLabel="Go back to upload" onPress={onBack} />
         <Text style={styles.vibeHeaderTitle}>Quick check</Text>
         <View style={styles.backButton} />
       </View>
@@ -761,73 +774,6 @@ function SpeakerConfirmationScreen({
         </View>
       </View>
     </View>
-  );
-}
-
-function VibeCheckScreen({
-  isGeneratingReplies,
-  onBack,
-  onGenerateReplies,
-  vibeCheck,
-}: {
-  isGeneratingReplies: boolean;
-  onBack: () => void;
-  onGenerateReplies: () => void;
-  vibeCheck: VibeCheck;
-}) {
-  return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={styles.keyboardScreen}
-    >
-      <ScrollView
-        bounces={false}
-        contentContainerStyle={styles.vibeScrollContent}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        style={styles.screen}
-      >
-        <View style={styles.vibeHeader}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Go back to upload"
-            hitSlop={12}
-            onPress={onBack}
-            style={({ pressed }) => [
-              styles.backButton,
-              pressed && styles.uploadButtonPressed,
-            ]}
-          >
-            <ArrowLeft color={COLORS.white} size={22} />
-          </Pressable>
-          <Text style={styles.vibeHeaderTitle}>Vibe Check</Text>
-          <View style={styles.backButton} />
-        </View>
-
-        <VibeCheckCard vibeCheck={vibeCheck} />
-
-        <TouchableOpacity
-          activeOpacity={0.88}
-          accessibilityRole="button"
-          accessibilityLabel="Get replies"
-          disabled={isGeneratingReplies}
-          onPress={onGenerateReplies}
-          style={[
-            styles.generateButton,
-            isGeneratingReplies && styles.disabledButton,
-          ]}
-        >
-          {isGeneratingReplies ? (
-            <ActivityIndicator color={COLORS.white} />
-          ) : (
-            <>
-              <Text style={styles.generateButtonText}>Get replies</Text>
-              <ArrowRight color={COLORS.white} size={22} />
-            </>
-          )}
-        </TouchableOpacity>
-      </ScrollView>
-    </KeyboardAvoidingView>
   );
 }
 
@@ -1001,7 +947,9 @@ function RepliesScreen({
     const repliesConversationOffsetY = repliesConversationOffsetYRef.current;
     const repliesContentOffsetY = repliesContentOffsetYRef.current;
     const visibleViewportHeight =
-      scrollViewportHeightRef.current - actionBarHeightRef.current;
+      scrollViewportHeightRef.current -
+      actionBarHeightRef.current -
+      REPLIES_SCREEN.actionBarBottomOffset;
 
     if (
       !layout ||
@@ -1054,18 +1002,10 @@ function RepliesScreen({
       <RepliesBackgroundBlur />
 
       <View style={styles.repliesHeader}>
-        <Pressable
-          accessibilityRole="button"
+        <BackButton
           accessibilityLabel="Go back to Vibe Check"
-          hitSlop={12}
           onPress={onBack}
-          style={({ pressed }) => [
-            styles.repliesBackButton,
-            pressed && styles.uploadButtonPressed,
-          ]}
-        >
-          <ArrowLeft color={COLORS.white} size={22} />
-        </Pressable>
+        />
         <Text style={styles.repliesHeaderTitle}>Replies</Text>
         <View style={styles.repliesHeaderSpacer} />
       </View>
@@ -1074,7 +1014,12 @@ function RepliesScreen({
         bounces={false}
         contentContainerStyle={[
           styles.repliesScrollContent,
-          { paddingBottom: actionBarHeight + 24 },
+          {
+            paddingBottom:
+              actionBarHeight +
+              REPLIES_SCREEN.actionBarBottomOffset +
+              REPLIES_SCREEN.actionBarScrollGap,
+          },
         ]}
         onLayout={(event) => {
           scrollViewportHeightRef.current = event.nativeEvent.layout.height;
@@ -1297,7 +1242,6 @@ function ToneBottomSheet({
           <View style={styles.toneOptions}>
             {TONE_OPTIONS.map((option) => {
               const selected = option.value === selectedTone;
-              const ToneIcon = option.icon;
 
               return (
                 <TouchableOpacity
@@ -1312,10 +1256,7 @@ function ToneBottomSheet({
                   ]}
                 >
                   <View style={styles.toneOptionLeft}>
-                    <ToneIcon
-                      color={selected ? COLORS.blue : "#D6D6DB"}
-                      size={20}
-                    />
+                    <Text style={styles.toneOptionEmoji}>{option.emoji}</Text>
                     <Text
                       numberOfLines={1}
                       style={[
@@ -1418,10 +1359,6 @@ const styles = StyleSheet.create({
     height: 160,
     justifyContent: "center",
     overflow: "hidden",
-  },
-  uploadButtonPressed: {
-    opacity: 0.84,
-    transform: [{ scale: 0.99 }],
   },
   uploadEmptyState: {
     alignItems: "center",
@@ -1566,14 +1503,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     lineHeight: 20,
   },
-  keyboardScreen: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  vibeScrollContent: {
-    gap: 20,
-    paddingBottom: 28,
-  },
   vibeHeader: {
     alignItems: "center",
     flexDirection: "row",
@@ -1581,9 +1510,9 @@ const styles = StyleSheet.create({
   },
   backButton: {
     alignItems: "center",
-    height: 34,
+    height: 36,
     justifyContent: "center",
-    width: 34,
+    width: 36,
   },
   vibeHeaderTitle: {
     color: COLORS.blue,
@@ -1691,31 +1620,6 @@ const styles = StyleSheet.create({
     height: "100%",
     width: "50%",
   },
-  generateButton: {
-    alignItems: "center",
-    backgroundColor: COLORS.blue,
-    borderRadius: 999,
-    flexDirection: "row",
-    gap: 12,
-    height: 48,
-    justifyContent: "center",
-    marginTop: 2,
-    width: "100%",
-  },
-  generateButtonPressed: {
-    opacity: 0.9,
-    transform: [{ scale: 0.99 }],
-  },
-  disabledButton: {
-    opacity: 0.72,
-  },
-  generateButtonText: {
-    color: COLORS.white,
-    fontFamily: FONTS.body,
-    fontSize: 17,
-    fontWeight: "600",
-    lineHeight: 22,
-  },
   repliesScreen: {
     overflow: "hidden",
     paddingHorizontal: 0,
@@ -1738,14 +1642,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 24,
     textAlign: "center",
-  },
-  repliesBackButton: {
-    alignItems: "center",
-    backgroundColor: "#404040",
-    borderRadius: 18,
-    height: 36,
-    justifyContent: "center",
-    width: 36,
   },
   repliesHeaderSpacer: {
     height: 36,
@@ -1784,19 +1680,18 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   repliesActionBarShell: {
-    borderTopColor: REPLIES_SCREEN.neutral600,
-    borderTopWidth: 1,
-    bottom: 0,
-    elevation: 0,
-    left: 0,
+    alignSelf: "center",
+    borderRadius: 30,
+    bottom: REPLIES_SCREEN.actionBarBottomOffset,
+    elevation: 6,
     overflow: "hidden",
-    padding: 16,
+    padding: 8,
     position: "absolute",
-    right: 0,
     shadowColor: "#000000",
-    shadowOffset: { height: -2, width: 0 },
-    shadowOpacity: 0.16,
-    shadowRadius: 8,
+    shadowOffset: { height: 4, width: 0 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    width: 332,
     zIndex: 2,
   },
   repliesActionBarBlur: {
@@ -1804,7 +1699,7 @@ const styles = StyleSheet.create({
   },
   repliesActionBarTint: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.50)",
+    backgroundColor: "rgba(38, 38, 38, 0.50)",
   },
   repliesActionBarContent: {
     position: "relative",
@@ -2017,6 +1912,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     minWidth: 0,
+  },
+  toneOptionEmoji: {
+    fontSize: 20,
+    lineHeight: 24,
+    textAlign: "center",
+    width: 24,
   },
   toneOptionText: {
     color: "rgba(255, 255, 255, 0.92)",

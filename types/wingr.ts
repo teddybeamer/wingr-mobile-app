@@ -1,5 +1,3 @@
-import type { Icon as SolarIcon } from '@solar-icons/react-native/lib/index';
-
 export type ReplyTone =
   | 'playful'
   | 'direct'
@@ -8,7 +6,7 @@ export type ReplyTone =
 export type RecommendedReplyTone = 'direct' | 'playful' | 'casualSmallTalk';
 
 export type ToneOption = {
-  icon: SolarIcon;
+  emoji: string;
   value: ReplyTone;
   label: string;
 };

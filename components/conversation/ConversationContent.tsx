@@ -17,13 +17,11 @@ import {
   CheckCircle,
   ChatRound,
   Copy,
-  EmojiFunnyCircle,
-  FireMinimalistic,
   Heart,
   Refresh,
+  Repeat,
   ShieldWarning,
   StarsMinimalistic,
-  Waterdrop,
 } from "@solar-icons/react-native/Linear";
 import type { Icon as SolarIcon } from "@solar-icons/react-native/lib/index";
 import Svg, {
@@ -49,6 +47,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
   type ViewStyle,
 } from "react-native";
 import type {
@@ -76,7 +75,20 @@ const REPLY_SURFACE_COLORS = {
 
 const REPLY_CARD_PRESS_SCALE = 0.985;
 const REPLY_CARD_PRESS_OVERLAY_OPACITY = 0.12;
+const STICKY_ACTION_BUTTON = {
+  height: 45,
+  newReplyWidth: 166,
+  radius: 24,
+  toneWidth: 140,
+} as const;
+const TONE_SHEET_ANIMATION = {
+  backdropCloseDuration: 140,
+  backdropOpenDuration: 180,
+  sheetCloseDuration: 220,
+  sheetOpenDuration: 280,
+} as const;
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
 const ReanimatedPressable = Reanimated.createAnimatedComponent(Pressable);
 
 const VIBE_CHECK_LAYOUT_TRANSITION = LinearTransition.duration(220).easing(
@@ -177,9 +189,13 @@ const TONE_CHIP_STYLES: Record<
 };
 
 const TONE_OPTIONS: ToneOption[] = [
-  { value: "playful", label: "Playful", icon: EmojiFunnyCircle },
-  { value: "direct", label: "Direct", icon: FireMinimalistic },
-  { value: "casualSmallTalk", label: "Small talk", icon: Waterdrop },
+  { value: "playful", label: "Playful", emoji: TONE_EMOJIS.playful },
+  { value: "direct", label: "Direct", emoji: TONE_EMOJIS.direct },
+  {
+    value: "casualSmallTalk",
+    label: "Casual",
+    emoji: TONE_EMOJIS.casualSmallTalk,
+  },
 ];
 
 type MetricVariant = "interest" | "energy" | "risk" | "move";
@@ -754,7 +770,7 @@ function InlineVibeInterestMeter({
 
   return (
     <View style={styles.inlineVibeMeterTrack}>
-      <Svg height="8" style={{ width: fillWidth }} width="100%">
+      <Svg height="8" width={fillWidth}>
         <Defs>
           <LinearGradient
             id="inline-vibe-interest-meter"
@@ -1010,17 +1026,26 @@ export function ReplyActionBar({
   variant = "sticky",
 }: ReplyActionBarProps) {
   const [isToneSheetOpen, setIsToneSheetOpen] = useState(false);
+  const refreshBorderId = useRef("sticky-refresh-button-border").current;
+  const toneBorderId = useRef("sticky-tone-button-border").current;
   const isSticky = variant === "sticky";
+  const newReplyPressAnimation = useActionButtonPressAnimation();
+  const tonePressAnimation = useActionButtonPressAnimation();
 
   const refreshReplies = async () => {
+    if (isSticky) {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+        () => {},
+      );
+    }
+
     const succeeded = await onRefreshReplies();
     if (succeeded) onReplyGenerated?.();
   };
 
   const changeTone = async (tone: ReplyTone) => {
     setIsToneSheetOpen(false);
-    const succeeded = await onToneChange(tone);
-    if (succeeded) onReplyGenerated?.();
+    await onToneChange(tone);
   };
 
   return (
@@ -1030,7 +1055,8 @@ export function ReplyActionBar({
         isSticky && styles.stickyReplyActionBar,
       ]}
     >
-      <TouchableOpacity
+      <AnimatedTouchableOpacity
+        activeOpacity={0.88}
         accessibilityLabel={
           isGenerating
             ? "Generating a new reply"
@@ -1040,19 +1066,34 @@ export function ReplyActionBar({
         }
         accessibilityRole="button"
         disabled={isGenerating}
+        hitSlop={isSticky ? 4 : undefined}
         onPress={() => {
           void refreshReplies();
         }}
+        onPressIn={isSticky ? newReplyPressAnimation.onPressIn : undefined}
+        onPressOut={isSticky ? newReplyPressAnimation.onPressOut : undefined}
         style={[
           isSticky ? styles.stickyNewRepliesButton : styles.newRepliesButton,
           isGenerating && styles.disabled,
+          isSticky && newReplyPressAnimation.style,
         ]}
       >
+        {isSticky ? (
+          <ActionButtonGradientBorder
+            color="#4338CA"
+            gradientId={refreshBorderId}
+            width={STICKY_ACTION_BUTTON.newReplyWidth}
+          />
+        ) : null}
         {isGenerating ? (
-          <ActivityIndicator color={COLORS.white} size="small" />
+          <ActivityIndicator color="#E0E7FF" size="small" />
         ) : (
           <>
-            <Refresh color={COLORS.white} size={16} />
+            {isSticky ? (
+              <Repeat color="#E0E7FF" size={20} />
+            ) : (
+              <Refresh color={COLORS.white} size={16} />
+            )}
             <Text
               style={
                 isSticky
@@ -1064,18 +1105,30 @@ export function ReplyActionBar({
             </Text>
           </>
         )}
-      </TouchableOpacity>
-      <TouchableOpacity
+      </AnimatedTouchableOpacity>
+      <AnimatedTouchableOpacity
+        activeOpacity={0.88}
         accessibilityLabel={`Choose reply tone, currently ${getToneLabel(selectedTone)}`}
         accessibilityRole="button"
         disabled={isGenerating}
+        hitSlop={isSticky ? 4 : undefined}
         onPress={() => setIsToneSheetOpen(true)}
+        onPressIn={isSticky ? tonePressAnimation.onPressIn : undefined}
+        onPressOut={isSticky ? tonePressAnimation.onPressOut : undefined}
         style={[
           styles.toneSelector,
           isSticky && styles.stickyToneSelector,
           isGenerating && styles.disabled,
+          isSticky && tonePressAnimation.style,
         ]}
       >
+        {isSticky ? (
+          <ActionButtonGradientBorder
+            color="#525252"
+            gradientId={toneBorderId}
+            width={STICKY_ACTION_BUTTON.toneWidth}
+          />
+        ) : null}
         {isSticky ? (
           <Text style={styles.stickyToneEmoji}>
             {TONE_EMOJIS[selectedTone]}
@@ -1092,8 +1145,8 @@ export function ReplyActionBar({
         >
           {getToneLabel(selectedTone)}
         </Text>
-        <AltArrowDown color="#D6D6DB" size={16} />
-      </TouchableOpacity>
+        <AltArrowDown color="#D6D6DB" size={isSticky ? 18 : 16} />
+      </AnimatedTouchableOpacity>
       <ToneBottomSheet
         onClose={() => setIsToneSheetOpen(false)}
         onSelect={(tone) => {
@@ -1103,6 +1156,67 @@ export function ReplyActionBar({
         visible={isToneSheetOpen}
       />
     </View>
+  );
+}
+
+function useActionButtonPressAnimation() {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    return () => scale.stopAnimation();
+  }, [scale]);
+
+  const animateTo = (toValue: number, duration: number) => {
+    scale.stopAnimation();
+    Animated.timing(scale, {
+      duration,
+      easing: Easing.out(Easing.cubic),
+      toValue,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return {
+    onPressIn: () => animateTo(REPLY_CARD_PRESS_SCALE, 80),
+    onPressOut: () => animateTo(1, 140),
+    style: { transform: [{ scale }] },
+  };
+}
+
+function ActionButtonGradientBorder({
+  color,
+  gradientId,
+  width,
+}: {
+  color: string;
+  gradientId: string;
+  width: number;
+}) {
+  return (
+    <Svg
+      height={STICKY_ACTION_BUTTON.height}
+      pointerEvents="none"
+      style={styles.stickyActionButtonGradientBorder}
+      width={width}
+    >
+      <Defs>
+        <LinearGradient id={gradientId} x1="0%" x2="0%" y1="0%" y2="100%">
+          <Stop offset="0%" stopColor={color} />
+          <Stop offset="100%" stopColor={color} stopOpacity="0" />
+        </LinearGradient>
+      </Defs>
+      <Rect
+        fill="none"
+        height={STICKY_ACTION_BUTTON.height - 1}
+        rx={STICKY_ACTION_BUTTON.radius}
+        ry={STICKY_ACTION_BUTTON.radius}
+        stroke={`url(#${gradientId})`}
+        strokeWidth="1"
+        width={width - 1}
+        x="0.5"
+        y="0.5"
+      />
+    </Svg>
   );
 }
 
@@ -1867,56 +1981,138 @@ function ToneBottomSheet({
   selectedTone: ReplyTone;
   visible: boolean;
 }) {
+  const { height: windowHeight } = useWindowDimensions();
+  const [isPresented, setIsPresented] = useState(visible);
+  const isPresentedRef = useRef(visible);
+  const sheetTravelDistanceRef = useRef(windowHeight);
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const sheetTranslateY = useRef(new Animated.Value(windowHeight)).current;
+
+  useEffect(() => {
+    sheetTravelDistanceRef.current = windowHeight;
+  }, [windowHeight]);
+
+  useEffect(() => {
+    let animation: Animated.CompositeAnimation | null = null;
+    let animationFrame: number | null = null;
+    const sheetTravelDistance = sheetTravelDistanceRef.current;
+
+    if (visible) {
+      if (!isPresentedRef.current) {
+        isPresentedRef.current = true;
+        backdropOpacity.setValue(0);
+        sheetTranslateY.setValue(sheetTravelDistance);
+        setIsPresented(true);
+      }
+
+      animationFrame = requestAnimationFrame(() => {
+        animation = Animated.parallel([
+          Animated.timing(backdropOpacity, {
+            duration: TONE_SHEET_ANIMATION.backdropOpenDuration,
+            easing: Easing.out(Easing.quad),
+            toValue: 1,
+            useNativeDriver: true,
+          }),
+          Animated.timing(sheetTranslateY, {
+            duration: TONE_SHEET_ANIMATION.sheetOpenDuration,
+            easing: Easing.out(Easing.cubic),
+            toValue: 0,
+            useNativeDriver: true,
+          }),
+        ]);
+        animation.start();
+      });
+    } else if (isPresentedRef.current) {
+      animation = Animated.parallel([
+        Animated.timing(backdropOpacity, {
+          duration: TONE_SHEET_ANIMATION.backdropCloseDuration,
+          easing: Easing.in(Easing.quad),
+          toValue: 0,
+          useNativeDriver: true,
+        }),
+        Animated.timing(sheetTranslateY, {
+          duration: TONE_SHEET_ANIMATION.sheetCloseDuration,
+          easing: Easing.in(Easing.cubic),
+          toValue: sheetTravelDistance,
+          useNativeDriver: true,
+        }),
+      ]);
+      animation.start(({ finished }) => {
+        if (finished) {
+          isPresentedRef.current = false;
+          setIsPresented(false);
+        }
+      });
+    }
+
+    return () => {
+      if (animationFrame !== null) {
+        cancelAnimationFrame(animationFrame);
+      }
+      animation?.stop();
+    };
+  }, [backdropOpacity, sheetTranslateY, visible]);
+
   return (
     <Modal
-      animationType="slide"
+      animationType="none"
       onRequestClose={onClose}
       transparent
-      visible={visible}
+      visible={isPresented}
     >
-      <Pressable onPress={onClose} style={styles.sheetBackdrop}>
-        <Pressable style={styles.sheetPanel}>
-          <View style={styles.sheetHandle} />
-          <Text style={styles.sheetTitle}>Choose tone</Text>
-          <View style={styles.toneOptions}>
-            {TONE_OPTIONS.map((option) => {
-              const selected = option.value === selectedTone;
-              const ToneIcon = option.icon;
+      <Animated.View
+        pointerEvents={visible ? "auto" : "none"}
+        style={[styles.sheetBackdrop, { opacity: backdropOpacity }]}
+      >
+        <Pressable onPress={onClose} style={styles.sheetBackdropPressTarget}>
+          <Animated.View
+            style={[
+              styles.sheetPanelAnimation,
+              { transform: [{ translateY: sheetTranslateY }] },
+            ]}
+          >
+            <Pressable style={styles.sheetPanel}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle}>Choose tone</Text>
+              <View style={styles.toneOptions}>
+                {TONE_OPTIONS.map((option) => {
+                  const selected = option.value === selectedTone;
 
-              return (
-                <TouchableOpacity
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  key={option.value}
-                  onPress={() => onSelect(option.value)}
-                  style={[
-                    styles.toneOption,
-                    selected && styles.toneOptionSelected,
-                  ]}
-                >
-                  <View style={styles.toneOptionLeft}>
-                    <ToneIcon
-                      color={selected ? COLORS.blue : "#D6D6DB"}
-                      size={20}
-                    />
-                    <Text
+                  return (
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      key={option.value}
+                      onPress={() => onSelect(option.value)}
                       style={[
-                        styles.toneOptionText,
-                        selected && styles.toneOptionTextSelected,
+                        styles.toneOption,
+                        selected && styles.toneOptionSelected,
                       ]}
                     >
-                      {option.label}
-                    </Text>
-                  </View>
-                  {selected ? (
-                    <CheckCircle color={COLORS.blue} size={21} />
-                  ) : null}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                      <View style={styles.toneOptionLeft}>
+                        <Text style={styles.toneOptionEmoji}>
+                          {option.emoji}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.toneOptionText,
+                            selected && styles.toneOptionTextSelected,
+                          ]}
+                        >
+                          {option.label}
+                        </Text>
+                      </View>
+                      {selected ? (
+                        <CheckCircle color={COLORS.blue} size={21} />
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </Pressable>
+          </Animated.View>
         </Pressable>
-      </Pressable>
+      </Animated.View>
     </Modal>
   );
 }
@@ -2666,6 +2862,9 @@ const styles = StyleSheet.create({
   sheetBackdrop: {
     backgroundColor: "rgba(0, 0, 0, 0.58)",
     flex: 1,
+  },
+  sheetBackdropPressTarget: {
+    flex: 1,
     justifyContent: "flex-end",
   },
   sheetHandle: {
@@ -2684,6 +2883,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
   },
+  sheetPanelAnimation: {
+    width: "100%",
+  },
   sheetTitle: {
     color: "#FFFFFF",
     fontFamily: "ClashDisplay",
@@ -2693,41 +2895,58 @@ const styles = StyleSheet.create({
   },
   stickyNewRepliesButton: {
     alignItems: "center",
-    backgroundColor: "#404040",
-    borderColor: REPLY_SURFACE_COLORS.neutral600,
-    borderWidth: 1,
-    borderRadius: 999,
-    flex: 1,
+    backgroundColor: "#3730A3",
+    borderRadius: STICKY_ACTION_BUTTON.radius,
     flexDirection: "row",
-    gap: 6,
-    height: 37,
+    gap: 8,
+    height: STICKY_ACTION_BUTTON.height,
     justifyContent: "center",
+    overflow: "hidden",
+    paddingHorizontal: 12,
+    position: "relative",
+    width: STICKY_ACTION_BUTTON.newReplyWidth,
   },
   stickyNewRepliesButtonText: {
-    color: "#FFFFFF",
+    color: "#E0E7FF",
     fontFamily: "ClashGrotesk",
-    fontSize: 14,
-    fontWeight: "600",
+    fontSize: 16,
+    fontWeight: "500",
+    lineHeight: 20,
   },
   stickyReplyActionBar: {
     alignItems: "center",
+    height: STICKY_ACTION_BUTTON.height,
+    width: "100%",
+  },
+  stickyActionButtonGradientBorder: {
+    left: 0,
+    position: "absolute",
+    top: 0,
   },
   stickyToneEmoji: {
-    fontSize: 18,
-    lineHeight: 18,
+    fontSize: 20,
+    lineHeight: 24,
   },
   stickyToneSelector: {
-    backgroundColor: "transparent",
-    borderColor: "#A3A3A3",
-    height: 37,
-    paddingHorizontal: 8,
-    width: 102,
+    backgroundColor: "#404040",
+    borderColor: "transparent",
+    borderRadius: STICKY_ACTION_BUTTON.radius,
+    borderWidth: 0,
+    gap: 6,
+    height: STICKY_ACTION_BUTTON.height,
+    justifyContent: "flex-start",
+    overflow: "hidden",
+    paddingHorizontal: 12,
+    position: "relative",
+    width: STICKY_ACTION_BUTTON.toneWidth,
   },
   stickyToneSelectorText: {
-    color: "#A3A3A3",
-    fontFamily: "ClashDisplay",
-    fontSize: 14,
-    lineHeight: 17,
+    color: "#D4D4D4",
+    flexShrink: 1,
+    fontFamily: "ClashGrotesk",
+    fontSize: 16,
+    fontWeight: "500",
+    lineHeight: 20,
   },
   toneOption: {
     alignItems: "center",
@@ -2744,6 +2963,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     gap: 12,
+  },
+  toneOptionEmoji: {
+    fontSize: 20,
+    lineHeight: 24,
+    textAlign: "center",
+    width: 24,
   },
   toneOptionSelected: {
     backgroundColor: "#0C1427",
