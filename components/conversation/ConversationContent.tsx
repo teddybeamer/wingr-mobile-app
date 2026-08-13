@@ -298,8 +298,8 @@ const INLINE_VIBE_METRIC_VARIANTS: Record<
 
 const INTEREST_METER_PROGRESS: Record<VibeCheck["interestLevel"], number> = {
   High: 1,
-  Low: 0.35,
-  Medium: 0.7593,
+  Low: 0.2,
+  Medium: 0.5,
   Unclear: 0.5,
 };
 

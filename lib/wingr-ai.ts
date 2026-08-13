@@ -197,21 +197,46 @@ function countMatches(text: string, pattern: RegExp) {
   return text.match(pattern)?.length ?? 0;
 }
 
+const WARM_OR_FLIRTY_EMOJI_PATTERN = /(?:😍|😘|🥰|😉|❤️|💕|💖|💘|🔥|😊|😏|🙈|😌|😇|🤭)/gu;
+const DIRECT_FLIRT_PATTERN =
+  /\b(cute|hot|handsome|pretty|beautiful|sexy|miss you|come over|wish you were here|you'?re funny|you are funny|you'?re sweet|you are sweet|date|kiss|cuddle|flirt|blush)\b/gi;
+const PLAYFUL_TEASE_PATTERN =
+  /\b(you'?re trouble|you are trouble|you wish|bold of you|not a chance|i see how it is|you'?re ridiculous|you are ridiculous|don'?t make me laugh)\b/gi;
+
+function wordCount(text: string) {
+  const normalizedText = normalizeMessageText(text);
+  return normalizedText ? normalizedText.split(' ').length : 0;
+}
+
+function hasWarmOrFlirtyEmoji(text: string) {
+  WARM_OR_FLIRTY_EMOJI_PATTERN.lastIndex = 0;
+  const matches = WARM_OR_FLIRTY_EMOJI_PATTERN.test(text);
+  WARM_OR_FLIRTY_EMOJI_PATTERN.lastIndex = 0;
+  return matches;
+}
+
+function hasDirectFlirt(text: string) {
+  DIRECT_FLIRT_PATTERN.lastIndex = 0;
+  const matches = DIRECT_FLIRT_PATTERN.test(normalizeMessageText(text));
+  DIRECT_FLIRT_PATTERN.lastIndex = 0;
+  return matches;
+}
+
+function hasPlayfulTease(text: string) {
+  PLAYFUL_TEASE_PATTERN.lastIndex = 0;
+  const matches = PLAYFUL_TEASE_PATTERN.test(normalizeMessageText(text));
+  PLAYFUL_TEASE_PATTERN.lastIndex = 0;
+  return matches;
+}
+
 function getIncomingInterestSignals(ocr: OcrResult) {
   const incomingMessages = getIncomingMessages(ocr);
   const incomingText = incomingMessages.map((message) => message.text).join(' ');
   const normalizedIncomingText = normalizeMessageText(incomingText).toLowerCase();
-  const latestIncomingMessage = getLatestIncomingMessage(ocr);
-  const latestIncomingText = normalizeMessageText(latestIncomingMessage?.text ?? '').toLowerCase();
 
-  const positiveEmojiCount = countMatches(
-    incomingText,
-    /(?:😍|😘|🥰|😉|❤️|💕|💖|💘|🔥|😊|😏|😂|🤣|🙈|😌|😇|🤭)/gu,
-  );
-  const flirtyPhraseCount = countMatches(
-    normalizedIncomingText,
-    /\b(cute|hot|handsome|pretty|beautiful|sexy|miss you|come over|wish you were here|you'?re funny|you are funny|you'?re sweet|you are sweet|you'?re trouble|you are trouble|date|kiss|cuddle|flirt|blush|stop it|haha stop|hehe stop)\b/gi,
-  );
+  const warmOrFlirtyEmojiCount = countMatches(incomingText, WARM_OR_FLIRTY_EMOJI_PATTERN);
+  const directFlirtCount = countMatches(normalizedIncomingText, DIRECT_FLIRT_PATTERN);
+  const playfulTeaseCount = countMatches(normalizedIncomingText, PLAYFUL_TEASE_PATTERN);
   const planSignalCount = countMatches(
     normalizedIncomingText,
     /\b(when are you free|when can i see you|when do i see you|let'?s meet|we should meet|come over|drinks?|coffee|dinner|tonight|tomorrow|this weekend|next week|date)\b/gi,
@@ -221,28 +246,32 @@ function getIncomingInterestSignals(ocr: OcrResult) {
     countMatches(incomingText, /!/g) +
     countMatches(normalizedIncomingText, /\b(yess+|yes+|haha+|lol+|lmao+|omg|aw+|aww+)\b/gi);
   const multipleIncomingMessages = incomingMessages.length >= 3;
-  const latestIsWarmShortReply =
-    latestIncomingText.length > 0 &&
-    latestIncomingText.length <= 24 &&
-    (positiveEmojiCount > 0 || flirtyPhraseCount > 0 || enthusiasmCount > 0);
-  const lowEffortSignals = incomingMessages.filter((message) =>
-    /^(ok|okay|k|sure|fine|nice|cool|haha|lol|yeah|yep|no|nah)\.?$/i.test(normalizeMessageText(message.text)),
-  ).length;
+  const lowEffortSignals = incomingMessages.filter((message) => {
+    const text = normalizeMessageText(message.text);
+
+    return (
+      wordCount(text) >= 1 &&
+      wordCount(text) <= 3 &&
+      !/\?/.test(text) &&
+      !hasWarmOrFlirtyEmoji(text) &&
+      !hasDirectFlirt(text) &&
+      !hasPlayfulTease(text)
+    );
+  }).length;
 
   return {
+    directFlirtCount,
     enthusiasmCount,
-    flirtyPhraseCount,
-    latestIsWarmShortReply,
     lowEffortSignals,
     multipleIncomingMessages,
     planSignalCount,
-    positiveEmojiCount,
+    playfulTeaseCount,
     questionBackCount,
+    warmOrFlirtyEmojiCount,
   };
 }
 
 function getProvisionalInterestLevel(ocr: OcrResult): VibeCheck['interestLevel'] {
-  const messageCount = ocr.detectedMessages.length;
   const latestIncomingMessage = getLatestIncomingMessage(ocr);
 
   if (!latestIncomingMessage || (latestIncomingMessage.confidence ?? 0) < 0.45) {
@@ -250,33 +279,22 @@ function getProvisionalInterestLevel(ocr: OcrResult): VibeCheck['interestLevel']
   }
 
   const signals = getIncomingInterestSignals(ocr);
-  const strongSignalCount =
-    (signals.positiveEmojiCount >= 2 ? 1 : 0) +
-    (signals.flirtyPhraseCount > 0 ? 1 : 0) +
+  const supportingHighSignalCount =
     (signals.planSignalCount > 0 ? 1 : 0) +
     (signals.questionBackCount > 0 ? 1 : 0) +
     (signals.enthusiasmCount >= 2 ? 1 : 0) +
-    (signals.latestIsWarmShortReply ? 1 : 0);
-
-  if (strongSignalCount >= 2 || signals.planSignalCount > 0 || signals.flirtyPhraseCount >= 2) {
-    return 'High';
-  }
+    (signals.multipleIncomingMessages ? 1 : 0);
 
   if (
-    messageCount >= 8 &&
-    (latestIncomingMessage.text.length > 35 ||
-      signals.positiveEmojiCount > 0 ||
-      signals.questionBackCount > 0 ||
-      signals.multipleIncomingMessages)
+    signals.directFlirtCount > 0 ||
+    signals.warmOrFlirtyEmojiCount >= 2 ||
+    signals.playfulTeaseCount > 0 ||
+    supportingHighSignalCount >= 2
   ) {
     return 'High';
   }
 
-  if (messageCount >= 6 && latestIncomingMessage.text.length > 18) {
-    return 'Medium';
-  }
-
-  if (signals.lowEffortSignals >= Math.max(2, getIncomingMessages(ocr).length - 1)) {
+  if (signals.lowEffortSignals >= 2) {
     return 'Low';
   }
 

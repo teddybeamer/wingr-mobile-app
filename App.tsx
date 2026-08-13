@@ -18,11 +18,20 @@ import {
   StarsMinimalistic,
 } from "@solar-icons/react-native/Linear";
 import type { Icon as SolarIcon } from "@solar-icons/react-native/lib/index";
-import Svg, { Defs, Ellipse, FeGaussianBlur, Filter } from "react-native-svg";
+import Svg, {
+  Defs,
+  Ellipse,
+  FeGaussianBlur,
+  Filter,
+  LinearGradient,
+  Rect,
+  Stop,
+} from "react-native-svg";
 import {
   ActivityIndicator,
   Alert,
   Image,
+  type LayoutChangeEvent,
   Modal,
   Platform,
   Pressable,
@@ -59,6 +68,7 @@ console.log("[Wingr boot] App module loaded");
 
 const FONTS = {
   display: "ClashDisplay",
+  displayMedium: "ClashDisplayMedium",
   body: "ClashGrotesk",
   bodyRegular: "ClashGroteskRegular",
 };
@@ -82,6 +92,105 @@ const COLORS = {
   indigo700: "#4338CA",
   indigo800: "#3730A3",
 };
+
+// The Figma ellipse is the unblurred source layer. As with the reply-card
+// glows, the oversized SVG gives the Gaussian filter room to render and the
+// card itself is the clipping boundary.
+const LANDING_CARD = {
+  baseline: {
+    contentGap: 16,
+    copyGap: 6,
+    height: 303,
+    padding: 10,
+    width: 328,
+  },
+  narrow: {
+    contentGap: 12,
+    copyGap: 4,
+    padding: 8,
+    widthThreshold: 280,
+  },
+} as const;
+
+const LANDING_CARD_BOTTOM_GLOW = {
+  ellipse: {
+    bottomBelowCard: 20,
+    fill: "#A5B4FC",
+    height: 47,
+    left: -14,
+    opacity: 0.5,
+    width: 353,
+  },
+  filterPadding: 150,
+  stdDeviation: 75,
+} as const;
+
+const LANDING_BUTTON = {
+  borderRadius: 20,
+  height: 45,
+  strokeWidth: 1,
+  width: 308,
+} as const;
+
+const LANDING_BACKGROUND_GLOW = {
+  ellipse: {
+    fill: "#4338CA",
+    heightRatio: 0.84,
+    opacity: 0.32,
+    width: 315,
+    widthRatio: 0.68,
+  },
+  filterPadding: 150,
+  screenOverscan: 54,
+  stdDeviation: 70,
+} as const;
+
+function getLandingCardLayout(cardWidth: number) {
+  const isNarrow = cardWidth < LANDING_CARD.narrow.widthThreshold;
+  const padding = isNarrow
+    ? LANDING_CARD.narrow.padding
+    : LANDING_CARD.baseline.padding;
+  const contentWidth = Math.max(0, cardWidth - padding * 2);
+
+  return {
+    cardGap: isNarrow
+      ? LANDING_CARD.narrow.contentGap
+      : LANDING_CARD.baseline.contentGap,
+    contentGap: isNarrow
+      ? LANDING_CARD.narrow.contentGap
+      : LANDING_CARD.baseline.contentGap,
+    contentWidth,
+    copyGap: isNarrow
+      ? LANDING_CARD.narrow.copyGap
+      : LANDING_CARD.baseline.copyGap,
+    heroHeight:
+      (contentWidth / LANDING_BUTTON.width) * LANDING_CARD.baseline.height,
+    padding,
+  };
+}
+
+function getLandingCardBottomGlowCanvas(cardWidth: number) {
+  const scale = cardWidth / LANDING_CARD.baseline.width;
+  const ellipse = {
+    bottomBelowCard: LANDING_CARD_BOTTOM_GLOW.ellipse.bottomBelowCard * scale,
+    height: LANDING_CARD_BOTTOM_GLOW.ellipse.height * scale,
+    left: LANDING_CARD_BOTTOM_GLOW.ellipse.left * scale,
+    width: LANDING_CARD_BOTTOM_GLOW.ellipse.width * scale,
+  };
+  const filterPadding = LANDING_CARD_BOTTOM_GLOW.filterPadding * scale;
+
+  return {
+    bottom: -ellipse.bottomBelowCard - filterPadding,
+    ellipse,
+    filterPadding,
+    height: ellipse.height + filterPadding * 2,
+    left: ellipse.left - filterPadding,
+    stdDeviation: LANDING_CARD_BOTTOM_GLOW.stdDeviation * scale,
+    width: ellipse.width + filterPadding * 2,
+    x: filterPadding + ellipse.width / 2,
+    y: filterPadding + ellipse.height / 2,
+  };
+}
 
 const REPLIES_SCREEN = {
   actionBarBottomOffset: 40,
@@ -334,6 +443,7 @@ export default function App() {
   } = conversation;
   const [fontsLoaded] = useFonts({
     [FONTS.display]: require("./assets/fonts/ClashDisplay-Variable.ttf"),
+    [FONTS.displayMedium]: require("./assets/fonts/ClashDisplay-Medium.ttf"),
     [FONTS.body]: require("./assets/fonts/ClashGrotesk-Variable.ttf"),
     [FONTS.bodyRegular]: require("./assets/fonts/ClashGrotesk-Regular.ttf"),
   });
@@ -559,51 +669,276 @@ export default function App() {
 }
 
 function LandingScreen({ onContinue }: { onContinue: () => void }) {
+  const { height: viewportHeight, width: viewportWidth } =
+    useWindowDimensions();
+  const contentHeight = Math.min(617, Math.max(442, viewportHeight - 60));
+  const maxCardWidth = Math.min(
+    LANDING_CARD.baseline.width,
+    Math.max(0, viewportWidth - 32),
+  );
+  const [cardSize, setCardSize] = useState({
+    height: 439,
+    width: maxCardWidth,
+  });
+  const cardWidth = Math.min(cardSize.width, maxCardWidth);
+  const layout = getLandingCardLayout(cardWidth);
+
+  const handleCardLayout = ({ nativeEvent }: LayoutChangeEvent) => {
+    const { height, width } = nativeEvent.layout;
+
+    setCardSize((currentSize) =>
+      Math.abs(currentSize.height - height) < 0.5 &&
+      Math.abs(currentSize.width - width) < 0.5
+        ? currentSize
+        : { height, width },
+    );
+  };
+
   return (
-    <View className="flex-1 bg-[#080808] px-4 pt-4">
-      <View className="items-center">
-        <Text className="font-display text-[18px] font-bold leading-[22px] text-[#2563EB]">
-          Wingr
-        </Text>
+    <View style={styles.landingScreen}>
+      <LandingBackgroundGlow />
+
+      <View style={styles.landingHeader}>
+        <Text style={styles.landingLogo}>Wingr</Text>
       </View>
 
-      <View className="mt-9 items-center">
-        <View className="w-full max-w-[360px] overflow-hidden rounded-[20px] bg-[#111111]">
-          <View className="w-full aspect-[328/426] overflow-hidden bg-[#0d0d0d]">
+      <View style={[styles.landingContent, { height: contentHeight }]}>
+        <View
+          onLayout={handleCardLayout}
+          style={[
+            styles.landingCard,
+            { gap: layout.cardGap, padding: layout.padding },
+          ]}
+        >
+          <LandingCardBottomGlow width={cardWidth} />
+          <LandingCardGradientBorder
+            height={cardSize.height}
+            width={cardWidth}
+          />
+
+          <View style={[styles.landingHero, { height: layout.heroHeight }]}>
             <Image
               accessibilityIgnoresInvertColors
-              className="h-full w-full"
-              resizeMode="cover"
-              source={require("./assets/images/landing-screen-image.png")}
+              style={styles.landingHeroBaseImage}
+              resizeMode="stretch"
+              source={require("./assets/images/HomeGraphic.png")}
             />
           </View>
 
-          <View className="gap-3 bg-[#171717] px-5 py-5">
-            <Text className="font-display text-landing-heading font-bold text-white">
-              Get better replies
-            </Text>
-
-            <Text
-              className="font-bodyRegular text-landing-body text-[#A1A1AA]"
-              numberOfLines={2}
-            >
-              Check the energy, interest, and best move before you reply.
-            </Text>
+          <View style={[styles.landingCardContent, { gap: layout.contentGap }]}>
+            <View style={[styles.landingCopy, { gap: layout.copyGap }]}>
+              <Text style={styles.landingTitle}>Get better replies</Text>
+              <Text style={styles.landingBody} numberOfLines={2}>
+                Get the vibe, then get the reply right.
+              </Text>
+            </View>
 
             <Pressable
-              accessibilityLabel="Upload screenshot"
+              accessibilityLabel="Get Replies"
               accessibilityRole="button"
-              className="mt-1 h-12 w-full flex-row items-center justify-center gap-2 rounded-full bg-blue-700 shadow-lg shadow-black/60"
               onPress={onContinue}
+              style={({ pressed }) => [
+                styles.landingButton,
+                { width: layout.contentWidth },
+                pressed && styles.landingButtonPressed,
+              ]}
             >
-              <Text className="font-body text-landing-cta font-semibold text-white">
-                Upload screenshot
-              </Text>
-              <ArrowRight color="#FFFFFF" size={16} />
+              <LandingButtonSurface width={layout.contentWidth} />
+              <View style={styles.landingButtonContent}>
+                <Text style={styles.landingButtonText}>Get Replies</Text>
+                <Text style={styles.landingButtonEmoji}>🚀</Text>
+              </View>
             </Pressable>
           </View>
         </View>
       </View>
+    </View>
+  );
+}
+
+function LandingButtonSurface({ width }: { width: number }) {
+  return (
+    <Svg
+      height={LANDING_BUTTON.height}
+      pointerEvents="none"
+      viewBox={`0 0 ${width} ${LANDING_BUTTON.height}`}
+      width={width}
+    >
+      <Defs>
+        <LinearGradient
+          gradientUnits="userSpaceOnUse"
+          id="landing-button-border-gradient"
+          x1={0}
+          x2={0}
+          y1={0}
+          y2={LANDING_BUTTON.height}
+        >
+          <Stop offset="0%" stopColor="#4338CA" />
+          <Stop offset="100%" stopColor="#4338CA" stopOpacity="0" />
+        </LinearGradient>
+      </Defs>
+      <Rect
+        fill={COLORS.indigo800}
+        height={LANDING_BUTTON.height - LANDING_BUTTON.strokeWidth}
+        rx={LANDING_BUTTON.borderRadius - LANDING_BUTTON.strokeWidth / 2}
+        ry={LANDING_BUTTON.borderRadius - LANDING_BUTTON.strokeWidth / 2}
+        stroke="url(#landing-button-border-gradient)"
+        strokeWidth={LANDING_BUTTON.strokeWidth}
+        width={Math.max(0, width - LANDING_BUTTON.strokeWidth)}
+        x={LANDING_BUTTON.strokeWidth / 2}
+        y={LANDING_BUTTON.strokeWidth / 2}
+      />
+    </Svg>
+  );
+}
+
+function LandingCardGradientBorder({
+  height,
+  width,
+}: {
+  height: number;
+  width: number;
+}) {
+  return (
+    <Svg
+      height={height}
+      pointerEvents="none"
+      style={styles.landingCardGradientBorder}
+      width={width}
+    >
+      <Defs>
+        <LinearGradient
+          gradientUnits="userSpaceOnUse"
+          id="landing-card-border-gradient"
+          x1={0}
+          x2={0}
+          y1={0}
+          y2={height}
+        >
+          <Stop offset="0%" stopColor="#262626" />
+          <Stop offset="100%" stopColor="#262626" stopOpacity="0" />
+        </LinearGradient>
+      </Defs>
+      <Rect
+        fill="none"
+        height={Math.max(0, height - 1)}
+        rx="20"
+        ry="20"
+        stroke="url(#landing-card-border-gradient)"
+        strokeWidth="1"
+        width={Math.max(0, width - 1)}
+        x="0.5"
+        y="0.5"
+      />
+    </Svg>
+  );
+}
+
+function LandingCardBottomGlow({ width }: { width: number }) {
+  const canvas = getLandingCardBottomGlowCanvas(width);
+
+  return (
+    <Svg
+      height={canvas.height}
+      pointerEvents="none"
+      style={[
+        styles.landingCardBottomGlow,
+        {
+          bottom: canvas.bottom,
+          height: canvas.height,
+          left: canvas.left,
+          width: canvas.width,
+        },
+      ]}
+      width={canvas.width}
+    >
+      <Defs>
+        <Filter
+          filterUnits="userSpaceOnUse"
+          height={canvas.height}
+          id="landing-card-bottom-glow"
+          primitiveUnits="userSpaceOnUse"
+          width={canvas.width}
+          x={0}
+          y={0}
+        >
+          <FeGaussianBlur stdDeviation={canvas.stdDeviation} />
+        </Filter>
+      </Defs>
+      <Ellipse
+        cx={canvas.x}
+        cy={canvas.y}
+        fill={LANDING_CARD_BOTTOM_GLOW.ellipse.fill}
+        filter="url(#landing-card-bottom-glow)"
+        opacity={LANDING_CARD_BOTTOM_GLOW.ellipse.opacity}
+        rx={canvas.ellipse.width / 2}
+        ry={canvas.ellipse.height / 2}
+      />
+    </Svg>
+  );
+}
+
+function LandingBackgroundGlow() {
+  const { height: viewportHeight, width: viewportWidth } =
+    useWindowDimensions();
+  const glowHeight =
+    viewportHeight + LANDING_BACKGROUND_GLOW.screenOverscan * 2;
+  const canvasWidth =
+    LANDING_BACKGROUND_GLOW.ellipse.width +
+    LANDING_BACKGROUND_GLOW.filterPadding * 2;
+  const canvasHeight = glowHeight + LANDING_BACKGROUND_GLOW.filterPadding * 2;
+  const ellipseWidth =
+    LANDING_BACKGROUND_GLOW.ellipse.width *
+    LANDING_BACKGROUND_GLOW.ellipse.widthRatio;
+  const ellipseHeight =
+    glowHeight * LANDING_BACKGROUND_GLOW.ellipse.heightRatio;
+
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        styles.landingBackgroundGlow,
+        {
+          height: canvasHeight,
+          left:
+            (viewportWidth - LANDING_BACKGROUND_GLOW.ellipse.width) / 2 -
+            LANDING_BACKGROUND_GLOW.filterPadding,
+          top:
+            -LANDING_BACKGROUND_GLOW.screenOverscan -
+            LANDING_BACKGROUND_GLOW.filterPadding,
+          width: canvasWidth,
+        },
+      ]}
+    >
+      <Svg height={canvasHeight} width={canvasWidth}>
+        <Defs>
+          <Filter
+            filterUnits="userSpaceOnUse"
+            height={canvasHeight}
+            id="landing-background-blur"
+            primitiveUnits="userSpaceOnUse"
+            width={canvasWidth}
+            x={0}
+            y={0}
+          >
+            <FeGaussianBlur
+              stdDeviation={LANDING_BACKGROUND_GLOW.stdDeviation}
+            />
+          </Filter>
+        </Defs>
+        <Ellipse
+          cx={
+            LANDING_BACKGROUND_GLOW.filterPadding +
+            LANDING_BACKGROUND_GLOW.ellipse.width / 2
+          }
+          cy={LANDING_BACKGROUND_GLOW.filterPadding + glowHeight / 2}
+          fill={LANDING_BACKGROUND_GLOW.ellipse.fill}
+          filter="url(#landing-background-blur)"
+          opacity={LANDING_BACKGROUND_GLOW.ellipse.opacity}
+          rx={ellipseWidth / 2}
+          ry={ellipseHeight / 2}
+        />
+      </Svg>
     </View>
   );
 }
@@ -1120,8 +1455,7 @@ function RepliesBackgroundBlur() {
       style={[
         styles.repliesBackgroundBlur,
         {
-          left:
-            (viewportWidth - REPLIES_BACKGROUND_BLUR.ellipse.width) / 2,
+          left: (viewportWidth - REPLIES_BACKGROUND_BLUR.ellipse.width) / 2,
         },
       ]}
     >
@@ -1141,7 +1475,9 @@ function RepliesBackgroundBlur() {
             x={0}
             y={0}
           >
-            <FeGaussianBlur stdDeviation={REPLIES_BACKGROUND_BLUR.stdDeviation} />
+            <FeGaussianBlur
+              stdDeviation={REPLIES_BACKGROUND_BLUR.stdDeviation}
+            />
           </Filter>
         </Defs>
         <Ellipse
@@ -1286,6 +1622,132 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  landingBackgroundGlow: {
+    position: "absolute",
+  },
+  landingBody: {
+    color: "#D4D4D4",
+    fontFamily: FONTS.displayMedium,
+    fontSize: 14,
+    fontWeight: "500",
+    lineHeight: 17,
+    maxWidth: 288,
+  },
+  landingButton: {
+    alignItems: "center",
+    backgroundColor: COLORS.indigo800,
+    borderRadius: LANDING_BUTTON.borderRadius,
+    elevation: 4,
+    flexShrink: 0,
+    height: LANDING_BUTTON.height,
+    justifyContent: "center",
+    maxWidth: "100%",
+    position: "relative",
+    shadowColor: "#000000",
+    shadowOffset: { height: 4, width: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 2,
+    width: LANDING_BUTTON.width,
+  },
+  landingButtonContent: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 6,
+    justifyContent: "center",
+    zIndex: 2,
+  },
+  landingButtonEmoji: {
+    fontSize: 20,
+    lineHeight: 20,
+  },
+  landingButtonPressed: {
+    opacity: 0.86,
+    transform: [{ scale: 0.99 }],
+  },
+  landingButtonText: {
+    color: "#FFFFFF",
+    fontFamily: FONTS.display,
+    fontSize: 20,
+    fontWeight: "600",
+    lineHeight: 25,
+  },
+  landingCard: {
+    backgroundColor: "#171717",
+    borderRadius: 20,
+    maxWidth: 328,
+    overflow: "hidden",
+    position: "relative",
+    shadowColor: "#4338CA",
+    shadowOffset: { height: 7, width: 0 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    width: "100%",
+  },
+  landingCardBottomGlow: {
+    position: "absolute",
+    zIndex: 0,
+  },
+  landingCardContent: {
+    position: "relative",
+    width: "100%",
+    zIndex: 5,
+  },
+  landingCardGradientBorder: {
+    left: 0,
+    position: "absolute",
+    top: 0,
+    zIndex: 4,
+  },
+  landingContent: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    position: "relative",
+    width: "100%",
+  },
+  landingCopy: {
+    paddingHorizontal: 8,
+  },
+  landingHeader: {
+    alignItems: "center",
+    height: 60,
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  landingHero: {
+    backgroundColor: "#0D0D0D",
+    borderRadius: 20,
+    overflow: "hidden",
+    position: "relative",
+    width: "100%",
+    zIndex: 1,
+  },
+  landingHeroBaseImage: {
+    height: "100%",
+    width: "100%",
+  },
+  landingLogo: {
+    color: COLORS.blue,
+    fontFamily: FONTS.display,
+    fontSize: 20,
+    fontWeight: "700",
+    lineHeight: 24,
+  },
+  landingScreen: {
+    alignItems: "center",
+    backgroundColor: COLORS.background,
+    flex: 1,
+    overflow: "hidden",
+    position: "relative",
+  },
+  landingTitle: {
+    color: "#FAFAFA",
+    fontFamily: FONTS.display,
+    fontSize: 18,
+    fontWeight: "600",
+    lineHeight: 22,
   },
   loadingScreen: {
     flex: 1,

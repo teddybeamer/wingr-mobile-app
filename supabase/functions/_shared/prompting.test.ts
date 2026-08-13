@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildVibeCheckPrompt,
   buildRepliesPrompt,
   buildReplyLanguageRepairPrompt,
   createReplyBatchSchema,
   getMockReplies,
 } from './prompting.ts';
-import type { RepliesRequest } from './types.ts';
+import type { RepliesRequest, VibeCheckRequest } from './types.ts';
 
 const request: RepliesRequest = {
   selectedTone: 'playful',
@@ -61,4 +62,17 @@ test('reply prompts and mocks use one reply per selected tone', () => {
   assert.doesNotMatch(replyPrompt, /exactly 2|both suggested replies/);
   assert.match(repairPrompt, /Rewrite exactly one reply in English for each requested tone/);
   assert.equal(getMockReplies('playful').length, 1);
+});
+
+test('vibe-check prompt defines the agreed interest rubric', () => {
+  const request: VibeCheckRequest = {
+    transcriptText: 'ME: Want to hang out?\nTHEM: That sounds fun 😊\nTHEM: See you soon 😉',
+  };
+  const prompt = buildVibeCheckPrompt(request);
+
+  assert.match(prompt, /two or more warm\/flirty emojis used by THEM anywhere/i);
+  assert.match(prompt, /do not need to be adjacent or in one message/i);
+  assert.match(prompt, /playful tease\/joke aimed at ME/i);
+  assert.match(prompt, /standalone "haha" or "lol"/i);
+  assert.match(prompt, /two or more of THEM's replies are 1–3 words/i);
 });
