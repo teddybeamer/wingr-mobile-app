@@ -825,6 +825,73 @@ export function buildParsedConversation(
   };
 }
 
+export function reconstructConversationFromLabeledTranscript(
+  rawText: string,
+  confidence = 0.9,
+): OcrResult {
+  const detectedMessages = rawText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index): DetectedMessage | null => {
+      const match = line.match(/^(ME|YOU|THEM|UNKNOWN)\s*:\s*(.+)$/i);
+
+      if (!match) {
+        return null;
+      }
+
+      const label = match[1].toLowerCase();
+      const text = normalizeText(match[2]);
+
+      if (!text) {
+        return null;
+      }
+
+      const sender: MessageSender =
+        label === "me" || label === "you"
+          ? "me"
+          : label === "them"
+            ? "them"
+            : "unknown";
+      const xPosition: MessageXPosition =
+        sender === "me" ? "right" : sender === "them" ? "left" : "center";
+      const x = sender === "me" ? 100 : sender === "them" ? 0 : 50;
+
+      return {
+        boundingBox: {
+          height: 32,
+          width: 80,
+          x,
+          y: index * 40,
+        },
+        confidence: sender === "unknown" ? 0.35 : confidence,
+        id: `backend-message-${index + 1}`,
+        sender,
+        speaker: getSpeakerFromSender(sender),
+        text,
+        xPosition,
+      };
+    })
+    .filter((message): message is DetectedMessage => message !== null);
+
+  if (detectedMessages.length === 0) {
+    throw new Error(
+      "Web OCR returned text without speaker labels. Use the native development build for this screenshot.",
+    );
+  }
+
+  const parsedConversation = buildParsedConversation(detectedMessages);
+
+  return {
+    confidence: parsedConversation.speakerAttributionConfidence,
+    detectedMessages,
+    parsedConversation,
+    rawText,
+    source: "backend",
+    transcriptText: formatTranscript(parsedConversation.structuredConversation),
+  };
+}
+
 export function needsSpeakerConfirmation(
   parsedConversation: ParsedConversation,
 ) {
@@ -939,23 +1006,68 @@ export async function extractChatTextFromImage(
   }
 
   let recognizedText: RecognizedText;
+  let nativeOcrStage = "module-import";
+
+  if (typeof __DEV__ !== "undefined" && __DEV__) {
+    console.info("[Wingr native OCR] started", {
+      uriScheme: screenshotUri.match(/^([^:]+):/)?.[1] ?? "path",
+    });
+  }
 
   try {
     const { recognizeText } =
       await import("@infinitered/react-native-mlkit-text-recognition");
+
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.info("[Wingr native OCR] module ready");
+    }
+
+    nativeOcrStage = "recognition";
     recognizedText = await recognizeText(screenshotUri);
+
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.info("[Wingr native OCR] recognition ready", {
+        blocks: recognizedText.blocks.length,
+        lines: recognizedText.blocks.reduce(
+          (total, block) => total + block.lines.length,
+          0,
+        ),
+      });
+    }
   } catch (error) {
     const detail =
       error instanceof Error ? error.message : "Unknown OCR error.";
+
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.info("[Wingr native OCR] failed", {
+        message: detail,
+        stage: nativeOcrStage,
+      });
+    }
+
     throw new Error(
       `On-device OCR failed. Make sure you are using an Expo Development Build with Google ML Kit installed. ${detail}`,
     );
+  }
+
+  if (typeof __DEV__ !== "undefined" && __DEV__) {
+    console.info("[Wingr native OCR] reconstructing");
   }
 
   const reconstruction = reconstructConversationFromOcrLines(
     flattenLines(recognizedText),
   );
   const rawText = recognizedText.text?.trim() ?? reconstruction.rawText;
+
+  if (typeof __DEV__ !== "undefined" && __DEV__) {
+    console.info("[Wingr native OCR] reconstruction ready", {
+      detectedMessages: reconstruction.detectedMessages.length,
+      speakerAttributionConfidence:
+        reconstruction.parsedConversation.speakerAttributionConfidence,
+      speakerAttributionResolved:
+        reconstruction.parsedConversation.speakerAttributionResolved,
+    });
+  }
 
   if (!reconstruction.transcriptText.trim()) {
     throw new Error(

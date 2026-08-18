@@ -17,6 +17,32 @@ function getBackendUrl(path: string) {
   return `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+async function getBackendError(response: Response) {
+  const responseText = await response.text();
+
+  try {
+    const payload = JSON.parse(responseText) as { error?: unknown };
+
+    if (typeof payload.error === 'string' && payload.error.trim()) {
+      return payload.error.trim();
+    }
+  } catch {
+    // Fall back to the status-only error below for non-JSON responses.
+  }
+
+  return `Wingr backend request failed with ${response.status}.`;
+}
+
+function logBackendResponse(path: string, response: Response) {
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.info('[Wingr flow] backend response', {
+      ok: response.ok,
+      path,
+      status: response.status,
+    });
+  }
+}
+
 export function hasWingrBackend() {
   return getBackendUrl('/') !== null;
 }
@@ -39,8 +65,10 @@ export async function postJsonToWingrBackend<TResponse>(
     method: 'POST',
   });
 
+  logBackendResponse(path, response);
+
   if (!response.ok) {
-    throw new Error(`Wingr backend request failed with ${response.status}.`);
+    throw new Error(await getBackendError(response));
   }
 
   return response.json() as Promise<TResponse>;
@@ -61,8 +89,10 @@ export async function postFormToWingrBackend<TResponse>(
     method: 'POST',
   });
 
+  logBackendResponse(path, response);
+
   if (!response.ok) {
-    throw new Error(`Wingr backend request failed with ${response.status}.`);
+    throw new Error(await getBackendError(response));
   }
 
   return response.json() as Promise<TResponse>;

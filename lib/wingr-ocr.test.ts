@@ -2,9 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   needsSpeakerConfirmation,
+  reconstructConversationFromLabeledTranscript,
   reconstructConversationFromOcrLines,
   type OcrLineInput,
 } from "./wingr-ocr";
+
+test("reconstructs the backend OCR transcript without changing speaker ownership", () => {
+  const result = reconstructConversationFromLabeledTranscript(
+    ["Them: coffee tomorrow?", "You: sounds good", "THEM: how about ten?"].join(
+      "\n",
+    ),
+  );
+
+  assert.equal(result.source, "backend");
+  assert.equal(result.parsedConversation.speakerAttributionResolved, true);
+  assert.deepEqual(result.parsedConversation.structuredConversation, [
+    { speaker: "them", text: "coffee tomorrow?" },
+    { speaker: "me", text: "sounds good" },
+    { speaker: "them", text: "how about ten?" },
+  ]);
+});
 
 function line(
   text: string,

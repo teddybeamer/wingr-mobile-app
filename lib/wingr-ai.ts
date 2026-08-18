@@ -1,7 +1,14 @@
 import { getContextNotes } from './context-notes';
 import { cleanTranscriptForAi } from './transcript-cleanup';
-import { extractChatTextFromImage } from './wingr-ocr';
-import { hasWingrBackend, postJsonToWingrBackend } from './wingr-api';
+import {
+  extractChatTextFromImage,
+  reconstructConversationFromLabeledTranscript,
+} from './wingr-ocr';
+import {
+  hasWingrBackend,
+  postFormToWingrBackend,
+  postJsonToWingrBackend,
+} from './wingr-api';
 import type {
   AnalyzeScreenshotParams,
   AnalyzeScreenshotResult,
@@ -89,6 +96,12 @@ type BackendAnalyzeResponse = {
 type BackendRepliesResponse = {
   needsSpeakerConfirmation?: boolean;
   replyBatch?: ReplyBatch;
+};
+
+type BackendOcrResponse = {
+  confidence?: number;
+  mode?: 'mock' | 'provider';
+  transcriptText?: string;
 };
 
 type RefineVibeCheckParams = {
@@ -407,12 +420,46 @@ export function normalizeReplyBatch(replyBatch?: ReplyBatch): ReplyBatch {
   };
 }
 
+async function extractScreenshotConversationFromBackend(
+  screenshotUri: string,
+) {
+  const screenshotResponse = await fetch(screenshotUri);
+
+  if (!screenshotResponse.ok) {
+    throw new Error('Wingr could not load the selected screenshot.');
+  }
+
+  const screenshotBlob = await screenshotResponse.blob();
+  const formData = new FormData();
+
+  formData.append('image', screenshotBlob, 'screenshot.png');
+
+  const response = await postFormToWingrBackend<BackendOcrResponse>(
+    '/ocr',
+    formData,
+  );
+  const transcriptText = response.transcriptText?.trim() ?? '';
+
+  if (!transcriptText) {
+    throw new Error('Wingr OCR returned an empty transcript.');
+  }
+
+  return reconstructConversationFromLabeledTranscript(
+    transcriptText,
+    response.confidence,
+  );
+}
+
 export async function extractScreenshotConversation(screenshotUri: string) {
   const startedAt = Date.now();
-  const ocr = await extractChatTextFromImage(screenshotUri);
+  const ocr =
+    typeof document !== 'undefined'
+      ? await extractScreenshotConversationFromBackend(screenshotUri)
+      : await extractChatTextFromImage(screenshotUri);
 
   logTiming('ocr', startedAt, {
     detectedMessages: ocr.detectedMessages.length,
+    source: ocr.source,
     transcriptLength: ocr.transcriptText.length,
   });
 

@@ -37,6 +37,15 @@ function getErrorMessage(error: unknown, fallback: string) {
     : fallback;
 }
 
+function logConversationFlow(
+  stage: string,
+  metadata?: Record<string, unknown>,
+) {
+  if (__DEV__) {
+    console.info(`[Wingr flow] ${stage}`, metadata ?? {});
+  }
+}
+
 export function useConversationFlow({
   speakerPolicy = "confirm",
 }: UseConversationFlowOptions = {}) {
@@ -156,6 +165,7 @@ export function useConversationFlow({
     nextExtraContext = "",
   ) => {
     if (!screenshotUri?.trim()) {
+      logConversationFlow("analysis blocked", { reason: "missing-screenshot" });
       setError({
         kind: "ocr",
         message: "Choose a screenshot before checking the vibe.",
@@ -183,9 +193,17 @@ export function useConversationFlow({
     let failureKind: ConversationFlowError["kind"] = "ocr";
 
     try {
+      logConversationFlow("analysis started");
       const ocr = await extractScreenshotConversation(screenshotUri);
 
+      logConversationFlow("ocr completed", {
+        detectedMessages: ocr.detectedMessages.length,
+        source: ocr.source,
+        transcriptLength: ocr.transcriptText.length,
+      });
+
       if (analysisRequestIdRef.current !== requestId) {
+        logConversationFlow("analysis cancelled", { stage: "after-ocr" });
         return "cancelled" as const;
       }
 
@@ -200,6 +218,7 @@ export function useConversationFlow({
       );
 
       if (attributionUncertain && speakerPolicy === "confirm") {
+        logConversationFlow("speaker confirmation required");
         setChatTranscript(ocr.transcriptText);
         setParsedConversation(ocr.parsedConversation);
         setPendingSpeakerOcr(ocr);
@@ -220,10 +239,14 @@ export function useConversationFlow({
       });
 
       if (analysisRequestIdRef.current !== requestId) {
+        logConversationFlow("analysis cancelled", { stage: "after-vibe" });
         return "cancelled" as const;
       }
 
       applyConversationResult(ocr, completedVibeCheck, attributionUncertain);
+      logConversationFlow("vibe check ready", {
+        bestTone: completedVibeCheck.bestTone,
+      });
       return "ready" as const;
     } catch (analysisError) {
       if (analysisRequestIdRef.current !== requestId) {
@@ -239,6 +262,10 @@ export function useConversationFlow({
             ? "Wingr could not read that screenshot. Try another image."
             : "Wingr could not finish the vibe check. Please try again.",
         ),
+      });
+      logConversationFlow("analysis failed", {
+        kind: failureKind,
+        message: getErrorMessage(analysisError, "Unknown analysis error."),
       });
       return "error" as const;
     }
@@ -329,6 +356,7 @@ export function useConversationFlow({
     setError(null);
 
     try {
+      logConversationFlow("reply generation started", { tone });
       const nextReplyBatch = await generateRepliesForTone(tone, nextContext);
 
       if (replyRequestIdRef.current !== requestId) {
@@ -354,6 +382,7 @@ export function useConversationFlow({
       ]);
       setLastGeneratedReplyId(generatedReply.id);
       setRepliesStatus("ready");
+      logConversationFlow("reply ready", { tone });
       return true;
     } catch (generationError) {
       if (replyRequestIdRef.current !== requestId) {
@@ -364,6 +393,10 @@ export function useConversationFlow({
       setError({
         kind: "replies",
         message: getErrorMessage(generationError, fallbackMessage),
+      });
+      logConversationFlow("reply generation failed", {
+        message: getErrorMessage(generationError, fallbackMessage),
+        tone,
       });
       return false;
     }

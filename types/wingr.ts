@@ -88,7 +88,7 @@ export type OcrResult = {
   detectedMessages: DetectedMessage[];
   parsedConversation: ParsedConversation;
   rawText?: string;
-  source: 'onDevice';
+  source: 'backend' | 'onDevice';
   confidence?: number;
 };
 

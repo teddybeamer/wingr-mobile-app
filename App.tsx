@@ -132,6 +132,11 @@ const LANDING_BUTTON = {
   width: 308,
 } as const;
 
+const UPLOAD_SCREENSHOT_PREVIEW = {
+  inset: 14,
+  screenshotRadius: 16,
+} as const;
+
 const LANDING_BACKGROUND_GLOW = {
   ellipse: {
     fill: "#4338CA",
@@ -580,6 +585,13 @@ export default function App() {
   const handleCheckSelectedScreenshot = async () => {
     cancelQueuedInitialReplyGeneration();
 
+    if (__DEV__) {
+      console.info("[Wingr flow] check vibe pressed", {
+        hasScreenshot: Boolean(selectedScreenshotUri?.trim()),
+        platform: Platform.OS,
+      });
+    }
+
     if (!selectedScreenshotUri) {
       await handlePickScreenshotForUpload();
       return;
@@ -624,6 +636,11 @@ export default function App() {
 
         {screen === "upload" ? (
           <UploadScreenshotScreen
+            errorMessage={
+              error?.kind === "ocr" || error?.kind === "vibe"
+                ? error.message
+                : null
+            }
             onBack={() => setScreen("landing")}
             onChangeScreenshot={handlePickScreenshotForUpload}
             onCheckVibe={handleCheckSelectedScreenshot}
@@ -944,16 +961,68 @@ function LandingBackgroundGlow() {
 }
 
 function UploadScreenshotScreen({
+  errorMessage,
   onBack,
   onChangeScreenshot,
   onCheckVibe,
   selectedScreenshotUri,
 }: {
+  errorMessage?: string | null;
   onBack: () => void;
   onChangeScreenshot: () => void;
   onCheckVibe: () => void;
   selectedScreenshotUri: string | null;
 }) {
+  const { width: viewportWidth } = useWindowDimensions();
+  const maxCardWidth = Math.min(
+    LANDING_CARD.baseline.width,
+    Math.max(0, viewportWidth - 32),
+  );
+  const [cardSize, setCardSize] = useState({
+    height: 487,
+    width: maxCardWidth,
+  });
+  const [previewSize, setPreviewSize] = useState({ height: 0, width: 0 });
+  const [screenshotAspectRatio, setScreenshotAspectRatio] = useState<
+    number | null
+  >(null);
+  const cardWidth = Math.min(cardSize.width, maxCardWidth);
+  const layout = getLandingCardLayout(cardWidth);
+  const previewContentWidth = Math.max(
+    0,
+    previewSize.width - UPLOAD_SCREENSHOT_PREVIEW.inset * 2,
+  );
+  const previewContentHeight = Math.max(
+    0,
+    previewSize.height - UPLOAD_SCREENSHOT_PREVIEW.inset * 2,
+  );
+  const screenshotSize = screenshotAspectRatio
+    ? previewContentWidth / previewContentHeight > screenshotAspectRatio
+      ? {
+          height: previewContentHeight,
+          width: previewContentHeight * screenshotAspectRatio,
+        }
+      : {
+          height: previewContentWidth / screenshotAspectRatio,
+          width: previewContentWidth,
+        }
+    : null;
+
+  useEffect(() => {
+    setScreenshotAspectRatio(null);
+  }, [selectedScreenshotUri]);
+
+  const handleCardLayout = ({ nativeEvent }: LayoutChangeEvent) => {
+    const { height, width } = nativeEvent.layout;
+
+    setCardSize((currentSize) =>
+      Math.abs(currentSize.height - height) < 0.5 &&
+      Math.abs(currentSize.width - width) < 0.5
+        ? currentSize
+        : { height, width },
+    );
+  };
+
   return (
     <View className="flex-1 bg-[#080808] px-4 pt-4">
       <View className="flex-row items-center justify-between">
@@ -967,12 +1036,25 @@ function UploadScreenshotScreen({
       </View>
 
       <View className="mt-9 items-center">
-        <View className="w-full max-w-[360px] rounded-[20px] bg-[#171717] px-5 py-5">
-          <View className="items-center">
+        <View
+          onLayout={handleCardLayout}
+          style={[
+            styles.landingCard,
+            styles.uploadSelectedCard,
+            { gap: layout.cardGap, padding: layout.padding },
+          ]}
+        >
+          <LandingCardBottomGlow width={cardWidth} />
+          <LandingCardGradientBorder
+            height={cardSize.height}
+            width={cardWidth}
+          />
+
+          <View style={styles.uploadSelectedCardContent}>
             <Pressable
               accessibilityLabel="Change Screenshot"
               accessibilityRole="button"
-              className="h-10 flex-row items-center justify-center gap-2 rounded-full border border-white/55 px-5"
+              className="h-10 self-center flex-row items-center justify-center gap-2 rounded-full border border-white/55 px-3"
               onPress={onChangeScreenshot}
             >
               <Refresh color="#FFFFFF" size={17} />
@@ -982,14 +1064,57 @@ function UploadScreenshotScreen({
             </Pressable>
           </View>
 
-          <View className="mt-5 aspect-[288/332] w-full overflow-hidden rounded-[20px] bg-[#101010]">
+          <View
+            className="aspect-[288/332] w-full items-center justify-center overflow-hidden rounded-[20px] bg-[#101010]"
+            onLayout={({ nativeEvent }) => {
+              const { height, width } = nativeEvent.layout;
+
+              setPreviewSize((currentSize) =>
+                Math.abs(currentSize.height - height) < 0.5 &&
+                Math.abs(currentSize.width - width) < 0.5
+                  ? currentSize
+                  : { height, width },
+              );
+            }}
+            style={styles.uploadSelectedCardContent}
+          >
             {selectedScreenshotUri ? (
-              <Image
-                accessibilityIgnoresInvertColors
-                className="h-full w-full"
-                resizeMode="cover"
-                source={{ uri: selectedScreenshotUri }}
-              />
+              <>
+                <Image
+                  accessibilityIgnoresInvertColors
+                  resizeMode="cover"
+                  source={require("./assets/images/uploadedscreenshotgraphic.png")}
+                  style={styles.uploadScreenshotBackground}
+                />
+                <View
+                  style={[
+                    styles.uploadScreenshotMask,
+                    screenshotSize
+                      ? {
+                          height: screenshotSize.height,
+                          width: screenshotSize.width,
+                        }
+                      : styles.uploadScreenshotMaskLoading,
+                  ]}
+                >
+                  <Image
+                    accessibilityIgnoresInvertColors
+                    onLoad={({ nativeEvent }) => {
+                      const { height, width } = nativeEvent.source;
+
+                      if (height > 0 && width > 0) {
+                        setScreenshotAspectRatio(width / height);
+                      }
+                    }}
+                    resizeMode="contain"
+                    source={{ uri: selectedScreenshotUri }}
+                    style={[
+                      styles.uploadScreenshotImage,
+                      !screenshotSize && styles.uploadScreenshotImageLoading,
+                    ]}
+                  />
+                </View>
+              </>
             ) : (
               <View className="h-full w-full items-center justify-center bg-[#101010] px-6">
                 <Text className="text-center font-bodyRegular text-[15px] leading-[20px] text-[#A1A1AA]">
@@ -999,20 +1124,33 @@ function UploadScreenshotScreen({
             )}
           </View>
 
-          <View className="pt-5">
+          <View
+            pointerEvents="box-none"
+            style={[styles.uploadSelectedCardContent, styles.uploadSelectedCta]}
+          >
             <Pressable
               accessibilityLabel="Check the vibe"
               accessibilityRole="button"
-              className="h-12 w-full flex-row items-center justify-center gap-3 rounded-full bg-blue-700 shadow-lg shadow-black/60"
               onPress={onCheckVibe}
+              style={({ pressed }) => [
+                styles.landingButton,
+                { width: layout.contentWidth },
+                pressed && styles.landingButtonPressed,
+              ]}
             >
-              <Text className="font-body text-landing-cta font-semibold text-white">
-                Check the vibe
-              </Text>
-              <ArrowRight color="#FFFFFF" size={18} />
+              <LandingButtonSurface width={layout.contentWidth} />
+              <View style={styles.landingButtonContent}>
+                <Text style={styles.landingButtonText}>Check the vibe</Text>
+                <ArrowRight color="#FFFFFF" size={20} />
+              </View>
             </Pressable>
           </View>
         </View>
+        {errorMessage ? (
+          <Text style={[styles.errorText, styles.uploadFlowError]}>
+            {errorMessage}
+          </Text>
+        ) : null}
       </View>
     </View>
   );
@@ -1797,6 +1935,41 @@ const styles = StyleSheet.create({
   uploadSection: {
     gap: 14,
     marginTop: 14,
+  },
+  uploadSelectedCard: {
+    overflow: "hidden",
+  },
+  uploadSelectedCardContent: {
+    position: "relative",
+    zIndex: 5,
+  },
+  uploadSelectedCta: {
+    zIndex: 5,
+  },
+  uploadFlowError: {
+    marginTop: 12,
+    maxWidth: 328,
+    textAlign: "center",
+  },
+  uploadScreenshotBackground: {
+    ...StyleSheet.absoluteFillObject,
+    height: "100%",
+    width: "100%",
+  },
+  uploadScreenshotImage: {
+    height: "100%",
+    width: "100%",
+  },
+  uploadScreenshotImageLoading: {
+    opacity: 0,
+  },
+  uploadScreenshotMask: {
+    borderRadius: UPLOAD_SCREENSHOT_PREVIEW.screenshotRadius,
+    overflow: "hidden",
+  },
+  uploadScreenshotMaskLoading: {
+    height: "100%",
+    width: "100%",
   },
   sectionTitle: {
     color: COLORS.blue,
