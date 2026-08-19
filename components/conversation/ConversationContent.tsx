@@ -1055,98 +1055,102 @@ export function ReplyActionBar({
         isSticky && styles.stickyReplyActionBar,
       ]}
     >
-      <AnimatedTouchableOpacity
-        activeOpacity={0.88}
-        accessibilityLabel={
-          isGenerating
-            ? "Generating a new reply"
-            : isSticky
-              ? "Get new reply"
-              : "New reply"
-        }
-        accessibilityRole="button"
-        disabled={isGenerating}
-        hitSlop={isSticky ? 4 : undefined}
-        onPress={() => {
-          void refreshReplies();
-        }}
-        onPressIn={isSticky ? newReplyPressAnimation.onPressIn : undefined}
-        onPressOut={isSticky ? newReplyPressAnimation.onPressOut : undefined}
-        style={[
-          isSticky ? styles.stickyNewRepliesButton : styles.newRepliesButton,
-          isGenerating && styles.disabled,
-          isSticky && newReplyPressAnimation.style,
-        ]}
-      >
-        {isSticky ? (
-          <ActionButtonGradientBorder
-            color="#4338CA"
-            gradientId={refreshBorderId}
-            width={STICKY_ACTION_BUTTON.newReplyWidth}
-          />
-        ) : null}
-        {isGenerating ? (
-          <ActivityIndicator color="#E0E7FF" size="small" />
-        ) : (
-          <>
-            {isSticky ? (
-              <Repeat color="#E0E7FF" size={20} />
-            ) : (
-              <Refresh color={COLORS.white} size={16} />
-            )}
-            <Text
-              style={
-                isSticky
-                  ? styles.stickyNewRepliesButtonText
-                  : styles.newRepliesButtonText
-              }
-            >
-              {isSticky ? "Get New Reply" : "New reply"}
-            </Text>
-          </>
-        )}
-      </AnimatedTouchableOpacity>
-      <AnimatedTouchableOpacity
-        activeOpacity={0.88}
-        accessibilityLabel={`Choose reply tone, currently ${getToneLabel(selectedTone)}`}
-        accessibilityRole="button"
-        disabled={isGenerating}
-        hitSlop={isSticky ? 4 : undefined}
-        onPress={() => setIsToneSheetOpen(true)}
-        onPressIn={isSticky ? tonePressAnimation.onPressIn : undefined}
-        onPressOut={isSticky ? tonePressAnimation.onPressOut : undefined}
-        style={[
-          styles.toneSelector,
-          isSticky && styles.stickyToneSelector,
-          isGenerating && styles.disabled,
-          isSticky && tonePressAnimation.style,
-        ]}
-      >
-        {isSticky ? (
-          <ActionButtonGradientBorder
-            color="#525252"
-            gradientId={toneBorderId}
-            width={STICKY_ACTION_BUTTON.toneWidth}
-          />
-        ) : null}
-        {isSticky ? (
-          <Text style={styles.stickyToneEmoji}>
-            {TONE_EMOJIS[selectedTone]}
-          </Text>
-        ) : (
-          <StarsMinimalistic color="#D6D6DB" size={14} />
-        )}
-        <Text
-          numberOfLines={1}
+      <View style={isSticky ? styles.stickyNewRepliesButtonShadow : undefined}>
+        <AnimatedTouchableOpacity
+          activeOpacity={0.88}
+          accessibilityLabel={
+            isGenerating
+              ? "Generating a new reply"
+              : isSticky
+                ? "Get new reply"
+                : "New reply"
+          }
+          accessibilityRole="button"
+          disabled={isGenerating}
+          hitSlop={isSticky ? 4 : undefined}
+          onPress={() => {
+            void refreshReplies();
+          }}
+          onPressIn={isSticky ? newReplyPressAnimation.onPressIn : undefined}
+          onPressOut={isSticky ? newReplyPressAnimation.onPressOut : undefined}
           style={[
-            styles.toneSelectorText,
-            isSticky && styles.stickyToneSelectorText,
+            isSticky ? styles.stickyNewRepliesButton : styles.newRepliesButton,
+            isGenerating && styles.disabled,
+            isSticky && newReplyPressAnimation.style,
           ]}
         >
-          {getToneLabel(selectedTone)}
-        </Text>
-        <AltArrowDown color="#D6D6DB" size={isSticky ? 18 : 16} />
-      </AnimatedTouchableOpacity>
+          {isSticky ? (
+            <ActionButtonGradientBorder
+              color="#4338CA"
+              gradientId={refreshBorderId}
+              width={STICKY_ACTION_BUTTON.newReplyWidth}
+            />
+          ) : null}
+          {isGenerating ? (
+            <ActivityIndicator color="#E0E7FF" size="small" />
+          ) : (
+            <>
+              {isSticky ? (
+                <Repeat color="#E0E7FF" size={20} />
+              ) : (
+                <Refresh color={COLORS.white} size={16} />
+              )}
+              <Text
+                style={
+                  isSticky
+                    ? styles.stickyNewRepliesButtonText
+                    : styles.newRepliesButtonText
+                }
+              >
+                {isSticky ? "Get New Reply" : "New reply"}
+              </Text>
+            </>
+          )}
+        </AnimatedTouchableOpacity>
+      </View>
+      <View style={isSticky ? styles.stickyToneSelectorShadow : undefined}>
+        <AnimatedTouchableOpacity
+          activeOpacity={0.88}
+          accessibilityLabel={`Choose reply tone, currently ${getToneLabel(selectedTone)}`}
+          accessibilityRole="button"
+          disabled={isGenerating}
+          hitSlop={isSticky ? 4 : undefined}
+          onPress={() => setIsToneSheetOpen(true)}
+          onPressIn={isSticky ? tonePressAnimation.onPressIn : undefined}
+          onPressOut={isSticky ? tonePressAnimation.onPressOut : undefined}
+          style={[
+            styles.toneSelector,
+            isSticky && styles.stickyToneSelector,
+            isGenerating && styles.disabled,
+            isSticky && tonePressAnimation.style,
+          ]}
+        >
+          {isSticky ? (
+            <ActionButtonGradientBorder
+              color="#525252"
+              gradientId={toneBorderId}
+              width={STICKY_ACTION_BUTTON.toneWidth}
+            />
+          ) : null}
+          {isSticky ? (
+            <Text style={styles.stickyToneEmoji}>
+              {TONE_EMOJIS[selectedTone]}
+            </Text>
+          ) : (
+            <StarsMinimalistic color="#D6D6DB" size={14} />
+          )}
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.toneSelectorText,
+              isSticky && styles.stickyToneSelectorText,
+            ]}
+          >
+            {getToneLabel(selectedTone)}
+          </Text>
+          <AltArrowDown color="#D6D6DB" size={isSticky ? 18 : 16} />
+        </AnimatedTouchableOpacity>
+      </View>
       <ToneBottomSheet
         onClose={() => setIsToneSheetOpen(false)}
         onSelect={(tone) => {
@@ -2906,6 +2910,18 @@ const styles = StyleSheet.create({
     position: "relative",
     width: STICKY_ACTION_BUTTON.newReplyWidth,
   },
+  stickyNewRepliesButtonShadow: {
+    backgroundColor: "#3730A3",
+    borderRadius: STICKY_ACTION_BUTTON.radius,
+    elevation: 4,
+    height: STICKY_ACTION_BUTTON.height,
+    overflow: "visible",
+    shadowColor: "#000000",
+    shadowOffset: { height: 4, width: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+    width: STICKY_ACTION_BUTTON.newReplyWidth,
+  },
   stickyNewRepliesButtonText: {
     color: "#E0E7FF",
     fontFamily: "ClashGrotesk",
@@ -2938,6 +2954,18 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     paddingHorizontal: 12,
     position: "relative",
+    width: STICKY_ACTION_BUTTON.toneWidth,
+  },
+  stickyToneSelectorShadow: {
+    backgroundColor: "#404040",
+    borderRadius: STICKY_ACTION_BUTTON.radius,
+    elevation: 4,
+    height: STICKY_ACTION_BUTTON.height,
+    overflow: "visible",
+    shadowColor: "#000000",
+    shadowOffset: { height: 4, width: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
     width: STICKY_ACTION_BUTTON.toneWidth,
   },
   stickyToneSelectorText: {
@@ -2999,7 +3027,7 @@ const styles = StyleSheet.create({
     width: 160,
   },
   toneSelectorText: {
-    color: "#D6D6DB",
+    color: "#E5E5E5",
     flexShrink: 1,
     fontFamily: "ClashGroteskRegular",
     fontSize: 13,

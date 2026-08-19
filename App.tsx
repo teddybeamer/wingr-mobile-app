@@ -4,7 +4,15 @@ import { StatusBar } from "expo-status-bar";
 import { BlurView } from "expo-blur";
 import { useFonts } from "expo-font";
 import * as Clipboard from "expo-clipboard";
-import { Component, type ReactNode, useEffect, useRef, useState } from "react";
+import * as Haptics from "expo-haptics";
+import {
+  Component,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   AltArrowDown,
   ArrowRight,
@@ -12,6 +20,7 @@ import {
   CheckCircle,
   ChatRound,
   Copy,
+  GallerySend,
   Heart,
   Refresh,
   ShieldWarning,
@@ -28,8 +37,8 @@ import Svg, {
   Stop,
 } from "react-native-svg";
 import {
-  ActivityIndicator,
   Alert,
+  Animated,
   Image,
   type LayoutChangeEvent,
   Modal,
@@ -132,6 +141,13 @@ const LANDING_BUTTON = {
   width: 308,
 } as const;
 
+const LANDING_BUTTON_SHADOW = {
+  color: "#000000",
+  offsetY: 4,
+  opacity: 0.72,
+  radius: 4,
+} as const;
+
 const UPLOAD_SCREENSHOT_PREVIEW = {
   inset: 14,
   screenshotRadius: 16,
@@ -149,6 +165,12 @@ const LANDING_BACKGROUND_GLOW = {
   screenOverscan: 54,
   stdDeviation: 70,
 } as const;
+
+const REPLY_LOADING_MESSAGES = [
+  "Reading the vibe...",
+  "Okay, we see it...",
+  "Cooking your reply...",
+] as const;
 
 function getLandingCardLayout(cardWidth: number) {
   const isNarrow = cardWidth < LANDING_CARD.narrow.widthThreshold;
@@ -422,11 +444,21 @@ const METRIC_VARIANTS: Record<
 };
 
 export default function App() {
+  const startsOnLanding = __DEV__ && DEV_SKIP_ONBOARDING;
   const [screen, setScreen] = useState<Screen>(
-    __DEV__ && DEV_SKIP_ONBOARDING ? "landing" : "onboarding",
+    startsOnLanding ? "landing" : "onboarding",
   );
   const [showDebugBootScreen, setShowDebugBootScreen] =
     useState(DEBUG_BOOT_PROBE);
+  const landingRevealVersionRef = useRef(startsOnLanding ? 1 : 0);
+  const landingRevealPlayedRef = useRef(startsOnLanding);
+  const [landingRevealToken, setLandingRevealToken] = useState<number | null>(
+    startsOnLanding ? 1 : null,
+  );
+  const uploadRevealVersionRef = useRef(0);
+  const [uploadRevealToken, setUploadRevealToken] = useState<number | null>(
+    null,
+  );
   const initialReplyGenerationIdRef = useRef(0);
   const initialReplyGenerationStartedIdRef = useRef<number | null>(null);
   const [queuedInitialReplyGenerationId, setQueuedInitialReplyGenerationId] =
@@ -579,7 +611,19 @@ export default function App() {
       return;
     }
 
+    uploadRevealVersionRef.current += 1;
+    setUploadRevealToken(uploadRevealVersionRef.current);
     setScreen("upload");
+  };
+
+  const handleEnterLanding = () => {
+    if (!landingRevealPlayedRef.current) {
+      landingRevealPlayedRef.current = true;
+      landingRevealVersionRef.current += 1;
+      setLandingRevealToken(landingRevealVersionRef.current);
+    }
+
+    setScreen("landing");
   };
 
   const handleCheckSelectedScreenshot = async () => {
@@ -627,11 +671,19 @@ export default function App() {
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="light" />
         {screen === "onboarding" ? (
-          <OnboardingFlow onComplete={() => setScreen("landing")} />
+          <OnboardingFlow onComplete={handleEnterLanding} />
         ) : null}
 
         {screen === "landing" ? (
-          <LandingScreen onContinue={handlePickScreenshotForUpload} />
+          <LandingScreen
+            onContinue={handlePickScreenshotForUpload}
+            onRevealStarted={(revealToken) => {
+              setLandingRevealToken((currentToken) =>
+                currentToken === revealToken ? null : currentToken,
+              );
+            }}
+            revealToken={landingRevealToken}
+          />
         ) : null}
 
         {screen === "upload" ? (
@@ -644,12 +696,18 @@ export default function App() {
             onBack={() => setScreen("landing")}
             onChangeScreenshot={handlePickScreenshotForUpload}
             onCheckVibe={handleCheckSelectedScreenshot}
+            onRevealStarted={(revealToken) => {
+              setUploadRevealToken((currentToken) =>
+                currentToken === revealToken ? null : currentToken,
+              );
+            }}
+            revealToken={uploadRevealToken}
             selectedScreenshotUri={selectedScreenshotUri}
           />
         ) : null}
 
         {screen === "analyzing" ? (
-          <AnalyzingScreen selectedScreenshotUri={selectedScreenshotUri} />
+          <AnalyzingScreen />
         ) : null}
 
         {screen === "speakerConfirmation" ? (
@@ -685,7 +743,15 @@ export default function App() {
   );
 }
 
-function LandingScreen({ onContinue }: { onContinue: () => void }) {
+function LandingScreen({
+  onContinue,
+  onRevealStarted,
+  revealToken,
+}: {
+  onContinue: () => void;
+  onRevealStarted: (revealToken: number) => void;
+  revealToken: number | null;
+}) {
   const { height: viewportHeight, width: viewportWidth } =
     useWindowDimensions();
   const contentHeight = Math.min(617, Math.max(442, viewportHeight - 60));
@@ -697,8 +763,139 @@ function LandingScreen({ onContinue }: { onContinue: () => void }) {
     height: 439,
     width: maxCardWidth,
   });
+  const heroOpacity = useRef(new Animated.Value(1)).current;
+  const heroScale = useRef(new Animated.Value(1)).current;
+  const heroTranslateY = useRef(new Animated.Value(0)).current;
+  const copyOpacity = useRef(new Animated.Value(1)).current;
+  const copyTranslateY = useRef(new Animated.Value(0)).current;
+  const ctaOpacity = useRef(new Animated.Value(1)).current;
+  const ctaScale = useRef(new Animated.Value(1)).current;
+  const preparedRevealTokenRef = useRef<number | null>(null);
+  const startedRevealTokenRef = useRef<number | null>(null);
+  const revealAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+  const revealFrameRef = useRef<number | null>(null);
+  const [isCtaInteractive, setIsCtaInteractive] = useState(
+    revealToken === null,
+  );
   const cardWidth = Math.min(cardSize.width, maxCardWidth);
   const layout = getLandingCardLayout(cardWidth);
+
+  useLayoutEffect(() => {
+    if (revealToken === null || preparedRevealTokenRef.current === revealToken) {
+      return;
+    }
+
+    revealAnimationRef.current?.stop();
+    if (revealFrameRef.current !== null) {
+      cancelAnimationFrame(revealFrameRef.current);
+      revealFrameRef.current = null;
+    }
+
+    preparedRevealTokenRef.current = revealToken;
+    heroOpacity.setValue(0);
+    heroScale.setValue(0.9);
+    heroTranslateY.setValue(10);
+    copyOpacity.setValue(0);
+    copyTranslateY.setValue(8);
+    ctaOpacity.setValue(0);
+    ctaScale.setValue(0.94);
+    setIsCtaInteractive(false);
+  }, [
+    copyOpacity,
+    copyTranslateY,
+    ctaOpacity,
+    ctaScale,
+    heroOpacity,
+    heroScale,
+    heroTranslateY,
+    revealToken,
+  ]);
+
+  useEffect(
+    () => () => {
+      revealAnimationRef.current?.stop();
+      if (revealFrameRef.current !== null) {
+        cancelAnimationFrame(revealFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  const startLandingReveal = () => {
+    if (
+      revealToken === null ||
+      preparedRevealTokenRef.current !== revealToken ||
+      startedRevealTokenRef.current === revealToken
+    ) {
+      return;
+    }
+
+    startedRevealTokenRef.current = revealToken;
+    onRevealStarted(revealToken);
+
+    const heroReveal = Animated.parallel([
+      Animated.timing(heroOpacity, {
+        duration: 130,
+        toValue: 1,
+        useNativeDriver: true,
+      }),
+      Animated.spring(heroScale, {
+        friction: 11,
+        tension: 150,
+        toValue: 1,
+        useNativeDriver: true,
+      }),
+      Animated.spring(heroTranslateY, {
+        friction: 11,
+        tension: 150,
+        toValue: 0,
+        useNativeDriver: true,
+      }),
+    ]);
+    const copyReveal = Animated.sequence([
+      Animated.delay(80),
+      Animated.parallel([
+        Animated.timing(copyOpacity, {
+          duration: 120,
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+        Animated.timing(copyTranslateY, {
+          duration: 120,
+          toValue: 0,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]);
+    const ctaReveal = Animated.sequence([
+      Animated.delay(150),
+      Animated.parallel([
+        Animated.timing(ctaOpacity, {
+          duration: 160,
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+        Animated.spring(ctaScale, {
+          friction: 12,
+          tension: 130,
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]);
+
+    const revealAnimation = Animated.parallel([
+      heroReveal,
+      copyReveal,
+      ctaReveal,
+    ]);
+    revealAnimationRef.current = revealAnimation;
+    revealAnimation.start(({ finished }) => {
+      if (finished) {
+        setIsCtaInteractive(true);
+      }
+    });
+  };
 
   const handleCardLayout = ({ nativeEvent }: LayoutChangeEvent) => {
     const { height, width } = nativeEvent.layout;
@@ -724,7 +921,11 @@ function LandingScreen({ onContinue }: { onContinue: () => void }) {
           onLayout={handleCardLayout}
           style={[
             styles.landingCard,
-            { gap: layout.cardGap, padding: layout.padding },
+            {
+              gap: layout.cardGap,
+              padding: layout.padding,
+              paddingBottom: 10,
+            },
           ]}
         >
           <LandingCardBottomGlow width={cardWidth} />
@@ -734,38 +935,84 @@ function LandingScreen({ onContinue }: { onContinue: () => void }) {
           />
 
           <View style={[styles.landingHero, { height: layout.heroHeight }]}>
-            <Image
+            <Animated.Image
               accessibilityIgnoresInvertColors
-              style={styles.landingHeroBaseImage}
+              onError={startLandingReveal}
+              onLoad={() => {
+                if (revealToken !== null) {
+                  revealFrameRef.current = requestAnimationFrame(() => {
+                    revealFrameRef.current = null;
+                    startLandingReveal();
+                  });
+                }
+              }}
               resizeMode="stretch"
               source={require("./assets/images/HomeGraphic.png")}
+              style={[
+                styles.landingHeroBaseImage,
+                {
+                  opacity: heroOpacity,
+                  transform: [
+                    { scale: heroScale },
+                    { translateY: heroTranslateY },
+                  ],
+                },
+              ]}
             />
           </View>
 
           <View style={[styles.landingCardContent, { gap: layout.contentGap }]}>
-            <View style={[styles.landingCopy, { gap: layout.copyGap }]}>
-              <Text style={styles.landingTitle}>Get better replies</Text>
-              <Text style={styles.landingBody} numberOfLines={2}>
-                Get the vibe, then get the reply right.
-              </Text>
-            </View>
-
-            <Pressable
-              accessibilityLabel="Get Replies"
-              accessibilityRole="button"
-              onPress={onContinue}
-              style={({ pressed }) => [
-                styles.landingButton,
-                { width: layout.contentWidth },
-                pressed && styles.landingButtonPressed,
-              ]}
+            <Animated.View
+              style={{
+                opacity: copyOpacity,
+                transform: [{ translateY: copyTranslateY }],
+              }}
             >
-              <LandingButtonSurface width={layout.contentWidth} />
-              <View style={styles.landingButtonContent}>
-                <Text style={styles.landingButtonText}>Get Replies</Text>
-                <Text style={styles.landingButtonEmoji}>🚀</Text>
+              <View style={[styles.landingCopy, { gap: layout.copyGap }]}>
+                <Text style={styles.landingTitle}>Get better replies</Text>
+                <Text style={styles.landingBody} numberOfLines={2}>
+                  Upload a screenshot. We’ll read the vibe.
+                </Text>
               </View>
-            </Pressable>
+            </Animated.View>
+
+            <Animated.View
+              pointerEvents={isCtaInteractive ? "auto" : "none"}
+              style={{
+                opacity: ctaOpacity,
+                transform: [{ scale: ctaScale }],
+              }}
+            >
+              <View
+                style={[
+                  styles.landingButtonShadow,
+                  { width: layout.contentWidth },
+                ]}
+              >
+                <Pressable
+                  accessibilityLabel="Choose Screenshot"
+                  accessibilityRole="button"
+                  onPress={() => {
+                    void Haptics.impactAsync(
+                      Haptics.ImpactFeedbackStyle.Light,
+                    ).catch(() => {});
+                    onContinue();
+                  }}
+                  style={({ pressed }) => [
+                    styles.landingButton,
+                    pressed && styles.landingButtonPressed,
+                  ]}
+                >
+                  <LandingButtonSurface width={layout.contentWidth} />
+                  <View style={styles.landingButtonContent}>
+                    <GallerySend color="#FFFFFF" size={20} />
+                    <Text style={styles.landingButtonText}>
+                      Choose Screenshot
+                    </Text>
+                  </View>
+                </Pressable>
+              </View>
+            </Animated.View>
           </View>
         </View>
       </View>
@@ -965,12 +1212,16 @@ function UploadScreenshotScreen({
   onBack,
   onChangeScreenshot,
   onCheckVibe,
+  onRevealStarted,
+  revealToken,
   selectedScreenshotUri,
 }: {
   errorMessage?: string | null;
   onBack: () => void;
   onChangeScreenshot: () => void;
   onCheckVibe: () => void;
+  onRevealStarted: (revealToken: number) => void;
+  revealToken: number | null;
   selectedScreenshotUri: string | null;
 }) {
   const { width: viewportWidth } = useWindowDimensions();
@@ -982,10 +1233,24 @@ function UploadScreenshotScreen({
     height: 487,
     width: maxCardWidth,
   });
+  const [changeScreenshotButtonSize, setChangeScreenshotButtonSize] =
+    useState({ height: 0, width: 0 });
   const [previewSize, setPreviewSize] = useState({ height: 0, width: 0 });
   const [screenshotAspectRatio, setScreenshotAspectRatio] = useState<
     number | null
   >(null);
+  const screenshotOpacity = useRef(new Animated.Value(1)).current;
+  const screenshotScale = useRef(new Animated.Value(1)).current;
+  const screenshotTranslateY = useRef(new Animated.Value(0)).current;
+  const ctaOpacity = useRef(new Animated.Value(1)).current;
+  const ctaScale = useRef(new Animated.Value(1)).current;
+  const preparedRevealTokenRef = useRef<number | null>(null);
+  const startedRevealTokenRef = useRef<number | null>(null);
+  const revealAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+  const revealFrameRef = useRef<number | null>(null);
+  const [isCtaInteractive, setIsCtaInteractive] = useState(
+    revealToken === null,
+  );
   const cardWidth = Math.min(cardSize.width, maxCardWidth);
   const layout = getLandingCardLayout(cardWidth);
   const previewContentWidth = Math.max(
@@ -1012,6 +1277,100 @@ function UploadScreenshotScreen({
     setScreenshotAspectRatio(null);
   }, [selectedScreenshotUri]);
 
+  useLayoutEffect(() => {
+    if (revealToken === null || preparedRevealTokenRef.current === revealToken) {
+      return;
+    }
+
+    revealAnimationRef.current?.stop();
+    if (revealFrameRef.current !== null) {
+      cancelAnimationFrame(revealFrameRef.current);
+      revealFrameRef.current = null;
+    }
+
+    preparedRevealTokenRef.current = revealToken;
+    screenshotOpacity.setValue(0);
+    screenshotScale.setValue(0.82);
+    screenshotTranslateY.setValue(8);
+    ctaOpacity.setValue(0);
+    ctaScale.setValue(0.92);
+    setIsCtaInteractive(false);
+  }, [
+    ctaOpacity,
+    ctaScale,
+    revealToken,
+    screenshotOpacity,
+    screenshotScale,
+    screenshotTranslateY,
+  ]);
+
+  useEffect(
+    () => () => {
+      revealAnimationRef.current?.stop();
+      if (revealFrameRef.current !== null) {
+        cancelAnimationFrame(revealFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  const startUploadReveal = () => {
+    if (
+      revealToken === null ||
+      preparedRevealTokenRef.current !== revealToken ||
+      startedRevealTokenRef.current === revealToken
+    ) {
+      return;
+    }
+
+    startedRevealTokenRef.current = revealToken;
+    onRevealStarted(revealToken);
+
+    const screenshotLanding = Animated.parallel([
+      Animated.timing(screenshotOpacity, {
+        duration: 130,
+        toValue: 1,
+        useNativeDriver: true,
+      }),
+      Animated.spring(screenshotScale, {
+        friction: 9,
+        tension: 160,
+        toValue: 1,
+        useNativeDriver: true,
+      }),
+      Animated.spring(screenshotTranslateY, {
+        friction: 9,
+        tension: 160,
+        toValue: 0,
+        useNativeDriver: true,
+      }),
+    ]);
+    const ctaReveal = Animated.sequence([
+      Animated.delay(100),
+      Animated.parallel([
+        Animated.timing(ctaOpacity, {
+          duration: 160,
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+        Animated.spring(ctaScale, {
+          friction: 12,
+          tension: 130,
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]);
+
+    const revealAnimation = Animated.parallel([screenshotLanding, ctaReveal]);
+    revealAnimationRef.current = revealAnimation;
+    revealAnimation.start(({ finished }) => {
+      if (finished) {
+        setIsCtaInteractive(true);
+      }
+    });
+  };
+
   const handleCardLayout = ({ nativeEvent }: LayoutChangeEvent) => {
     const { height, width } = nativeEvent.layout;
 
@@ -1024,11 +1383,12 @@ function UploadScreenshotScreen({
   };
 
   return (
-    <View className="flex-1 bg-[#080808] px-4 pt-4">
+    <View className="relative flex-1 overflow-hidden bg-[#080808] px-4 pt-4">
+      <LandingBackgroundGlow />
       <View className="flex-row items-center justify-between">
         <BackButton onPress={onBack} />
 
-        <Text className="font-display text-[18px] font-bold leading-[22px] text-blue-700">
+        <Text style={styles.repliesHeaderTitle}>
           Upload Screenshot
         </Text>
 
@@ -1041,7 +1401,7 @@ function UploadScreenshotScreen({
           style={[
             styles.landingCard,
             styles.uploadSelectedCard,
-            { gap: layout.cardGap, padding: layout.padding },
+            { gap: layout.cardGap, padding: layout.padding, paddingBottom: 10 },
           ]}
         >
           <LandingCardBottomGlow width={cardWidth} />
@@ -1051,17 +1411,34 @@ function UploadScreenshotScreen({
           />
 
           <View style={styles.uploadSelectedCardContent}>
-            <Pressable
-              accessibilityLabel="Change Screenshot"
-              accessibilityRole="button"
-              className="h-10 self-center flex-row items-center justify-center gap-2 rounded-full border border-white/55 px-3"
-              onPress={onChangeScreenshot}
-            >
-              <Refresh color="#FFFFFF" size={17} />
-              <Text className="font-body text-[14px] font-semibold leading-[18px] text-white">
-                Change Screenshot
-              </Text>
-            </Pressable>
+            <View style={styles.changeScreenshotButtonShadow}>
+              <Pressable
+                accessibilityLabel="Change Screenshot"
+                accessibilityRole="button"
+                className="relative self-center flex-row items-center justify-center gap-[9px] px-3"
+                onLayout={({ nativeEvent }) => {
+                  const { height, width } = nativeEvent.layout;
+
+                  setChangeScreenshotButtonSize((currentSize) =>
+                    Math.abs(currentSize.height - height) < 0.5 &&
+                    Math.abs(currentSize.width - width) < 0.5
+                      ? currentSize
+                      : { height, width },
+                  );
+                }}
+                onPress={onChangeScreenshot}
+                style={{ paddingVertical: 10 }}
+              >
+                {changeScreenshotButtonSize.height > 0 &&
+                changeScreenshotButtonSize.width > 0 ? (
+                  <NeutralGradientStroke {...changeScreenshotButtonSize} />
+                ) : null}
+                <Refresh color="#E5E5E5" size={17} />
+                <Text className="font-body text-[14px] font-semibold leading-[18px] text-neutral-200">
+                  Change Screenshot
+                </Text>
+              </Pressable>
+            </View>
           </View>
 
           <View
@@ -1097,7 +1474,7 @@ function UploadScreenshotScreen({
                       : styles.uploadScreenshotMaskLoading,
                   ]}
                 >
-                  <Image
+                  <Animated.Image
                     accessibilityIgnoresInvertColors
                     onLoad={({ nativeEvent }) => {
                       const { height, width } = nativeEvent.source;
@@ -1105,12 +1482,27 @@ function UploadScreenshotScreen({
                       if (height > 0 && width > 0) {
                         setScreenshotAspectRatio(width / height);
                       }
+
+                      if (revealToken !== null) {
+                        revealFrameRef.current = requestAnimationFrame(() => {
+                          revealFrameRef.current = null;
+                          startUploadReveal();
+                        });
+                      }
                     }}
+                    onError={startUploadReveal}
                     resizeMode="contain"
                     source={{ uri: selectedScreenshotUri }}
                     style={[
                       styles.uploadScreenshotImage,
                       !screenshotSize && styles.uploadScreenshotImageLoading,
+                      {
+                        opacity: screenshotOpacity,
+                        transform: [
+                          { scale: screenshotScale },
+                          { translateY: screenshotTranslateY },
+                        ],
+                      },
                     ]}
                   />
                 </View>
@@ -1128,22 +1520,43 @@ function UploadScreenshotScreen({
             pointerEvents="box-none"
             style={[styles.uploadSelectedCardContent, styles.uploadSelectedCta]}
           >
-            <Pressable
-              accessibilityLabel="Check the vibe"
-              accessibilityRole="button"
-              onPress={onCheckVibe}
-              style={({ pressed }) => [
-                styles.landingButton,
-                { width: layout.contentWidth },
-                pressed && styles.landingButtonPressed,
-              ]}
+            <Animated.View
+              pointerEvents={isCtaInteractive ? "auto" : "none"}
+              style={{
+                opacity: ctaOpacity,
+                transform: [{ scale: ctaScale }],
+              }}
             >
-              <LandingButtonSurface width={layout.contentWidth} />
-              <View style={styles.landingButtonContent}>
-                <Text style={styles.landingButtonText}>Check the vibe</Text>
-                <ArrowRight color="#FFFFFF" size={20} />
+              <View
+                style={[
+                  styles.landingButtonShadow,
+                  { width: layout.contentWidth },
+                ]}
+              >
+                <Pressable
+                  accessibilityLabel="Check the vibe"
+                  accessibilityRole="button"
+                  onPress={() => {
+                    void Haptics.impactAsync(
+                      Haptics.ImpactFeedbackStyle.Light,
+                    ).catch(() => {});
+                    onCheckVibe();
+                  }}
+                  style={({ pressed }) => [
+                    styles.landingButton,
+                    pressed && styles.landingButtonPressed,
+                  ]}
+                >
+                  <LandingButtonSurface width={layout.contentWidth} />
+                  <View style={styles.landingButtonContent}>
+                    <Text style={styles.landingButtonText}>
+                      Check the vibe
+                    </Text>
+                    <ArrowRight color="#FFFFFF" size={20} />
+                  </View>
+                </Pressable>
               </View>
-            </Pressable>
+            </Animated.View>
           </View>
         </View>
         {errorMessage ? (
@@ -1156,26 +1569,54 @@ function UploadScreenshotScreen({
   );
 }
 
-function AnalyzingScreen({
-  selectedScreenshotUri,
-}: {
-  selectedScreenshotUri: string | null;
-}) {
+function AnalyzingScreen() {
+  const [messageIndex, setMessageIndex] = useState(0);
+  const [messageLength, setMessageLength] = useState(0);
+  const [messagePhase, setMessagePhase] = useState<
+    "typing" | "holding" | "deleting"
+  >("typing");
+  const currentMessage = REPLY_LOADING_MESSAGES[messageIndex];
+  const visibleMessage = currentMessage.slice(0, messageLength);
+
+  useEffect(() => {
+    let delay = 0;
+    let nextStep: () => void;
+
+    if (messagePhase === "typing") {
+      if (messageLength < currentMessage.length) {
+        delay = 32;
+        nextStep = () => setMessageLength((length) => length + 1);
+      } else {
+        delay = 850;
+        nextStep = () => setMessagePhase("holding");
+      }
+    } else if (messagePhase === "holding") {
+      delay = 0;
+      nextStep = () => setMessagePhase("deleting");
+    } else if (messageLength > 0) {
+      delay = 20;
+      nextStep = () => setMessageLength((length) => length - 1);
+    } else {
+      delay = 0;
+      nextStep = () => {
+        setMessageIndex(
+          (index) => (index + 1) % REPLY_LOADING_MESSAGES.length,
+        );
+        setMessagePhase("typing");
+      };
+    }
+
+    const timer = setTimeout(nextStep, delay);
+    return () => clearTimeout(timer);
+  }, [currentMessage.length, messageIndex, messageLength, messagePhase]);
+
   return (
-    <View style={[styles.screen, styles.analyzingScreen]}>
-      <Text style={styles.vibeHeaderTitle}>Reading chat</Text>
-      {selectedScreenshotUri ? (
-        <Image
-          resizeMode="cover"
-          source={{ uri: selectedScreenshotUri }}
-          style={styles.analyzingImage}
-        />
-      ) : null}
-      <ActivityIndicator color={COLORS.blue} size="large" />
-      <Text style={styles.analyzingTitle}>Extracting the conversation...</Text>
-      <Text style={styles.analyzingText}>
-        Wingr is reading the screenshot and checking the vibe.
-      </Text>
+    <View style={styles.replyLoadingScreen}>
+      <View style={styles.replyLoadingContent}>
+        <View style={styles.replyLoadingMessageSlot}>
+          <Text style={styles.replyLoadingMessage}>{visibleMessage}</Text>
+        </View>
+      </View>
     </View>
   );
 }
@@ -1193,7 +1634,7 @@ function SpeakerConfirmationScreen({
     <View style={[styles.screen, styles.speakerConfirmationScreen]}>
       <View style={styles.vibeHeader}>
         <BackButton accessibilityLabel="Go back to upload" onPress={onBack} />
-        <Text style={styles.vibeHeaderTitle}>Quick check</Text>
+        <Text style={styles.repliesHeaderTitle}>Quick check</Text>
         <View style={styles.backButton} />
       </View>
 
@@ -1247,6 +1688,48 @@ function SpeakerConfirmationScreen({
         </View>
       </View>
     </View>
+  );
+}
+
+function NeutralGradientStroke({
+  height,
+  width,
+}: {
+  height: number;
+  width: number;
+}) {
+  return (
+    <Svg
+      height={height}
+      pointerEvents="none"
+      style={styles.changeScreenshotGradientStroke}
+      viewBox={`0 0 ${width} ${height}`}
+      width={width}
+    >
+      <Defs>
+        <LinearGradient
+          id="change-screenshot-border-gradient"
+          x1="0%"
+          x2="0%"
+          y1="0%"
+          y2="100%"
+        >
+          <Stop offset="0%" stopColor="#525252" />
+          <Stop offset="100%" stopColor="#525252" stopOpacity="0" />
+        </LinearGradient>
+      </Defs>
+      <Rect
+        fill="#404040"
+        height={height - 1}
+        rx={(height - 1) / 2}
+        ry={(height - 1) / 2}
+        stroke="url(#change-screenshot-border-gradient)"
+        strokeWidth="1"
+        width={width - 1}
+        x={0.5}
+        y={0.5}
+      />
+    </Svg>
   );
 }
 
@@ -1757,6 +2240,22 @@ function ToneBottomSheet({
 }
 
 const styles = StyleSheet.create({
+  changeScreenshotButtonShadow: {
+    alignSelf: "center",
+    backgroundColor: "#404040",
+    borderRadius: 999,
+    elevation: 4,
+    overflow: "visible",
+    shadowColor: "#000000",
+    shadowOffset: { height: 4, width: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+  },
+  changeScreenshotGradientStroke: {
+    left: 0,
+    position: "absolute",
+    top: 0,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: COLORS.background,
@@ -1776,16 +2275,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: COLORS.indigo800,
     borderRadius: LANDING_BUTTON.borderRadius,
-    elevation: 4,
+    flex: 1,
+    justifyContent: "center",
+    overflow: "hidden",
+    position: "relative",
+    width: "100%",
+  },
+  landingButtonShadow: {
+    backgroundColor: COLORS.indigo800,
+    borderRadius: LANDING_BUTTON.borderRadius,
+    elevation: 8,
     flexShrink: 0,
     height: LANDING_BUTTON.height,
-    justifyContent: "center",
     maxWidth: "100%",
-    position: "relative",
-    shadowColor: "#000000",
-    shadowOffset: { height: 4, width: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 2,
+    overflow: "visible",
+    shadowColor: LANDING_BUTTON_SHADOW.color,
+    shadowOffset: { height: LANDING_BUTTON_SHADOW.offsetY, width: 0 },
+    shadowOpacity: LANDING_BUTTON_SHADOW.opacity,
+    shadowRadius: LANDING_BUTTON_SHADOW.radius,
     width: LANDING_BUTTON.width,
   },
   landingButtonContent: {
@@ -1795,10 +2302,6 @@ const styles = StyleSheet.create({
     gap: 6,
     justifyContent: "center",
     zIndex: 2,
-  },
-  landingButtonEmoji: {
-    fontSize: 20,
-    lineHeight: 20,
   },
   landingButtonPressed: {
     opacity: 0.86,
@@ -2047,34 +2550,33 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
   },
-  analyzingScreen: {
+  replyLoadingContent: {
     alignItems: "center",
-    gap: 18,
+    flex: 1,
+    paddingHorizontal: 16,
     justifyContent: "center",
-    paddingBottom: 48,
+    position: "relative",
+    zIndex: 1,
   },
-  analyzingImage: {
-    backgroundColor: "#24242A",
-    borderRadius: 20,
-    height: 260,
-    opacity: 0.68,
-    width: 180,
-  },
-  analyzingTitle: {
-    color: COLORS.white,
+  replyLoadingMessage: {
+    color: "#FAFAFA",
     fontFamily: FONTS.display,
     fontSize: 24,
-    fontWeight: "700",
-    lineHeight: 30,
+    fontWeight: "600",
+    lineHeight: 29,
     textAlign: "center",
   },
-  analyzingText: {
-    color: COLORS.muted,
-    fontFamily: FONTS.bodyRegular,
-    fontSize: 16,
-    lineHeight: 22,
-    maxWidth: 280,
-    textAlign: "center",
+  replyLoadingMessageSlot: {
+    alignItems: "center",
+    height: 29,
+    justifyContent: "center",
+    width: 300,
+  },
+  replyLoadingScreen: {
+    backgroundColor: COLORS.background,
+    flex: 1,
+    overflow: "hidden",
+    position: "relative",
   },
   speakerConfirmationScreen: {
     paddingHorizontal: 16,
@@ -2148,14 +2650,6 @@ const styles = StyleSheet.create({
     height: 36,
     justifyContent: "center",
     width: 36,
-  },
-  vibeHeaderTitle: {
-    color: COLORS.blue,
-    fontFamily: FONTS.display,
-    fontSize: 22,
-    fontWeight: "700",
-    lineHeight: 28,
-    textAlign: "center",
   },
   vibeCard: {
     backgroundColor: COLORS.panelRaised,
@@ -2362,7 +2856,7 @@ const styles = StyleSheet.create({
     width: 190,
   },
   toneSelectorText: {
-    color: "#D6D6DB",
+    color: "#E5E5E5",
     fontFamily: FONTS.bodyRegular,
     fontSize: 13,
     lineHeight: 17,
