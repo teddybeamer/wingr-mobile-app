@@ -8,12 +8,15 @@ import { SelectionCard } from "../components/SelectionCard";
 import type { OnboardingScreenProps } from "../types/onboarding";
 
 type OnboardingScreenScaffoldProps = OnboardingScreenProps & {
+  bottomContent?: ReactNode;
   children?: ReactNode;
+  middleContentScrollable?: boolean;
 };
 
 export function OnboardingScreenScaffold({
   canGoBack,
   canContinue,
+  bottomContent,
   children,
   content,
   ctaDisabled,
@@ -21,6 +24,7 @@ export function OnboardingScreenScaffold({
   ctaLoading,
   currentIndex,
   isLastStep,
+  middleContentScrollable = false,
   onBack,
   onComplete,
   onNext,
@@ -64,7 +68,7 @@ export function OnboardingScreenScaffold({
         </View>
       </View>
 
-      <ResponsiveMiddleContent>
+      <ResponsiveMiddleContent scrollable={middleContentScrollable}>
         {content.chatMessages ? (
           <ExampleChatCard messages={content.chatMessages} />
         ) : null}
@@ -95,12 +99,14 @@ export function OnboardingScreenScaffold({
       </ResponsiveMiddleContent>
 
       <View style={styles.bottomSection}>
-        <CTAButton
-          disabled={ctaDisabled ?? !canContinue}
-          label={ctaLabel ?? content.ctaLabel ?? "Next"}
-          loading={ctaLoading}
-          onPress={primaryAction}
-        />
+        {bottomContent ?? (
+          <CTAButton
+            disabled={ctaDisabled ?? !canContinue}
+            label={ctaLabel ?? content.ctaLabel ?? "Next"}
+            loading={ctaLoading}
+            onPress={primaryAction}
+          />
+        )}
       </View>
     </View>
   );

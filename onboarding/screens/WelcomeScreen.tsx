@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { CTAButton } from '../components/CTAButton';
 import type { OnboardingScreenProps } from '../types/onboarding';
@@ -7,6 +8,11 @@ export function WelcomeScreen({ content, onNext }: OnboardingScreenProps) {
     hasBody: Boolean(content.body),
     hasTitle: Boolean(content.title),
   });
+
+  const handleGetStarted = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    onNext();
+  };
 
   return (
     <View style={styles.screen}>
@@ -39,25 +45,19 @@ export function WelcomeScreen({ content, onNext }: OnboardingScreenProps) {
       </View>
 
       <View style={styles.bottomSection}>
-        <CTAButton label={content.ctaLabel ?? 'Get Started'} onPress={onNext} />
-        <Text style={styles.body}>{content.body}</Text>
+        <CTAButton
+          label={content.ctaLabel ?? 'Get Started'}
+          onPress={handleGetStarted}
+          variant="indigo"
+        />
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  body: {
-    color: '#FFFFFF',
-    fontFamily: 'ClashGroteskRegular',
-    fontSize: 15,
-    lineHeight: 19,
-    marginTop: 20,
-    textAlign: 'center',
-  },
   bottomSection: {
-    height: 158,
-    justifyContent: 'center',
+    paddingBottom: 22,
   },
   copy: {
     marginTop: 34,
@@ -100,7 +100,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   topSection: {
-    height: 220,
     paddingTop: 34,
   },
 });

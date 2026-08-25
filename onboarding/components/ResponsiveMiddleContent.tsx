@@ -1,5 +1,10 @@
 import { type ReactNode, useState } from 'react';
-import { type LayoutChangeEvent, StyleSheet, View } from 'react-native';
+import {
+  type LayoutChangeEvent,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 
 type Size = {
   height: number;
@@ -8,6 +13,7 @@ type Size = {
 
 type ResponsiveMiddleContentProps = {
   children: ReactNode;
+  scrollable?: boolean;
 };
 
 const MIN_VERTICAL_GAP = 16;
@@ -16,7 +22,10 @@ function sizesMatch(current: Size, next: Size) {
   return current.height === next.height && current.width === next.width;
 }
 
-export function ResponsiveMiddleContent({ children }: ResponsiveMiddleContentProps) {
+export function ResponsiveMiddleContent({
+  children,
+  scrollable = false,
+}: ResponsiveMiddleContentProps) {
   const [viewportSize, setViewportSize] = useState<Size>({ height: 0, width: 0 });
   const [contentSize, setContentSize] = useState<Size>({ height: 0, width: 0 });
 
@@ -48,6 +57,20 @@ export function ResponsiveMiddleContent({ children }: ResponsiveMiddleContentPro
       }
     };
 
+  if (scrollable) {
+    return (
+      <ScrollView
+        bounces={false}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        style={styles.scrollViewport}
+      >
+        <View style={styles.content}>{children}</View>
+      </ScrollView>
+    );
+  }
+
   return (
     <View
       onLayout={updateSize(setViewportSize, viewportSize)}
@@ -67,6 +90,17 @@ const styles = StyleSheet.create({
   content: {
     alignItems: 'stretch',
     gap: 22,
+    width: '100%',
+  },
+  scrollContent: {
+    alignItems: 'stretch',
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingVertical: MIN_VERTICAL_GAP,
+  },
+  scrollViewport: {
+    flex: 1,
+    minHeight: 0,
     width: '100%',
   },
   viewport: {

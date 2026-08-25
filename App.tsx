@@ -69,9 +69,9 @@ import {
   RepliesContent,
   VibeCheckCard,
 } from "./components/conversation/ConversationContent";
+import { ReplyLoadingScreen } from "./components/conversation/ReplyLoadingScreen";
 
-const DEBUG_BOOT_PROBE = true;
-const DEV_SKIP_ONBOARDING = true;
+const DEBUG_BOOT_PROBE = false;
 
 console.log("[Wingr boot] App module loaded");
 
@@ -165,12 +165,6 @@ const LANDING_BACKGROUND_GLOW = {
   screenOverscan: 54,
   stdDeviation: 70,
 } as const;
-
-const REPLY_LOADING_MESSAGES = [
-  "Reading the vibe...",
-  "Okay, we see it...",
-  "Cooking your reply...",
-] as const;
 
 function getLandingCardLayout(cardWidth: number) {
   const isNarrow = cardWidth < LANDING_CARD.narrow.widthThreshold;
@@ -444,16 +438,13 @@ const METRIC_VARIANTS: Record<
 };
 
 export default function App() {
-  const startsOnLanding = __DEV__ && DEV_SKIP_ONBOARDING;
-  const [screen, setScreen] = useState<Screen>(
-    startsOnLanding ? "landing" : "onboarding",
-  );
+  const [screen, setScreen] = useState<Screen>("onboarding");
   const [showDebugBootScreen, setShowDebugBootScreen] =
     useState(DEBUG_BOOT_PROBE);
-  const landingRevealVersionRef = useRef(startsOnLanding ? 1 : 0);
-  const landingRevealPlayedRef = useRef(startsOnLanding);
+  const landingRevealVersionRef = useRef(0);
+  const landingRevealPlayedRef = useRef(false);
   const [landingRevealToken, setLandingRevealToken] = useState<number | null>(
-    startsOnLanding ? 1 : null,
+    null,
   );
   const uploadRevealVersionRef = useRef(0);
   const [uploadRevealToken, setUploadRevealToken] = useState<number | null>(
@@ -707,7 +698,7 @@ export default function App() {
         ) : null}
 
         {screen === "analyzing" ? (
-          <AnalyzingScreen />
+          <ReplyLoadingScreen />
         ) : null}
 
         {screen === "speakerConfirmation" ? (
@@ -1564,58 +1555,6 @@ function UploadScreenshotScreen({
             {errorMessage}
           </Text>
         ) : null}
-      </View>
-    </View>
-  );
-}
-
-function AnalyzingScreen() {
-  const [messageIndex, setMessageIndex] = useState(0);
-  const [messageLength, setMessageLength] = useState(0);
-  const [messagePhase, setMessagePhase] = useState<
-    "typing" | "holding" | "deleting"
-  >("typing");
-  const currentMessage = REPLY_LOADING_MESSAGES[messageIndex];
-  const visibleMessage = currentMessage.slice(0, messageLength);
-
-  useEffect(() => {
-    let delay = 0;
-    let nextStep: () => void;
-
-    if (messagePhase === "typing") {
-      if (messageLength < currentMessage.length) {
-        delay = 32;
-        nextStep = () => setMessageLength((length) => length + 1);
-      } else {
-        delay = 850;
-        nextStep = () => setMessagePhase("holding");
-      }
-    } else if (messagePhase === "holding") {
-      delay = 0;
-      nextStep = () => setMessagePhase("deleting");
-    } else if (messageLength > 0) {
-      delay = 20;
-      nextStep = () => setMessageLength((length) => length - 1);
-    } else {
-      delay = 0;
-      nextStep = () => {
-        setMessageIndex(
-          (index) => (index + 1) % REPLY_LOADING_MESSAGES.length,
-        );
-        setMessagePhase("typing");
-      };
-    }
-
-    const timer = setTimeout(nextStep, delay);
-    return () => clearTimeout(timer);
-  }, [currentMessage.length, messageIndex, messageLength, messagePhase]);
-
-  return (
-    <View style={styles.replyLoadingScreen}>
-      <View style={styles.replyLoadingContent}>
-        <View style={styles.replyLoadingMessageSlot}>
-          <Text style={styles.replyLoadingMessage}>{visibleMessage}</Text>
-        </View>
       </View>
     </View>
   );
@@ -2549,34 +2488,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.42)",
     flex: 1,
     justifyContent: "center",
-  },
-  replyLoadingContent: {
-    alignItems: "center",
-    flex: 1,
-    paddingHorizontal: 16,
-    justifyContent: "center",
-    position: "relative",
-    zIndex: 1,
-  },
-  replyLoadingMessage: {
-    color: "#FAFAFA",
-    fontFamily: FONTS.display,
-    fontSize: 24,
-    fontWeight: "600",
-    lineHeight: 29,
-    textAlign: "center",
-  },
-  replyLoadingMessageSlot: {
-    alignItems: "center",
-    height: 29,
-    justifyContent: "center",
-    width: 300,
-  },
-  replyLoadingScreen: {
-    backgroundColor: COLORS.background,
-    flex: 1,
-    overflow: "hidden",
-    position: "relative",
   },
   speakerConfirmationScreen: {
     paddingHorizontal: 16,

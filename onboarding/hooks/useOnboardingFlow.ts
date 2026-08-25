@@ -20,8 +20,8 @@ export function useOnboardingFlow(onComplete: () => void) {
       goBack: () => {
         setCurrentIndex((index) => Math.max(index - 1, 0));
       },
-      goNext: () => {
-        if (!canContinue) {
+      goNext: (force = false) => {
+        if (!force && !canContinue) {
           return;
         }
 

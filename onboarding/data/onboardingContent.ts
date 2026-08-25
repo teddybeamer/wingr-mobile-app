@@ -88,10 +88,9 @@ export const onboardingContent: Record<
   },
   vibecheck: {
     id: "vibecheck",
-    title: "Checking the vibe",
-    titleParts: [{ text: "Checking " }, { color: "blue", text: "the vibe" }],
-    body: "Reading the chat so you don’t have to overthink it.",
-    ctaLabel: "Get replies",
+    title: "Your reply",
+    body: "Check the vibe, then tap the reply to copy it.",
+    ctaLabel: "Next",
   },
   replies: {
     id: "replies",

@@ -59,10 +59,16 @@ export type OnboardingScreenProps = {
   ctaDisabled?: boolean;
   ctaLabel?: string;
   ctaLoading?: boolean;
+  analysisFailureCount?: number;
   onBack: () => void;
   onComplete: () => void;
   onNext: () => void;
   onPrimaryAction?: () => void | Promise<void>;
+  onReplacementScreenshotSelected?: (
+    screenshotUri: string,
+  ) => void | Promise<void>;
+  onRetryScreenshotAnalysis?: () => void | Promise<void>;
+  onScreenshotSelected?: (screenshotUri: string) => void | Promise<void>;
   onSelectChoice: (choiceId: string) => void;
   onSkip: () => void;
   selectedChoiceId?: string;

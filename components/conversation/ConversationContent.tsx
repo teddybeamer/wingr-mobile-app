@@ -427,32 +427,6 @@ export function ScreenshotPickerContent({
   );
 }
 
-export function AnalyzingContent({
-  selectedScreenshotUri,
-}: {
-  selectedScreenshotUri?: string | null;
-}) {
-  const hasImage = Boolean(selectedScreenshotUri?.trim());
-
-  return (
-    <View style={styles.analyzingContent}>
-      {hasImage ? (
-        <Image
-          accessibilityIgnoresInvertColors
-          resizeMode="cover"
-          source={{ uri: selectedScreenshotUri ?? "" }}
-          style={styles.analyzingImage}
-        />
-      ) : null}
-      <ActivityIndicator color={COLORS.blue} size="large" />
-      <Text style={styles.analyzingTitle}>Extracting the conversation...</Text>
-      <Text style={styles.analyzingText}>
-        Wingr is reading the screenshot and checking the vibe.
-      </Text>
-    </View>
-  );
-}
-
 export function InlineErrorCard({
   message,
   onPrimaryAction,
@@ -2122,34 +2096,6 @@ function ToneBottomSheet({
 }
 
 const styles = StyleSheet.create({
-  analyzingContent: {
-    alignItems: "center",
-    gap: 14,
-    justifyContent: "center",
-  },
-  analyzingImage: {
-    backgroundColor: "#24242A",
-    borderRadius: 18,
-    height: 220,
-    opacity: 0.68,
-    width: 154,
-  },
-  analyzingText: {
-    color: COLORS.muted,
-    fontFamily: "ClashGroteskRegular",
-    fontSize: 15,
-    lineHeight: 20,
-    maxWidth: 280,
-    textAlign: "center",
-  },
-  analyzingTitle: {
-    color: COLORS.white,
-    fontFamily: "ClashDisplay",
-    fontSize: 22,
-    fontWeight: "700",
-    lineHeight: 28,
-    textAlign: "center",
-  },
   copyButton: {
     alignItems: "center",
     backgroundColor: COLORS.blue,
@@ -2353,7 +2299,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   inlineVibeTitle: {
-    color: "#E0E7FF",
+    color: COLORS.white,
     flex: 1,
     fontFamily: "ClashDisplay",
     fontSize: 18,

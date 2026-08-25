@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useConversationFlow } from "../hooks/useConversationFlow";
 import { ChangeScreen } from "./screens/ChangeScreen";
 import { PaywallScreen } from "./screens/PaywallScreen";
@@ -41,8 +41,12 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const conversation = useConversationFlow({
     speakerPolicy: "continueWithoutAttribution",
   });
+  const [analysisFailureCount, setAnalysisFailureCount] = useState(0);
+  const generatedReplyForScreenshotUriRef = useRef<string | null>(null);
   const completeOnboarding = useCallback(() => {
     conversation.reset();
+    setAnalysisFailureCount(0);
+    generatedReplyForScreenshotUriRef.current = null;
     onComplete();
   }, [conversation, onComplete]);
   const {
@@ -61,16 +65,58 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const ScreenComponent = screenMap[currentStep.id];
   const isUploadStep = currentStep.id === "uploadScreenshot";
   const isVibeStep = currentStep.id === "vibecheck";
-  const isRepliesStep = currentStep.id === "replies";
   const stepCanContinue = isUploadStep
     ? Boolean(conversation.selectedScreenshotUri)
     : isVibeStep
-      ? conversation.analysisStatus === "ready" &&
-        Boolean(conversation.vibeCheck)
-      : isRepliesStep
-        ? conversation.generatedReplies.length > 0
-        : canContinue;
-  const ctaLoading = isVibeStep && conversation.repliesStatus === "generating";
+      ? analysisFailureCount >= 3 ||
+        (conversation.analysisStatus === "ready" &&
+          conversation.repliesStatus === "ready" &&
+          conversation.generatedReplies.length > 0)
+      : canContinue;
+  const ctaLoading =
+    isVibeStep &&
+    (conversation.analysisStatus === "analyzing" ||
+      conversation.repliesStatus === "generating");
+
+  const analyzeScreenshotForOnboarding = useCallback(
+    async (screenshotUri?: string) => {
+      const result = await conversation.analyzeScreenshot(screenshotUri);
+
+      if (result === "error") {
+        setAnalysisFailureCount((count) => count + 1);
+      } else if (result === "ready") {
+        setAnalysisFailureCount(0);
+      }
+
+      return result;
+    },
+    [conversation],
+  );
+
+  useEffect(() => {
+    const screenshotUri = conversation.selectedScreenshotUri?.trim();
+
+    if (
+      !isVibeStep ||
+      !screenshotUri ||
+      conversation.analysisStatus !== "ready" ||
+      conversation.repliesStatus !== "idle" ||
+      conversation.generatedReplies.length > 0 ||
+      generatedReplyForScreenshotUriRef.current === screenshotUri
+    ) {
+      return;
+    }
+
+    generatedReplyForScreenshotUriRef.current = screenshotUri;
+    void conversation.generateRepliesForSelectedTone();
+  }, [
+    conversation.analysisStatus,
+    conversation.generatedReplies.length,
+    conversation.generateRepliesForSelectedTone,
+    conversation.repliesStatus,
+    conversation.selectedScreenshotUri,
+    isVibeStep,
+  ]);
 
   const handlePrimaryAction = async () => {
     if (!stepCanContinue || ctaLoading) {
@@ -79,20 +125,33 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
     if (isUploadStep) {
       goNext();
-      await conversation.analyzeScreenshot();
+      await analyzeScreenshotForOnboarding();
       return;
     }
 
     if (isVibeStep) {
-      const generated = await conversation.generateRepliesForSelectedTone();
-
-      if (generated) {
-        goNext();
-      }
+      goNext();
       return;
     }
 
     goNext();
+  };
+
+  const handleScreenshotSelected = async (screenshotUri: string) => {
+    setAnalysisFailureCount(0);
+    generatedReplyForScreenshotUriRef.current = null;
+    goNext(true);
+    await analyzeScreenshotForOnboarding(screenshotUri);
+  };
+
+  const retryScreenshotAnalysis = async () => {
+    await analyzeScreenshotForOnboarding();
+  };
+
+  const analyzeReplacementScreenshot = async (screenshotUri: string) => {
+    setAnalysisFailureCount(0);
+    generatedReplyForScreenshotUriRef.current = null;
+    await analyzeScreenshotForOnboarding(screenshotUri);
   };
 
   console.log("[Wingr boot] OnboardingFlow render", {
@@ -109,6 +168,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     <ScreenComponent
       canGoBack={canGoBack}
       canContinue={stepCanContinue}
+      analysisFailureCount={analysisFailureCount}
       content={currentStep.content}
       conversation={conversation}
       ctaDisabled={!stepCanContinue}
@@ -119,6 +179,9 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       onComplete={completeOnboarding}
       onNext={goNext}
       onPrimaryAction={handlePrimaryAction}
+      onReplacementScreenshotSelected={analyzeReplacementScreenshot}
+      onRetryScreenshotAnalysis={retryScreenshotAnalysis}
+      onScreenshotSelected={handleScreenshotSelected}
       onSelectChoice={selectChoice}
       onSkip={skip}
       selectedChoiceId={selectedChoiceId}
