@@ -1,9 +1,9 @@
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Alert } from "react-native";
 import { useConversationFlow } from "../hooks/useConversationFlow";
 import { ChangeScreen } from "./screens/ChangeScreen";
 import { PaywallScreen } from "./screens/PaywallScreen";
-import { PrivacyScreen } from "./screens/PrivacyScreen";
 import { ProblemScreen } from "./screens/ProblemScreen";
 import { RatingScreen } from "./screens/RatingScreen";
 import { RepliesScreen } from "./screens/RepliesScreen";
@@ -27,7 +27,6 @@ const screenMap: Record<
 > = {
   change: ChangeScreen,
   paywall: PaywallScreen,
-  privacy: PrivacyScreen,
   problem: ProblemScreen,
   rating: RatingScreen,
   replies: RepliesScreen,
@@ -141,7 +140,15 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     setAnalysisFailureCount(0);
     generatedReplyForScreenshotUriRef.current = null;
     goNext(true);
-    await analyzeScreenshotForOnboarding(screenshotUri);
+    const result = await analyzeScreenshotForOnboarding(screenshotUri);
+
+    if (result === "error") {
+      Alert.alert(
+        "Could not read screenshot",
+        conversation.error?.message ?? "Try another screenshot or upload again.",
+      );
+      goBack();
+    }
   };
 
   const retryScreenshotAnalysis = async () => {

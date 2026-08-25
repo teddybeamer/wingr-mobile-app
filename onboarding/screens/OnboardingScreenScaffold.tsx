@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import * as Haptics from "expo-haptics";
 import { StyleSheet, Text, View } from "react-native";
 import { CTAButton } from "../components/CTAButton";
 import { ExampleChatCard } from "../components/ExampleChatCard";
@@ -34,6 +35,10 @@ export function OnboardingScreenScaffold({
   totalSteps,
 }: OnboardingScreenScaffoldProps) {
   const primaryAction = onPrimaryAction ?? (isLastStep ? onComplete : onNext);
+  const handlePrimaryAction = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    void primaryAction();
+  };
 
   return (
     <View style={styles.screen}>
@@ -104,7 +109,7 @@ export function OnboardingScreenScaffold({
             disabled={ctaDisabled ?? !canContinue}
             label={ctaLabel ?? content.ctaLabel ?? "Next"}
             loading={ctaLoading}
-            onPress={primaryAction}
+            onPress={handlePrimaryAction}
           />
         )}
       </View>

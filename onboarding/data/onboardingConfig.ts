@@ -6,7 +6,6 @@ export const onboardingStepOrder: OnboardingStepId[] = [
   'problem',
   'change',
   'wouldYouSend',
-  'privacy',
   'uploadScreenshot',
   'vibecheck',
   'rating',

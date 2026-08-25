@@ -78,12 +78,12 @@ export const onboardingContent: Record<
   },
   uploadScreenshot: {
     id: "uploadScreenshot",
-    title: "Try WINGR on a real chat",
+    title: "Try WiNGR on a real chat",
     titleParts: [
-      { text: "Try WINGR on " },
+      { text: "Try WiNGR on " },
       { color: "blue", text: "a real chat" },
     ],
-    body: "Upload a screenshot and Wingr will read the vibe, spot what's really going on, and suggest replies you can actually send.",
+    body: "Upload a screenshot and Wingr will read the vibe, spot what’s really going on, and suggest replies you can actually send. Your chats stay private.",
     ctaLabel: "Next",
   },
   vibecheck: {

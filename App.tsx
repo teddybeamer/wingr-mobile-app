@@ -977,6 +977,7 @@ function LandingScreen({
               <View
                 style={[
                   styles.landingButtonShadow,
+                  styles.chooseScreenshotButtonShadow,
                   { width: layout.contentWidth },
                 ]}
               >
@@ -991,10 +992,15 @@ function LandingScreen({
                   }}
                   style={({ pressed }) => [
                     styles.landingButton,
+                    styles.chooseScreenshotButton,
                     pressed && styles.landingButtonPressed,
                   ]}
                 >
-                  <LandingButtonSurface width={layout.contentWidth} />
+                  <LandingButtonSurface
+                    borderColor="#2563EB"
+                    fill="#1D4ED8"
+                    width={layout.contentWidth}
+                  />
                   <View style={styles.landingButtonContent}>
                     <GallerySend color="#FFFFFF" size={20} />
                     <Text style={styles.landingButtonText}>
@@ -1011,7 +1017,15 @@ function LandingScreen({
   );
 }
 
-function LandingButtonSurface({ width }: { width: number }) {
+function LandingButtonSurface({
+  borderColor = "#4338CA",
+  fill = COLORS.indigo800,
+  width,
+}: {
+  borderColor?: string;
+  fill?: string;
+  width: number;
+}) {
   return (
     <Svg
       height={LANDING_BUTTON.height}
@@ -1028,12 +1042,12 @@ function LandingButtonSurface({ width }: { width: number }) {
           y1={0}
           y2={LANDING_BUTTON.height}
         >
-          <Stop offset="0%" stopColor="#4338CA" />
-          <Stop offset="100%" stopColor="#4338CA" stopOpacity="0" />
+          <Stop offset="0%" stopColor={borderColor} />
+          <Stop offset="100%" stopColor={borderColor} stopOpacity="0" />
         </LinearGradient>
       </Defs>
       <Rect
-        fill={COLORS.indigo800}
+        fill={fill}
         height={LANDING_BUTTON.height - LANDING_BUTTON.strokeWidth}
         rx={LANDING_BUTTON.borderRadius - LANDING_BUTTON.strokeWidth / 2}
         ry={LANDING_BUTTON.borderRadius - LANDING_BUTTON.strokeWidth / 2}
@@ -2219,6 +2233,12 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     position: "relative",
     width: "100%",
+  },
+  chooseScreenshotButton: {
+    backgroundColor: "#1D4ED8",
+  },
+  chooseScreenshotButtonShadow: {
+    backgroundColor: "#1D4ED8",
   },
   landingButtonShadow: {
     backgroundColor: COLORS.indigo800,

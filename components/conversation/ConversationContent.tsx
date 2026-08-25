@@ -1055,7 +1055,7 @@ export function ReplyActionBar({
         >
           {isSticky ? (
             <ActionButtonGradientBorder
-              color="#4338CA"
+              color="#2563EB"
               gradientId={refreshBorderId}
               width={STICKY_ACTION_BUTTON.newReplyWidth}
             />
@@ -2845,7 +2845,7 @@ const styles = StyleSheet.create({
   },
   stickyNewRepliesButton: {
     alignItems: "center",
-    backgroundColor: "#3730A3",
+    backgroundColor: "#1D4ED8",
     borderRadius: STICKY_ACTION_BUTTON.radius,
     flexDirection: "row",
     gap: 8,
@@ -2857,7 +2857,7 @@ const styles = StyleSheet.create({
     width: STICKY_ACTION_BUTTON.newReplyWidth,
   },
   stickyNewRepliesButtonShadow: {
-    backgroundColor: "#3730A3",
+    backgroundColor: "#1D4ED8",
     borderRadius: STICKY_ACTION_BUTTON.radius,
     elevation: 4,
     height: STICKY_ACTION_BUTTON.height,

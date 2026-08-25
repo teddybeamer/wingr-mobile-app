@@ -1,9 +1,14 @@
 import { GallerySend } from "@solar-icons/react-native/Linear";
 import * as Haptics from "expo-haptics";
 import { Image, StyleSheet, View } from "react-native";
+import Animated, { Easing, FadeInDown } from "react-native-reanimated";
 import { CTAButton } from "../components/CTAButton";
 import type { OnboardingScreenProps } from "../types/onboarding";
 import { OnboardingScreenScaffold } from "./OnboardingScreenScaffold";
+
+const GRAPHIC_ENTRANCE = FadeInDown.duration(350)
+  .delay(100)
+  .easing(Easing.out(Easing.cubic));
 
 export function UploadScreenShotScreen(props: OnboardingScreenProps) {
   const { conversation, onScreenshotSelected } = props;
@@ -32,14 +37,14 @@ export function UploadScreenShotScreen(props: OnboardingScreenProps) {
       }
     >
       <View style={styles.middleContent}>
-        <View style={styles.graphicFrame}>
+        <Animated.View entering={GRAPHIC_ENTRANCE} style={styles.graphicFrame}>
           <Image
             accessibilityIgnoresInvertColors
             resizeMode="contain"
             source={require("../../assets/images/onboarding-graphic.png")}
             style={styles.graphic}
           />
-        </View>
+        </Animated.View>
       </View>
     </OnboardingScreenScaffold>
   );
