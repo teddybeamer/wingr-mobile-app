@@ -73,27 +73,3 @@ export async function postJsonToWingrBackend<TResponse>(
 
   return response.json() as Promise<TResponse>;
 }
-
-export async function postFormToWingrBackend<TResponse>(
-  path: string,
-  body: FormData,
-): Promise<TResponse> {
-  const url = getBackendUrl(path);
-
-  if (!url) {
-    throw new Error('Wingr backend URL is not configured.');
-  }
-
-  const response = await fetch(url, {
-    body,
-    method: 'POST',
-  });
-
-  logBackendResponse(path, response);
-
-  if (!response.ok) {
-    throw new Error(await getBackendError(response));
-  }
-
-  return response.json() as Promise<TResponse>;
-}

@@ -50,6 +50,25 @@ const DIRECT_ADDRESS_ALLOWLIST = new Set([
   'okay',
 ]);
 
+export type ReplyOwnershipValidationTrace = {
+  acceptedReplyCount: number;
+  checkedReplyCount: number;
+  meFactDirectedAtThemRejected: boolean;
+  rejectedReplyCount: number;
+};
+
+const QUESTION_FOR_OTHER_PATTERN =
+  /\b(?:you|your|yours|du|dig|din|dit|dine|jer|dein|deine|deinen|deiner|euch|ihr|tu|vous|ton|ta|tes|votre|vos|tú|tu|usted|ustedes|vuestro|vuestra)\b/i;
+const DANISH_PLURAL_QUESTION_PATTERN =
+  /\b(?:Har|Er|Skal|Vil|Kan|Må|Synes)\s+I\b/u;
+
+const FACT_STOPWORDS = new Set([
+  'about', 'after', 'also', 'been', 'bare', 'before', 'because', 'could', 'det',
+  'der', 'dere', 'den', 'denne', 'dette', 'does', 'from', 'have', 'here', 'into',
+  'just', 'med', 'mine', 'more', 'over', 'på', 'skal', 'som', 'that', 'their',
+  'them', 'there', 'they', 'this', 'them', 'var', 'were', 'what', 'with', 'would',
+]);
+
 function normalizeNotes(request: RepliesRequest): ContextNotes {
   const notes = request.contextNotes ?? getContextNotes(request.extraContext);
 
@@ -67,6 +86,60 @@ function getUserTranscriptText(transcriptText: string) {
     .filter((line) => /^\s*(ME|You)\s*:/i.test(line))
     .map((line) => line.replace(/^\s*(ME|You)\s*:\s*/i, ''))
     .join(' ');
+}
+
+function getTranscriptTextForSender(request: RepliesRequest, sender: 'me' | 'them') {
+  const structuredMessages = request.parsedConversation?.messages ?? [];
+
+  if (structuredMessages.length > 0) {
+    return structuredMessages
+      .filter((message) => message.sender === sender)
+      .map((message) => message.text)
+      .join(' ');
+  }
+
+  const label = sender === 'me' ? 'ME|You' : 'THEM|Them';
+
+  return request.transcriptText
+    .split('\n')
+    .filter((line) => new RegExp(`^\\s*(?:${label})\\s*:`, 'i').test(line))
+    .map((line) => line.replace(new RegExp(`^\\s*(?:${label})\\s*:\\s*`, 'i'), ''))
+    .join(' ');
+}
+
+function getFactTerms(text: string) {
+  return normalizeForLooseLookup(text)
+    .split(' ')
+    .filter((word) => word.length >= 5 && !FACT_STOPWORDS.has(word));
+}
+
+function termsOverlap(left: string, right: string) {
+  return left === right ||
+    (left.length >= 5 && right.length >= 5 && (left.startsWith(right) || right.startsWith(left)));
+}
+
+function asksOtherPersonAboutMeOnlyFact(replyText: string, request: RepliesRequest) {
+  if (!replyText.includes('?')) {
+    return false;
+  }
+
+  const asksOtherPerson = QUESTION_FOR_OTHER_PATTERN.test(replyText) ||
+    DANISH_PLURAL_QUESTION_PATTERN.test(replyText);
+
+  if (!asksOtherPerson) {
+    return false;
+  }
+
+  const meTerms = getFactTerms(getTranscriptTextForSender(request, 'me'));
+  const themTerms = getFactTerms(getTranscriptTextForSender(request, 'them'));
+  const replyTerms = getFactTerms(replyText);
+  const meOnlyTerms = meTerms.filter(
+    (meTerm) => !themTerms.some((themTerm) => termsOverlap(meTerm, themTerm)),
+  );
+
+  return replyTerms.some((replyTerm) =>
+    meOnlyTerms.some((meTerm) => termsOverlap(replyTerm, meTerm)),
+  );
 }
 
 function normalizeForLooseLookup(text: string) {
@@ -225,6 +298,10 @@ function getReplyOwnershipIssues(replyText: string, request: RepliesRequest) {
     issues.push('Reply turns a fact about the other person into a user-owned claim.');
   }
 
+  if (asksOtherPersonAboutMeOnlyFact(replyText, request)) {
+    issues.push('Reply asks the other person about a fact established only for the user.');
+  }
+
   const addressedName = getUnsupportedDirectAddress(replyText, request.transcriptText);
 
   if (addressedName) {
@@ -252,6 +329,23 @@ function getReplyOwnershipIssues(replyText: string, request: RepliesRequest) {
   return issues;
 }
 
+export function getReplyOwnershipValidationTrace(
+  replies: SuggestedReply[],
+  request: RepliesRequest,
+): ReplyOwnershipValidationTrace {
+  const issueLists = replies.map((reply) => getReplyOwnershipIssues(reply.text, request));
+  const acceptedReplyCount = issueLists.filter((issues) => issues.length === 0).length;
+
+  return {
+    acceptedReplyCount,
+    checkedReplyCount: replies.length,
+    meFactDirectedAtThemRejected: issueLists.some((issues) =>
+      issues.includes('Reply asks the other person about a fact established only for the user.'),
+    ),
+    rejectedReplyCount: replies.length - acceptedReplyCount,
+  };
+}
+
 function getFallbackReplies(request: RepliesRequest): SuggestedReply[] {
   const notes = normalizeNotes(request);
 
@@ -265,17 +359,30 @@ function getFallbackReplies(request: RepliesRequest): SuggestedReply[] {
     ];
   }
 
-  return [
-    {
-      id: 'ownership-safe-context-1',
-      text: 'Okay, I have to ask about that. What is the story?',
-      tone: request.selectedTone,
-    },
-  ];
+  const fallbackByTone: Record<RepliesRequest['selectedTone'], string> = {
+    casualSmallTalk: 'Could be... what are you thinking?',
+    direct: 'Got something in mind?',
+    playful: 'Careful, that sounds like a suggestion 👀',
+  };
+
+  return [{
+    id: `ownership-safe-context-${request.selectedTone}`,
+    text: fallbackByTone[request.selectedTone],
+    tone: request.selectedTone,
+  }];
+}
+
+export function getOwnershipCheckedReplies(
+  replies: SuggestedReply[],
+  request: RepliesRequest,
+) {
+  return replies.filter(
+    (reply) => getReplyOwnershipIssues(reply.text, request).length === 0,
+  ).slice(0, 1);
 }
 
 export function getOwnershipSafeReplies(replies: SuggestedReply[], request: RepliesRequest) {
-  const safeReplies = replies.filter((reply) => getReplyOwnershipIssues(reply.text, request).length === 0);
+  const safeReplies = getOwnershipCheckedReplies(replies, request);
 
   if (safeReplies.length >= 1) {
     return safeReplies.slice(0, 1);

@@ -14,8 +14,10 @@ const WINGR_SYSTEM_PROMPT =
 type OpenRouterTask = 'reply' | 'vibeCheck';
 
 type OpenRouterProviderRouting = {
+  data_collection: 'deny';
   only?: string[];
   sort?: 'latency' | 'price' | 'throughput';
+  zdr: true;
 };
 
 type OpenRouterSchema = {
@@ -27,10 +29,14 @@ type OpenRouterSchema = {
 
 type OpenRouterRequestOptions = {
   model: string;
-  provider?: OpenRouterProviderRouting;
+  provider: OpenRouterProviderRouting;
 };
 
 type OpenRouterAttempt = 'primary' | 'latencyFallback';
+
+type OpenRouterRequestInstrumentation = {
+  onAttemptStart?: () => void;
+};
 
 function getOpenRouterApiKey() {
   const apiKey = Deno.env.get('OPENROUTER_API_KEY');
@@ -88,23 +94,31 @@ function getTaskProvider(task: OpenRouterTask) {
 function getPrimaryRequestOptions(task: OpenRouterTask): OpenRouterRequestOptions {
   const taskProvider = getTaskProvider(task);
   const providerSlugs = taskProvider ? getProviderSlugs(taskProvider) : [];
-  const provider =
+  const routing =
     providerSlugs.length > 0
       ? { only: providerSlugs }
       : task === 'reply'
         ? { sort: 'latency' as const }
-        : undefined;
+        : {};
 
   return {
     model: getTaskModel(task),
-    provider,
+    provider: {
+      data_collection: 'deny',
+      zdr: true,
+      ...routing,
+    },
   };
 }
 
 function getLatencyFallbackRequestOptions(task: OpenRouterTask): OpenRouterRequestOptions {
   return {
     model: getTaskModel(task),
-    provider: { sort: 'latency' },
+    provider: {
+      data_collection: 'deny',
+      sort: 'latency',
+      zdr: true,
+    },
   };
 }
 
@@ -143,11 +157,7 @@ function getPromptMetrics(systemPrompt: string, userPrompt: string) {
   };
 }
 
-function getProviderRoutingLabel(provider?: OpenRouterProviderRouting) {
-  if (!provider) {
-    return 'openrouter-default';
-  }
-
+function getProviderRoutingLabel(provider: OpenRouterProviderRouting) {
   if (provider.only?.length) {
     return `only:${provider.only.join(',')}`;
   }
@@ -172,7 +182,7 @@ function logOpenRouterRequest({
   durationMs?: number;
   model: string;
   promptMetrics: ReturnType<typeof getPromptMetrics>;
-  provider?: OpenRouterProviderRouting;
+  provider: OpenRouterProviderRouting;
   result: 'start' | 'success' | 'failure';
   task: OpenRouterTask;
 }) {
@@ -234,11 +244,13 @@ function extractTextContent(content: unknown): string {
 }
 
 export async function callOpenRouterStructured<T>({
+  instrumentation,
   prompt,
   schema,
   schemaName,
   task,
 }: {
+  instrumentation?: OpenRouterRequestInstrumentation;
   prompt: string;
   schema: OpenRouterSchema;
   schemaName: string;
@@ -254,11 +266,14 @@ export async function callOpenRouterStructured<T>({
       schema,
       schemaName,
       attempt: 'primary',
+      instrumentation,
       task: requestTask,
       ...getPrimaryRequestOptions(requestTask),
     });
-  } catch (primaryError) {
-    console.warn('OpenRouter primary provider failed, retrying with latency routing.', primaryError);
+  } catch {
+    // Do not log the provider error object: it can contain response data from an
+    // upstream service. The retry preserves the same privacy routing guarantees.
+    console.warn('OpenRouter primary provider failed; retrying with privacy-preserving latency routing.');
 
     return callOpenRouterStructuredOnce<T>({
       apiKey,
@@ -266,6 +281,7 @@ export async function callOpenRouterStructured<T>({
       schema,
       schemaName,
       attempt: 'latencyFallback',
+      instrumentation,
       task: requestTask,
       ...getLatencyFallbackRequestOptions(requestTask),
     });
@@ -275,6 +291,7 @@ export async function callOpenRouterStructured<T>({
 async function callOpenRouterStructuredOnce<T>({
   apiKey,
   attempt,
+  instrumentation,
   model,
   prompt,
   provider,
@@ -284,9 +301,10 @@ async function callOpenRouterStructuredOnce<T>({
 }: {
   apiKey: string;
   attempt: OpenRouterAttempt;
+  instrumentation?: OpenRouterRequestInstrumentation;
   model: string;
   prompt: string;
-  provider?: OpenRouterProviderRouting;
+  provider: OpenRouterProviderRouting;
   schema: OpenRouterSchema;
   schemaName: string;
   task: OpenRouterTask;
@@ -300,6 +318,7 @@ async function callOpenRouterStructuredOnce<T>({
   let response: Response | null = null;
 
   try {
+    instrumentation?.onAttemptStart?.();
     logOpenRouterRequest({
       attempt,
       model,
@@ -322,7 +341,7 @@ async function callOpenRouterStructuredOnce<T>({
           },
         ],
         model,
-        ...(provider ? { provider } : {}),
+        provider,
         response_format: {
           type: 'json_schema',
           json_schema: {
@@ -360,7 +379,6 @@ async function callOpenRouterStructuredOnce<T>({
   }
 
   if (!response.ok) {
-    const text = await response.text();
     logOpenRouterRequest({
       attempt,
       durationMs: Date.now() - startedAt,
@@ -370,7 +388,9 @@ async function callOpenRouterStructuredOnce<T>({
       result: 'failure',
       task,
     });
-    throw new Error(`OpenRouter request failed with ${response.status}: ${text}`);
+    // Do not include the upstream response body in errors or logs. Providers can
+    // include request-derived content in error responses.
+    throw new Error(`OpenRouter request failed with ${response.status}.`);
   }
 
   const payload = await response.json();

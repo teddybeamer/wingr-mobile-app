@@ -17,6 +17,7 @@ export type VibeCheck = {
 };
 
 export type GeminiVibeCheck = {
+  interestLevel: 'Low' | 'Medium' | 'High' | 'Unclear';
   oneLiner: string;
   theirEnergy: string;
   yourMove: string;

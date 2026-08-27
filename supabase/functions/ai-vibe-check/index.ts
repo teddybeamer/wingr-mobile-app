@@ -1,4 +1,8 @@
 import { handleCors } from '../_shared/cors.ts';
+import {
+  CONVERSATION_TURN_STATE_VERSION,
+  getConversationTurnState,
+} from '../_shared/conversation-turn-state.ts';
 import { error, json, readJson } from '../_shared/http.ts';
 import {
   inferTranscriptLanguage,
@@ -40,6 +44,12 @@ Deno.serve(async (request) => {
   try {
     const body = await readJson<VibeCheckRequest>(request);
 
+    console.info('[Wingr AI] Vibe check input state', {
+      hasParsedConversation: Boolean(body.parsedConversation),
+      implementationVersion: CONVERSATION_TURN_STATE_VERSION,
+      turnState: getConversationTurnState(body.parsedConversation),
+    });
+
     if (!body.transcriptText?.trim()) {
       return error('transcriptText is required.', 400);
     }
@@ -67,8 +77,15 @@ Deno.serve(async (request) => {
           safeBody.parsedConversation,
         ),
       };
-    } catch (aiError) {
-      console.error('ai-vibe-check fallback', aiError);
+      console.info('[Wingr AI] Vibe check output state', {
+        implementationVersion: CONVERSATION_TURN_STATE_VERSION,
+        outputTurnStateValidation: 'not_implemented',
+        result: 'success',
+      });
+    } catch {
+      // Do not log provider errors: upstream error details can contain
+      // request-derived conversation content.
+      console.error('ai-vibe-check falling back to the local mock response.');
       console.warn('[Wingr AI] Vibecheck provider: fallback mock', {
         endpointType: 'local fallback',
         model: 'mock',
@@ -84,6 +101,11 @@ Deno.serve(async (request) => {
           safeBody.parsedConversation,
         ),
       };
+      console.info('[Wingr AI] Vibe check output state', {
+        implementationVersion: CONVERSATION_TURN_STATE_VERSION,
+        outputTurnStateValidation: 'not_implemented',
+        result: 'fallback',
+      });
     }
 
     return json({

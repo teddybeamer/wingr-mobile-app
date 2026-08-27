@@ -12,6 +12,7 @@ import type {
   ParsedConversation,
   StructuredConversationMessage,
 } from "../types/wingr";
+import { inspectVisualBubbleAttribution } from "./visual-bubble-attribution";
 
 export type OcrLineInput = {
   text: string;
@@ -49,6 +50,8 @@ type ColumnMapping = {
 };
 
 type ParsedMessageLayout = {
+  geometryAmbiguous: boolean;
+  groupLineIndexes: Record<string, number[]>;
   mapping: ColumnMapping;
   messages: DetectedMessage[];
 };
@@ -60,6 +63,38 @@ type ConversationGeometry = {
   maxBottom: number;
   width: number;
   height: number;
+};
+
+type OcrLineAttributionDiagnostic = {
+  characterCount: number;
+  classification: "conversation" | "ui";
+  hasLetters: boolean;
+  hasNumbers: boolean;
+  hasSentencePunctuation: boolean;
+  normalizedCenterX: number;
+  normalizedLeft: number;
+  normalizedRight: number;
+  normalizedWidth: number;
+  ocrIndex: number;
+  reason: string;
+  wordCount: number;
+};
+
+type GeometryAttributionDiagnostic = {
+  confidence: number;
+  geometrySpeaker: MessageSender;
+  groupIndex: number;
+  id: string;
+  ocrLineIndexes: number[];
+  normalizedCenterX: number;
+  normalizedLeft: number;
+  normalizedRight: number;
+  normalizedWidth: number;
+};
+
+type ReconstructionAttributionDiagnostics = {
+  geometryGroups: GeometryAttributionDiagnostic[];
+  lines: OcrLineAttributionDiagnostic[];
 };
 
 const UI_LABELS = new Set([
@@ -248,27 +283,58 @@ function looksLikeHeaderName(
   );
 }
 
-function isObviousUiLine(line: OcrLine, geometry: ConversationGeometry) {
+function getObviousUiReason(
+  line: OcrLine,
+  geometry: ConversationGeometry,
+) {
   const text = line.text;
 
   if (!text || text.length <= 1) {
-    return true;
+    return "empty-or-single-character";
   }
 
+  if (isStandaloneTimestamp(text)) {
+    return "timestamp";
+  }
+
+  if (isStatusBarNoise(text)) {
+    return "status-bar";
+  }
+
+  if (isDateDivider(text)) {
+    return "date-divider";
+  }
+
+  if (isOutgoingReceiptLine(text)) {
+    return "outgoing-receipt";
+  }
+
+  const topRatio =
+    (line.frame.top - geometry.minTop) / Math.max(geometry.height, 1);
+  const leftRatio =
+    (line.frame.left - geometry.minLeft) / Math.max(geometry.width, 1);
+  const widthRatio = getWidth(line.frame) / Math.max(geometry.width, 1);
+  const words = normalizeText(text).split(" ").filter(Boolean);
+
+  // Compact outer-edge controls in a chat header are not conversation text,
+  // even when OCR represents a glyph as a short alphabetic-looking token.
   if (
-    isStandaloneTimestamp(text) ||
-    isStatusBarNoise(text) ||
-    isDateDivider(text) ||
-    isOutgoingReceiptLine(text)
+    topRatio < 0.15 &&
+    leftRatio > 0.8 &&
+    widthRatio < 0.18 &&
+    words.length <= 3 &&
+    text.length <= 10
   ) {
-    return true;
+    return "header-control";
   }
 
   if (/^[<›‹ chevron]+$/i.test(text)) {
-    return true;
+    return "navigation-control";
   }
 
-  return looksLikeHeaderName(text, line.frame, geometry);
+  return looksLikeHeaderName(text, line.frame, geometry)
+    ? "header-name"
+    : null;
 }
 
 function getLineGeometry(lines: OcrLine[]): ConversationGeometry {
@@ -308,24 +374,77 @@ function flattenLines(recognizedText: RecognizedText): OcrLine[] {
     });
 }
 
-function cleanOcrLines(lines: OcrLine[]) {
+function normalizedLineDiagnostic(
+  line: OcrLine,
+  geometry: ConversationGeometry,
+  classification: OcrLineAttributionDiagnostic["classification"],
+  reason: string,
+): OcrLineAttributionDiagnostic {
+  const width = Math.max(geometry.width, 1);
+
+  return {
+    characterCount: line.text.length,
+    classification,
+    hasLetters: /\p{L}/u.test(line.text),
+    hasNumbers: /\p{N}/u.test(line.text),
+    hasSentencePunctuation: /[?.!,]$/.test(line.text),
+    normalizedCenterX: Number(
+      ((getCenterX(line.frame) - geometry.minLeft) / width).toFixed(3),
+    ),
+    normalizedLeft: Number(
+      ((line.frame.left - geometry.minLeft) / width).toFixed(3),
+    ),
+    normalizedRight: Number(
+      ((line.frame.right - geometry.minLeft) / width).toFixed(3),
+    ),
+    normalizedWidth: Number((getWidth(line.frame) / width).toFixed(3)),
+    ocrIndex: Number(line.id.replace("line-", "")),
+    reason,
+    wordCount: normalizeText(line.text).split(" ").filter(Boolean).length,
+  };
+}
+
+function cleanOcrLines(
+  lines: OcrLine[],
+  diagnostics?: OcrLineAttributionDiagnostic[],
+) {
   if (lines.length === 0) {
     return [];
   }
 
   const geometry = getLineGeometry(lines);
   const filteredLines = lines.filter((line) => {
-    if (isObviousUiLine(line, geometry)) {
+    const obviousUiReason = getObviousUiReason(line, geometry);
+
+    if (obviousUiReason) {
+      diagnostics?.push(
+        normalizedLineDiagnostic(line, geometry, "ui", obviousUiReason),
+      );
       return false;
     }
 
     const bottomRatio =
       (line.frame.bottom - geometry.minTop) / Math.max(geometry.height, 1);
 
-    return bottomRatio < 0.94 || looksLikeConversationText(line.text);
+    if (bottomRatio >= 0.94 && !looksLikeConversationText(line.text)) {
+      diagnostics?.push(
+        normalizedLineDiagnostic(line, geometry, "ui", "bottom-composer"),
+      );
+      return false;
+    }
+
+    return true;
   });
 
-  return stripTopChrome(filteredLines);
+  const retainedLines = stripTopChrome(filteredLines, diagnostics, geometry);
+
+  for (const line of retainedLines) {
+    diagnostics?.push(
+      normalizedLineDiagnostic(line, geometry, "conversation", "retained"),
+    );
+  }
+
+  return retainedLines;
 }
 
 function looksLikeConversationText(text: string) {
@@ -337,14 +456,22 @@ function looksLikeConversationText(text: string) {
   );
 }
 
-function stripTopChrome(lines: OcrLine[]) {
-  const firstConversationIndex = lines.findIndex((line) =>
-    looksLikeConversationText(line.text),
+function stripTopChrome(
+  lines: OcrLine[],
+  diagnostics?: OcrLineAttributionDiagnostic[],
+  sourceGeometry?: ConversationGeometry,
+) {
+  const firstConversationIndex = lines.findIndex(
+    (line) =>
+      /[\p{L}\p{N}]/u.test(line.text) && looksLikeConversationText(line.text),
   );
 
   if (firstConversationIndex <= 0) {
     return lines;
   }
+
+  const geometry = sourceGeometry ?? getLineGeometry(lines);
+  const headerBoundary = geometry.minTop + geometry.height * 0.14;
 
   return lines.filter((line, index) => {
     if (index >= firstConversationIndex) {
@@ -354,8 +481,25 @@ function stripTopChrome(lines: OcrLine[]) {
     const normalized = normalizeText(line.text);
     const words = normalized.split(" ").filter(Boolean);
     const hasMessagePunctuation = /[?.!,]$/.test(normalized);
+    const hasReadableContent = /[\p{L}\p{N}]/u.test(normalized);
 
-    return normalized.length > 22 || words.length > 3 || hasMessagePunctuation;
+    // Header controls such as a three-dot menu can be recognized as "...".
+    // Keep real, short opening messages below the header, but never promote a
+    // punctuation-only control into a chat bubble.
+    const keep =
+      hasReadableContent &&
+      (line.frame.top >= headerBoundary ||
+        normalized.length > 22 ||
+        words.length > 3 ||
+        hasMessagePunctuation);
+
+    if (!keep) {
+      diagnostics?.push(
+        normalizedLineDiagnostic(line, geometry, "ui", "top-chrome"),
+      );
+    }
+
+    return keep;
   });
 }
 
@@ -683,12 +827,35 @@ function resolveColumnMapping(
   return { confidence: 0, meColumn: null, resolved: false };
 }
 
+function isGeometryAttributionAmbiguous(
+  columns: ChatColumn[],
+  bubbles: Bubble[],
+  geometry: ConversationGeometry,
+  mapping: ColumnMapping,
+) {
+  if (!mapping.resolved || columns.length !== 2) {
+    return true;
+  }
+
+  const centerSeparation = Math.abs(columns[1].center - columns[0].center);
+  const typicalBubbleWidth = median(
+    bubbles.map((bubble) => getWidth(bubble.frame)),
+  );
+
+  return (
+    centerSeparation < geometry.width * 0.18 ||
+    centerSeparation < typicalBubbleWidth * 0.35
+  );
+}
+
 function parseMessages(
   lines: OcrLine[],
   rawLines: OcrLine[],
 ): ParsedMessageLayout {
   if (lines.length === 0) {
     return {
+      geometryAmbiguous: true,
+      groupLineIndexes: {},
       mapping: { confidence: 0, meColumn: null, resolved: false },
       messages: [],
     };
@@ -707,8 +874,21 @@ function parseMessages(
     bubbles,
     outgoingAnchorBubbleIds,
   );
+  const geometryAmbiguous = isGeometryAttributionAmbiguous(
+    columns,
+    bubbles,
+    geometry,
+    mapping,
+  );
 
   return {
+    geometryAmbiguous,
+    groupLineIndexes: Object.fromEntries(
+      bubbles.map((bubble, index) => [
+        `message-${index + 1}`,
+        bubble.lines.map((line) => Number(line.id.replace("line-", ""))),
+      ]),
+    ),
     mapping,
     messages: bubbles
       .map((bubble, index) => {
@@ -825,73 +1005,6 @@ export function buildParsedConversation(
   };
 }
 
-export function reconstructConversationFromLabeledTranscript(
-  rawText: string,
-  confidence = 0.9,
-): OcrResult {
-  const detectedMessages = rawText
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line, index): DetectedMessage | null => {
-      const match = line.match(/^(ME|YOU|THEM|UNKNOWN)\s*:\s*(.+)$/i);
-
-      if (!match) {
-        return null;
-      }
-
-      const label = match[1].toLowerCase();
-      const text = normalizeText(match[2]);
-
-      if (!text) {
-        return null;
-      }
-
-      const sender: MessageSender =
-        label === "me" || label === "you"
-          ? "me"
-          : label === "them"
-            ? "them"
-            : "unknown";
-      const xPosition: MessageXPosition =
-        sender === "me" ? "right" : sender === "them" ? "left" : "center";
-      const x = sender === "me" ? 100 : sender === "them" ? 0 : 50;
-
-      return {
-        boundingBox: {
-          height: 32,
-          width: 80,
-          x,
-          y: index * 40,
-        },
-        confidence: sender === "unknown" ? 0.35 : confidence,
-        id: `backend-message-${index + 1}`,
-        sender,
-        speaker: getSpeakerFromSender(sender),
-        text,
-        xPosition,
-      };
-    })
-    .filter((message): message is DetectedMessage => message !== null);
-
-  if (detectedMessages.length === 0) {
-    throw new Error(
-      "Web OCR returned text without speaker labels. Use the native development build for this screenshot.",
-    );
-  }
-
-  const parsedConversation = buildParsedConversation(detectedMessages);
-
-  return {
-    confidence: parsedConversation.speakerAttributionConfidence,
-    detectedMessages,
-    parsedConversation,
-    rawText,
-    source: "backend",
-    transcriptText: formatTranscript(parsedConversation.structuredConversation),
-  };
-}
-
 export function needsSpeakerConfirmation(
   parsedConversation: ParsedConversation,
 ) {
@@ -964,6 +1077,12 @@ export function rebuildOcrResultWithConfirmedUserSide(
 export function reconstructConversationFromOcrLines(
   lineInputs: OcrLineInput[],
 ): OcrResult {
+  return reconstructConversationFromOcrLinesWithDiagnostics(lineInputs).result;
+}
+
+function reconstructConversationFromOcrLinesWithDiagnostics(
+  lineInputs: OcrLineInput[],
+): { diagnostics: ReconstructionAttributionDiagnostics; result: OcrResult } {
   const rawLines = lineInputs
     .map((line, index) => ({
       frame: line.frame,
@@ -981,20 +1100,51 @@ export function reconstructConversationFromOcrLines(
 
       return first.frame.left - second.frame.left;
     });
-  const cleanedLines = cleanOcrLines(rawLines);
-  const { mapping, messages: detectedMessages } = parseMessages(
+  const lineDiagnostics: OcrLineAttributionDiagnostic[] = [];
+  const cleanedLines = cleanOcrLines(rawLines, lineDiagnostics);
+  const {
+    geometryAmbiguous,
+    groupLineIndexes,
+    mapping,
+    messages: detectedMessages,
+  } = parseMessages(
     cleanedLines,
     rawLines,
   );
   const parsedConversation = buildParsedConversation(detectedMessages, mapping);
+  const conversationGeometry =
+    cleanedLines.length > 0 ? getLineGeometry(cleanedLines) : null;
+  const geometryGroups: GeometryAttributionDiagnostic[] = detectedMessages.map(
+    (message, index) => {
+      const frame = getFrameFromBoundingBox(message.boundingBox);
+      const width = Math.max(conversationGeometry?.width ?? 1, 1);
+      const left = conversationGeometry?.minLeft ?? 0;
+
+      return {
+        confidence: Number(message.confidence.toFixed(3)),
+        geometrySpeaker: message.sender,
+        groupIndex: index + 1,
+        id: message.id,
+        ocrLineIndexes: groupLineIndexes[message.id] ?? [],
+        normalizedCenterX: Number(((getCenterX(frame) - left) / width).toFixed(3)),
+        normalizedLeft: Number(((frame.left - left) / width).toFixed(3)),
+        normalizedRight: Number(((frame.right - left) / width).toFixed(3)),
+        normalizedWidth: Number((getWidth(frame) / width).toFixed(3)),
+      };
+    },
+  );
 
   return {
-    confidence: parsedConversation.speakerAttributionConfidence,
-    detectedMessages,
-    parsedConversation,
-    rawText: rawLines.map((line) => line.text).join("\n"),
-    source: "onDevice",
-    transcriptText: formatTranscript(parsedConversation.structuredConversation),
+    diagnostics: { geometryGroups, lines: lineDiagnostics },
+    result: {
+      confidence: parsedConversation.speakerAttributionConfidence,
+      detectedMessages,
+      geometryAttributionAmbiguous: geometryAmbiguous,
+      parsedConversation,
+      rawText: rawLines.map((line) => line.text).join("\n"),
+      source: "onDevice",
+      transcriptText: formatTranscript(parsedConversation.structuredConversation),
+    },
   };
 }
 
@@ -1054,12 +1204,107 @@ export async function extractChatTextFromImage(
     console.info("[Wingr native OCR] reconstructing");
   }
 
-  const reconstruction = reconstructConversationFromOcrLines(
+  const initialReconstruction = reconstructConversationFromOcrLinesWithDiagnostics(
     flattenLines(recognizedText),
   );
+  let reconstruction = initialReconstruction.result;
   const rawText = recognizedText.text?.trim() ?? reconstruction.rawText;
+  let visualDiagnostics:
+    | Awaited<ReturnType<typeof inspectVisualBubbleAttribution>>["attribution"]
+    | null = null;
+  let visualEvidenceDiagnostics:
+    | Awaited<ReturnType<typeof inspectVisualBubbleAttribution>>["evidenceDiagnostics"] =
+    [];
+  let visualAttemptOutcome = "not-attempted";
+
+  try {
+    // OCR text geometry alone is not a reliable speaker signal for layouts
+    // whose incoming and outgoing text starts at similar positions. A visual
+    // result only replaces geometry when it independently clears the visual
+    // module's confidence threshold; otherwise the established geometry result
+    // remains untouched.
+    const visualAttempt =
+      reconstruction.detectedMessages.length >= 2
+        ? await inspectVisualBubbleAttribution({
+            messages: reconstruction.detectedMessages,
+            screenshotUri,
+          })
+        : {
+            attribution: null,
+            evidenceDiagnostics: [],
+            outcome: "insufficient-messages" as const,
+          };
+    const visualAttribution = visualAttempt.attribution;
+
+    visualAttemptOutcome = visualAttempt.outcome;
+    visualDiagnostics = visualAttribution;
+    visualEvidenceDiagnostics = visualAttempt.evidenceDiagnostics;
+
+    if (visualAttribution) {
+      const parsedConversation = buildParsedConversation(
+        visualAttribution.messages,
+        {
+          confidence: visualAttribution.confidence,
+          meColumn: null,
+          resolved: true,
+        },
+      );
+
+      reconstruction = {
+        ...reconstruction,
+        confidence: parsedConversation.speakerAttributionConfidence,
+        detectedMessages: visualAttribution.messages,
+        geometryAttributionAmbiguous: false,
+        parsedConversation,
+        transcriptText: formatTranscript(parsedConversation.structuredConversation),
+      };
+    }
+  } catch {
+    // Visual attribution is optional. The established OCR-only parser remains
+    // the safe fallback when a local image cannot be sampled.
+    visualAttemptOutcome = "sampling-failed";
+  }
 
   if (typeof __DEV__ !== "undefined" && __DEV__) {
+    const finalMessagesById = new Map(
+      reconstruction.detectedMessages.map((message) => [message.id, message]),
+    );
+    const visualById = new Map(
+      visualDiagnostics?.diagnostics.map((item) => [item.id, item]) ?? [],
+    );
+
+    console.info("[Wingr native OCR attribution diagnostics]", {
+      // Intentionally excludes OCR text, raw screenshots, names, and pixels.
+      conversationGroups: initialReconstruction.diagnostics.geometryGroups.map(
+        (group) => {
+          const visual = visualById.get(group.id);
+          const finalMessage = finalMessagesById.get(group.id);
+          const visualOverrodeGeometry =
+            Boolean(visual) && visual?.speaker !== group.geometrySpeaker;
+
+          return {
+            ...group,
+            classification: "conversation",
+            finalConfidence: Number(
+              (finalMessage?.confidence ?? group.confidence).toFixed(3),
+            ),
+            finalSpeaker: finalMessage?.sender ?? group.geometrySpeaker,
+            finalReason: visual
+              ? visualOverrodeGeometry
+                ? "visual-high-confidence-override"
+                : "visual-high-confidence-confirmed-geometry"
+              : "geometry-only",
+            visualCluster: visual?.cluster ?? null,
+            visualSpeaker: visual?.speaker ?? null,
+          };
+        },
+      ),
+      lineClassification: initialReconstruction.diagnostics.lines.sort(
+        (first, second) => first.ocrIndex - second.ocrIndex,
+      ),
+      visualAttemptOutcome,
+      visualEvidence: visualEvidenceDiagnostics,
+    });
     console.info("[Wingr native OCR] reconstruction ready", {
       detectedMessages: reconstruction.detectedMessages.length,
       speakerAttributionConfidence:

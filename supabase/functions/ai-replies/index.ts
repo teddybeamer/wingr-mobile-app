@@ -1,10 +1,18 @@
 import { handleCors } from '../_shared/cors.ts';
+import {
+  CONVERSATION_TURN_STATE_VERSION,
+  getConversationTurnState,
+} from '../_shared/conversation-turn-state.ts';
 import { error, json, readJson } from '../_shared/http.ts';
 import { generateReplyBatch } from '../_shared/reply-batch.ts';
 import { needsSpeakerConfirmation } from '../_shared/speaker-attribution.ts';
 import type { RepliesRequest } from '../_shared/types.ts';
 
 Deno.serve(async (request) => {
+  const startedAt = Date.now();
+  let selectedTone = 'unknown';
+  let finalOutcome = 'error';
+
   const corsResponse = handleCors(request);
   if (corsResponse) {
     return corsResponse;
@@ -16,6 +24,13 @@ Deno.serve(async (request) => {
 
   try {
     const body = await readJson<RepliesRequest>(request);
+    selectedTone = body.selectedTone ?? 'missing';
+    console.info('[Wingr AI] Reply input state', {
+      hasParsedConversation: Boolean(body.parsedConversation),
+      implementationVersion: CONVERSATION_TURN_STATE_VERSION,
+      selectedTone,
+      turnState: getConversationTurnState(body.parsedConversation),
+    });
 
     if (!body.transcriptText?.trim()) {
       return error('transcriptText is required.', 400);
@@ -30,14 +45,22 @@ Deno.serve(async (request) => {
     }
 
     if (needsSpeakerConfirmation(body.parsedConversation)) {
+      finalOutcome = 'speakerConfirmation';
       return json({ needsSpeakerConfirmation: true });
     }
 
-    const replyBatch = await generateReplyBatch(body, [body.selectedTone]);
+    const { replyBatch, telemetry } = await generateReplyBatch(body, [body.selectedTone]);
+    finalOutcome = telemetry.finalOutcome;
 
     return json({ replyBatch });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Reply generation failed.';
     return error(message, 500);
+  } finally {
+    console.info('[Wingr AI] ai-replies request timing', {
+      durationMs: Date.now() - startedAt,
+      finalOutcome,
+      selectedTone,
+    });
   }
 });

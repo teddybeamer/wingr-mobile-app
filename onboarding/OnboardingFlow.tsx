@@ -5,8 +5,10 @@ import { useConversationFlow } from "../hooks/useConversationFlow";
 import { ChangeScreen } from "./screens/ChangeScreen";
 import { PaywallScreen } from "./screens/PaywallScreen";
 import { ProblemScreen } from "./screens/ProblemScreen";
+import { PrivacyScreen } from "./screens/PrivacyScreen";
 import { RatingScreen } from "./screens/RatingScreen";
 import { RepliesScreen } from "./screens/RepliesScreen";
+import { TestimonialsScreen } from "./screens/TestimonialsScreen";
 import { UploadScreenShotScreen } from "./screens/UploadScreenShotScreen";
 import { VibecheckScreen } from "./screens/VibecheckScreen";
 import { WelcomeScreen } from "./screens/WelcomeScreen";
@@ -27,9 +29,11 @@ const screenMap: Record<
 > = {
   change: ChangeScreen,
   paywall: PaywallScreen,
+  privacy: PrivacyScreen,
   problem: ProblemScreen,
   rating: RatingScreen,
   replies: RepliesScreen,
+  testimonials: TestimonialsScreen,
   uploadScreenshot: UploadScreenShotScreen,
   vibecheck: VibecheckScreen,
   welcome: WelcomeScreen,
@@ -37,9 +41,7 @@ const screenMap: Record<
 };
 
 export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
-  const conversation = useConversationFlow({
-    speakerPolicy: "continueWithoutAttribution",
-  });
+  const conversation = useConversationFlow();
   const [analysisFailureCount, setAnalysisFailureCount] = useState(0);
   const generatedReplyForScreenshotUriRef = useRef<string | null>(null);
   const completeOnboarding = useCallback(() => {

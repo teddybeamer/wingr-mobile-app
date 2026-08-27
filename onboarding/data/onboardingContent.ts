@@ -102,7 +102,13 @@ export const onboardingContent: Record<
     id: "rating",
     title: "Give us a rating",
     titleParts: [{ text: "Give us a " }, { color: "blue", text: "rating" }],
-    body: "Your feedback really helps us improve and reach more people who need WiNGR.",
+    body: "We’re a small team, so giving us a rating really goes a long way!",
+    ctaLabel: "Give us a rating",
+  },
+  testimonials: {
+    id: "testimonials",
+    title: "Don’t take our word for it",
+    body: "Here’s what people using WiNGR are saying.",
     ctaLabel: "Next",
   },
   paywall: {
@@ -113,6 +119,6 @@ export const onboardingContent: Record<
       { text: " to keep the chats going" },
     ],
     body: "Unlock instant vibe checks and sendable replies for the chats that actually matter.",
-    ctaLabel: "Start Free Trial",
+    ctaLabel: "Unlock Unlimited",
   },
 };

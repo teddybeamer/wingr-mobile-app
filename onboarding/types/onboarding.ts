@@ -10,6 +10,7 @@ export type OnboardingStepId =
   | "vibecheck"
   | "replies"
   | "rating"
+  | "testimonials"
   | "paywall";
 
 export type OnboardingChoice = {

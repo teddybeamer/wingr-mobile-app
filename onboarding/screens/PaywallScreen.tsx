@@ -1,30 +1,48 @@
-import { StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { OnboardingScreenScaffold } from "./OnboardingScreenScaffold";
 import type { OnboardingScreenProps } from "../types/onboarding";
 
 export function PaywallScreen(props: OnboardingScreenProps) {
+  const [selectedPlan, setSelectedPlan] = useState<"weekly" | "monthly">(
+    "monthly",
+  );
+
   return (
     <OnboardingScreenScaffold {...props}>
       <View style={styles.plans}>
-        <View style={styles.planCard}>
+        <Pressable
+          accessibilityRole="radio"
+          accessibilityState={{ selected: selectedPlan === "weekly" }}
+          onPress={() => setSelectedPlan("weekly")}
+          style={[styles.planCard, selectedPlan === "weekly" && styles.selectedPlan]}
+        >
           <Text style={styles.planName}>Weekly Plan</Text>
           <View style={styles.priceCopy}>
-            <Text style={styles.price}>$9.99/week</Text>
+            <Text style={styles.price}>$4.99/week</Text>
             <Text style={styles.trial}>3-day free trial</Text>
           </View>
-        </View>
+        </Pressable>
 
-        <View style={[styles.planCard, styles.selectedPlan]}>
+        <Pressable
+          accessibilityRole="radio"
+          accessibilityState={{ selected: selectedPlan === "monthly" }}
+          onPress={() => setSelectedPlan("monthly")}
+          style={[
+            styles.planCard,
+            styles.monthlyPlan,
+            selectedPlan === "monthly" && styles.selectedPlan,
+          ]}
+        >
           <View>
-            <Text style={styles.planName}>Yearly Plan</Text>
+            <Text style={styles.planName}>Monthly Plan</Text>
             <Text style={styles.yearMeta}>52 weeks • $49.99</Text>
           </View>
           <View style={styles.priceCopy}>
-            <Text style={styles.price}>$0.96/week</Text>
-            <Text style={styles.trial}>3-day free trial</Text>
-            <Text style={styles.saveBadge}>Save 90%</Text>
+            <Text style={styles.price}>$2.30/week</Text>
+            <Text style={styles.saveBadge}>Save 54%</Text>
           </View>
-        </View>
+        </Pressable>
       </View>
 
       <Text style={styles.footer}>No Commitment • Cancel anytime</Text>
@@ -45,7 +63,9 @@ const styles = StyleSheet.create({
   planCard: {
     alignItems: "center",
     backgroundColor: "#252525",
-    borderRadius: 32,
+    borderColor: "transparent",
+    borderWidth: 1,
+    borderRadius: 10,
     flexDirection: "row",
     justifyContent: "space-between",
     minHeight: 72,
@@ -54,19 +74,22 @@ const styles = StyleSheet.create({
   planName: {
     color: "#FFFFFF",
     fontFamily: "ClashGrotesk",
-    fontSize: 18,
-    fontWeight: "500",
-    lineHeight: 22,
+    fontSize: 16,
+    fontWeight: "600",
+    lineHeight: 20,
   },
   plans: {
     gap: 10,
   },
+  monthlyPlan: {
+    minHeight: 78,
+  },
   price: {
     color: "#FFFFFF",
-    fontFamily: "ClashGroteskRegular",
-    fontSize: 18,
-    fontWeight: "400",
-    lineHeight: 22,
+    fontFamily: "ClashGrotesk",
+    fontSize: 16,
+    fontWeight: "600",
+    lineHeight: 20,
     textAlign: "right",
   },
   priceCopy: {
@@ -76,24 +99,22 @@ const styles = StyleSheet.create({
   saveBadge: {
     alignSelf: "flex-end",
     backgroundColor: "#1970FD",
-    borderRadius: 999,
+    borderRadius: 8,
     color: "#FFFFFF",
     fontFamily: "ClashGroteskRegular",
-    fontSize: 13,
-    lineHeight: 16,
+    fontSize: 12,
+    lineHeight: 14,
     overflow: "hidden",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
   selectedPlan: {
     borderColor: "#1970FD",
-    borderWidth: 1,
-    minHeight: 96,
   },
   trial: {
     color: "#D3D3D3",
     fontFamily: "ClashGroteskRegular",
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "400",
     lineHeight: 20,
     textAlign: "right",
@@ -103,7 +124,7 @@ const styles = StyleSheet.create({
     fontFamily: "ClashGroteskRegular",
     fontSize: 16,
     fontWeight: "400",
-    lineHeight: 20,
-    marginTop: 8,
+    lineHeight: 18,
+    marginTop: 4,
   },
 });

@@ -70,6 +70,7 @@ import {
   VibeCheckCard,
 } from "./components/conversation/ConversationContent";
 import { ReplyLoadingScreen } from "./components/conversation/ReplyLoadingScreen";
+import { initializeRevenueCat } from "./lib/revenuecat";
 
 const DEBUG_BOOT_PROBE = false;
 
@@ -454,7 +455,7 @@ export default function App() {
   const initialReplyGenerationStartedIdRef = useRef<number | null>(null);
   const [queuedInitialReplyGenerationId, setQueuedInitialReplyGenerationId] =
     useState<number | null>(null);
-  const conversation = useConversationFlow({ speakerPolicy: "confirm" });
+  const conversation = useConversationFlow();
   const {
     confirmSpeakerSide,
     error,
@@ -475,6 +476,10 @@ export default function App() {
     [FONTS.body]: require("./assets/fonts/ClashGrotesk-Variable.ttf"),
     [FONTS.bodyRegular]: require("./assets/fonts/ClashGrotesk-Regular.ttf"),
   });
+
+  useEffect(() => {
+    void initializeRevenueCat();
+  }, []);
 
   console.log("[Wingr boot] App render", {
     fontsLoaded,

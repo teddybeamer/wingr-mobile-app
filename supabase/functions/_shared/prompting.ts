@@ -1,4 +1,5 @@
 import { getContextNotes } from './context-notes.ts';
+import { getConversationTurnState } from './conversation-turn-state.ts';
 import type {
   ContextNotes,
   GeminiVibeCheck,
@@ -100,13 +101,28 @@ export const geminiVibeCheckSchema = {
         'One short phrase or sentence about how the other person is showing up.',
       type: 'string',
     },
+    interestLevel: {
+      description:
+        'The other person\'s romantic interest in ME: Low, Medium, High, or Unclear. Assess behavioral evidence and conversational intent across the sequence, not writing style.',
+      enum: ['Low', 'Medium', 'High', 'Unclear'],
+      type: 'string',
+    },
     yourMove: {
       description:
         'One short next move for the user.',
       type: 'string',
     },
   },
-  required: ['oneLiner', 'theirEnergy', 'yourMove', 'avoid', 'recommendedTone', 'confidence', 'targetLanguage'],
+  required: [
+    'oneLiner',
+    'theirEnergy',
+    'yourMove',
+    'avoid',
+    'recommendedTone',
+    'confidence',
+    'targetLanguage',
+    'interestLevel',
+  ],
   type: 'object',
 } as const;
 
@@ -178,6 +194,22 @@ function formatSpeakerAttribution(parsedConversation?: ParsedConversation) {
   ].join('\n');
 }
 
+function formatAuthoritativeTurnState(parsedConversation?: ParsedConversation) {
+  const turnState = getConversationTurnState(parsedConversation);
+
+  if (!turnState) {
+    return '';
+  }
+
+  return [
+    'Authoritative conversation state (derived from the structured ME/THEM sequence):',
+    `- latestMessageSender: ${turnState.latestMessageSender}`,
+    `- THEM messages after the most recent ME message: ${turnState.themMessagesAfterLatestMe}`,
+    `- THEM has responded after ME: ${turnState.themHasRespondedAfterMe ? 'yes' : 'no'}`,
+    '- This state and the structured messages are authoritative. Do not invent a different reply order, waiting state, or fact owner.',
+  ].join('\n');
+}
+
 export function buildVibeCheckPrompt({
   extraContext,
   parsedConversation,
@@ -231,6 +263,9 @@ export function buildGeminiVibeCheckPrompt({
     '- Speaker labels are strict: ME is the app user; THEM is the person ME is talking to.',
     '- Judge THEM\'s energy and interest toward ME, never the reverse.',
     '- If the latest message is ME, do not pretend THEM just said it.',
+    '- Derive who has replied, who is waiting, and whose turn it is only from the authoritative conversation state and structured ME/THEM messages below.',
+    '- If the authoritative state says THEM has responded after ME, never claim or imply that THEM has not responded, that ME is still waiting for a reply, or that ME sent unanswered messages.',
+    '- Preserve every established fact with its original speaker. Do not describe a ME action, plan, place, or experience as something THEM did, or the reverse.',
     '- Do not use profile names, account names, device owner names, or any name outside the actual chat transcript.',
     '- Keep it short, casual, specific, and actually useful.',
     '- Match the natural language of the chat for oneLiner, theirEnergy, yourMove, and avoid.',
@@ -238,12 +273,32 @@ export function buildGeminiVibeCheckPrompt({
     '- targetLanguage is the dominant chat language as an English language name.',
     '- recommendedTone must be one of: Playful, Flirty, Direct, Casual Small Talk, Small talk, Make it right.',
     '- confidence must be a number from 0 to 1.',
+    '- Decide interestLevel internally from the full conversation before writing the other fields. Return only the final level; do not expose reasoning.',
+    '- Prioritize behavioral intent and actions over surface style. A direct invitation, clear attraction, or concrete effort to move things forward outweighs emoji count, message length, punctuation, or speed of reply.',
+    '- Read the chat as a sequence: assess whether interest is reciprocated and increasing, decreasing, stable, or escalating. Weight recent messages more heavily while preserving decisive earlier events such as a direct invitation, rejection, or compliment.',
+    '- High means strong evidence of attraction or romantic progression: a direct compliment, explicit attraction, suggesting or agreeing to meet, asking ME out, initiating/strongly reciprocating flirting, or actively creating an opportunity to deepen the connection. A clear invitation or compliment normally means High unless meaningful later evidence contradicts it.',
+    '- Medium means genuine but romantically ambiguous interest: warm replies, questions, friendly curiosity, light flirting, or some investment without clear attraction or progression toward meeting. Use Medium rather than Low for a short conversation with insufficient romantic evidence.',
+    '- Low means sustained low investment or meaningful negative evidence: repeatedly dismissive/minimal replies, no reciprocation, avoiding attempts to progress, shutting down flirting, declining plans without an alternative, or clear distancing. A single short or dry message is not Low by itself.',
+    '- Do not infer High from emojis, long messages, fast replies, or questions alone. Emojis can strengthen a semantic reading but cannot create romantic intent by themselves. Do not penalize plain or dry texting when THEM is still proposing plans or showing attraction.',
+    '- Resolve contradictions across fields: if oneLiner, theirEnergy, or yourMove identifies a direct invitation, clear attraction, or active romantic escalation, interestLevel must be High unless you state meaningful contradictory evidence.',
+    'Interest calibration examples:',
+    '- THEM: "Super cute by the way 😘" then "Want to meet?" -> High.',
+    '- THEM sends warm, detailed replies and questions but no flirt, attraction, or plan -> Medium.',
+    '- THEM sends many emojis but does not reciprocate or invest -> not automatically High.',
+    '- THEM writes plainly but says "Want to grab coffee Saturday?" -> High.',
+    '- THEM repeatedly starts playful/flirty conversations -> High.',
+    '- THEM is friendly but ME is carrying the conversation -> Low or Medium according to the actual amount of reciprocation; do not call it High.',
+    '- THEM declines a date and offers no alternative while engagement drops -> Low.',
+    '- THEM declines a date but immediately offers another day -> High or strong Medium according to the wording and other evidence.',
+    '- A short chat with no clear romantic evidence -> Medium, not automatically Low.',
+    '- For mixed signals, let a clear recent invitation, rejection, or change in investment outweigh older small talk.',
     '- Avoid robotic/report words: moderate, neutral, indicates, suggests, engagement, rapport, dynamic, pursue, reciprocate, initiate.',
     '- Only comment on typos if the typo is clearly in THEM\'s original message and affects what ME should reply.',
     '- If a strange word may be OCR noise or model noise, ignore it. Do not mention random unclear tokens.',
     '- Prefer natural phrases like: a bit dry, still interested, low effort, playful, curious, don\'t overdo it, make it easy to answer, keep it light.',
     '- Keep oneLiner, theirEnergy, yourMove, and avoid short enough for a mobile card.',
     formatSpeakerAttribution(parsedConversation),
+    formatAuthoritativeTurnState(parsedConversation),
     'Bad example:',
     '{"oneLiner":"Interest is moderate.","theirEnergy":"Energy is neutral.","yourMove":"Ask a playful follow-up question.","avoid":"Avoid overpursuing.","recommendedTone":"Playful","confidence":0.7,"targetLanguage":"English"}',
     'Good example:',
@@ -260,6 +315,7 @@ export function getMockGeminiVibeCheck(): GeminiVibeCheck {
   return {
     avoid: "Don't send a paragraph here.",
     confidence: 0.72,
+    interestLevel: 'Medium',
     oneLiner: 'They are not cold, but they are making you do some of the work.',
     recommendedTone: 'Playful',
     targetLanguage: 'English',
@@ -332,6 +388,19 @@ export function buildReplyBatchPrompt(
     '- Slightly shorter is usually better than significantly longer, unless a longer reply feels more natural in context.',
     '- Mirror humor, emoji use, casualness, and texting style lightly without copying.',
     '- Every reply should naturally move the conversation forward by giving THEM something easy or enjoyable to respond to.',
+    'Grounding and relevance (apply before choosing the tone):',
+    '- First identify THEM\'s latest direct question, invitation/proposal, strongest concrete hook, and emotional or flirty intent. Address the strongest/latest actionable hook before starting a new topic.',
+    '- Separate facts established about ME, facts established about THEM, and facts that are unknown. The transcript and userFacts are the only evidence for a concrete claim about ME.',
+    '- Preserve fact ownership exactly: ME-established facts remain about ME and THEM-established facts remain about THEM. Never ask THEM about a detail, action, plan, place, or experience that only ME already supplied, as though THEM had supplied it.',
+    '- Invent wording, not ME\'s reality. Never introduce an unsupported concrete personal fact about ME, including plans, hobbies, favorites, preferences, work/studies, friends/family, locations, experiences, possessions, opinions, or activities.',
+    '- Do not strengthen evidence: ME saying they played a game supports saying they have played it, but does not establish it is their favorite game or hobby.',
+    '- When THEM asks for information that is unknown, answer without committing to an invented fact: stay non-specific, playfully deflect, turn it back, or invite a suggestion when natural.',
+    '- Unknown is not a negative fact. If ME\'s favorite, plan, preference, or opinion is not established, do not claim that ME does not have one or is not interested; simply avoid committing to an answer.',
+    '- A grounded reply can still be creative: tease THEIR intent, lightly answer using an established fact, make a playful assumption about the moment, or create an opening. Do not become literal or generic just because a fact is unknown.',
+    '- When generating more than one reply, use meaningfully different conversational moves instead of rephrasing the same deflection or question.',
+    '- Do not use the emergency fallback wording "Got something in mind?" as a normal generated reply.',
+    '- Do not use vague orphan references such as "what is the story?" or "tell me more about that" unless the referent is unmistakable in THEM\'s immediately preceding message.',
+    '- Tone changes how a grounded strategy is expressed—playfulness, warmth, directness, flirtiness, length—not what facts ME can claim or which hook the reply addresses.',
     '- Do not force a question into every reply; a playful observation, tease, callback, assumption, or open-ended statement can also create momentum.',
     '- Avoid dead-end acknowledgements unless ending or pausing the conversation is clearly appropriate.',
     '- Avoid noticeably over-investing relative to THEM\'s current effort and interest.',
@@ -383,6 +452,26 @@ export function buildReplyLanguageRepairPrompt(
     '- Do not mention ME\'s name unless that name appears naturally in the actual chat messages.',
     '- Preserve the selected tone and all ownership rules.',
     'Previous invalid replies:',
+    previousReplies.map((reply) => `- ${reply.text}`).join('\n'),
+  ].join('\n');
+}
+
+export function buildReplyGroundingRepairPrompt(
+  request: RepliesRequest,
+  previousReplies: SuggestedReply[],
+  selectedTones: ReplyTone[],
+) {
+  return [
+    buildReplyBatchPrompt(request, selectedTones),
+    '',
+    'Grounding and relevance repair:',
+    '- The previous reply was rejected because it may be unsupported, mis-owned, or disconnected from the clearest conversational hook.',
+    '- Re-read the transcript before rewriting. Preserve only facts established about ME; do not turn an activity into a favorite, hobby, plan, preference, or other stronger claim.',
+    '- If THEM asks something ME has not answered in the transcript or userFacts, use a natural non-committal answer, playful deflection, turnaround, or invitation rather than inventing details.',
+    '- Unknown information is not evidence of its opposite: never turn an unknown favorite, plan, preference, or opinion into a negative personal claim.',
+    '- Choose a fresh conversational move for every rewrite: tease THEIR intent, lightly use an established fact, playfully deflect, turn the question back, or create an opening. Do not reuse or paraphrase a rejected fallback.',
+    '- Rewrite exactly one grounded, specific reply for each requested tone. When more than one tone is requested, the replies must use meaningfully distinct moves. Keep the requested tone, language, speaker ownership, and direct-reply rules.',
+    'Previous rejected replies:',
     previousReplies.map((reply) => `- ${reply.text}`).join('\n'),
   ].join('\n');
 }

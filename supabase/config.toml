@@ -1,6 +1,3 @@
-[functions.ocr]
-verify_jwt = false
-
 [functions.ai-vibe-check]
 verify_jwt = false
 

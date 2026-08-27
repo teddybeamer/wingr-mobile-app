@@ -6,10 +6,8 @@ import {
   generateReplies,
   refineVibeCheck,
 } from "../lib/wingr-ai";
-import {
-  needsSpeakerConfirmation,
-  rebuildOcrResultWithConfirmedUserSide,
-} from "../lib/wingr-ocr";
+import { getConversationBackendContract } from "../lib/conversation-attribution-contract";
+import { rebuildOcrResultWithConfirmedUserSide } from "../lib/wingr-ocr";
 import type {
   OcrResult,
   ParsedConversation,
@@ -18,6 +16,20 @@ import type {
   VibeCheck,
 } from "../types/wingr";
 
+function getConversationStateMetadata(parsedConversation?: ParsedConversation | null) {
+  const messages = parsedConversation?.messages ?? [];
+  const latestMeIndex = [...messages].map((message) => message.sender).lastIndexOf("me");
+
+  return {
+    hasParsedConversation: Boolean(parsedConversation),
+    latestMessageSender: messages[messages.length - 1]?.sender ?? "unknown",
+    messageCount: messages.length,
+    themMessagesAfterLatestMe: messages
+      .slice(latestMeIndex + 1)
+      .filter((message) => message.sender === "them").length,
+  };
+}
+
 export type ConversationFlowError = {
   kind: "permission" | "ocr" | "vibe" | "replies";
   message: string;
@@ -25,12 +37,6 @@ export type ConversationFlowError = {
 
 export type AnalysisStatus = "idle" | "analyzing" | "ready" | "error";
 export type RepliesStatus = "idle" | "generating" | "ready" | "error";
-export type SpeakerPolicy = "confirm" | "continueWithoutAttribution";
-
-type UseConversationFlowOptions = {
-  speakerPolicy?: SpeakerPolicy;
-};
-
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message.trim()
     ? error.message
@@ -46,9 +52,7 @@ function logConversationFlow(
   }
 }
 
-export function useConversationFlow({
-  speakerPolicy = "confirm",
-}: UseConversationFlowOptions = {}) {
+export function useConversationFlow() {
   const [selectedScreenshotUri, setSelectedScreenshotUri] = useState<
     string | null
   >(null);
@@ -74,7 +78,6 @@ export function useConversationFlow({
   const [error, setError] = useState<ConversationFlowError | null>(null);
   const analysisRequestIdRef = useRef(0);
   const replyRequestIdRef = useRef(0);
-  const speakerAttributionUncertainRef = useRef(false);
 
   const resetGeneratedState = () => {
     replyRequestIdRef.current += 1;
@@ -90,7 +93,6 @@ export function useConversationFlow({
     setAnalysisStatus("idle");
     setRepliesStatus("idle");
     setError(null);
-    speakerAttributionUncertainRef.current = false;
   };
 
   const reset = () => {
@@ -147,7 +149,6 @@ export function useConversationFlow({
   const applyConversationResult = (
     ocr: OcrResult,
     nextVibeCheck: VibeCheck,
-    attributionUncertain: boolean,
   ) => {
     replyRequestIdRef.current += 1;
     setChatTranscript(ocr.transcriptText || "");
@@ -157,7 +158,6 @@ export function useConversationFlow({
     setSelectedTone(nextVibeCheck.bestTone ?? "playful");
     setVibeCheck(nextVibeCheck);
     setAnalysisStatus("ready");
-    speakerAttributionUncertainRef.current = attributionUncertain;
   };
 
   const analyzeScreenshot = async (
@@ -213,11 +213,11 @@ export function useConversationFlow({
         );
       }
 
-      const attributionUncertain = needsSpeakerConfirmation(
+      const backendContract = getConversationBackendContract(
         ocr.parsedConversation,
       );
 
-      if (attributionUncertain && speakerPolicy === "confirm") {
+      if (backendContract.kind === "needsSpeakerConfirmation") {
         logConversationFlow("speaker confirmation required");
         setChatTranscript(ocr.transcriptText);
         setParsedConversation(ocr.parsedConversation);
@@ -229,12 +229,14 @@ export function useConversationFlow({
 
       failureKind = "vibe";
       const provisionalVibeCheck = buildProvisionalVibeCheck(ocr);
+      logConversationFlow(
+        "vibe check request",
+        getConversationStateMetadata(backendContract.parsedConversation),
+      );
       const completedVibeCheck = await refineVibeCheck({
         extraContext: nextExtraContext || undefined,
         fallbackVibeCheck: provisionalVibeCheck,
-        parsedConversation: attributionUncertain
-          ? undefined
-          : ocr.parsedConversation,
+        parsedConversation: backendContract.parsedConversation,
         transcriptText: ocr.transcriptText,
       });
 
@@ -243,7 +245,7 @@ export function useConversationFlow({
         return "cancelled" as const;
       }
 
-      applyConversationResult(ocr, completedVibeCheck, attributionUncertain);
+      applyConversationResult(ocr, completedVibeCheck);
       logConversationFlow("vibe check ready", {
         bestTone: completedVibeCheck.bestTone,
       });
@@ -289,6 +291,10 @@ export function useConversationFlow({
 
     try {
       const provisionalVibeCheck = buildProvisionalVibeCheck(confirmedOcr);
+      logConversationFlow(
+        "vibe check request after speaker confirmation",
+        getConversationStateMetadata(confirmedOcr.parsedConversation),
+      );
       const completedVibeCheck = await refineVibeCheck({
         extraContext: pendingSpeakerContext || undefined,
         fallbackVibeCheck: provisionalVibeCheck,
@@ -300,7 +306,7 @@ export function useConversationFlow({
         return false;
       }
 
-      applyConversationResult(confirmedOcr, completedVibeCheck, false);
+      applyConversationResult(confirmedOcr, completedVibeCheck);
       setPendingSpeakerContext("");
       return true;
     } catch (analysisError) {
@@ -331,11 +337,14 @@ export function useConversationFlow({
       throw new Error("Finish the vibe check before generating replies.");
     }
 
+    logConversationFlow(
+      "reply generation request",
+      getConversationStateMetadata(parsedConversation),
+    );
+
     return generateReplies({
       extraContext: nextContext || undefined,
-      parsedConversation: speakerAttributionUncertainRef.current
-        ? undefined
-        : (parsedConversation ?? undefined),
+      parsedConversation: parsedConversation ?? undefined,
       screenshotUri: selectedScreenshotUri,
       selectedTone: tone,
       transcriptText: chatTranscript,
@@ -348,6 +357,7 @@ export function useConversationFlow({
     nextContext: string,
     fallbackMessage: string,
   ) => {
+    const generationStartedAt = Date.now();
     const requestId = replyRequestIdRef.current + 1;
 
     replyRequestIdRef.current = requestId;
@@ -382,7 +392,10 @@ export function useConversationFlow({
       ]);
       setLastGeneratedReplyId(generatedReply.id);
       setRepliesStatus("ready");
-      logConversationFlow("reply ready", { tone });
+      logConversationFlow("reply ready", {
+        durationMs: Date.now() - generationStartedAt,
+        tone,
+      });
       return true;
     } catch (generationError) {
       if (replyRequestIdRef.current !== requestId) {
@@ -395,7 +408,7 @@ export function useConversationFlow({
         message: getErrorMessage(generationError, fallbackMessage),
       });
       logConversationFlow("reply generation failed", {
-        message: getErrorMessage(generationError, fallbackMessage),
+        durationMs: Date.now() - generationStartedAt,
         tone,
       });
       return false;

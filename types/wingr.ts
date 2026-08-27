@@ -86,9 +86,10 @@ export type ParsedConversation = {
 export type OcrResult = {
   transcriptText: string;
   detectedMessages: DetectedMessage[];
+  geometryAttributionAmbiguous?: boolean;
   parsedConversation: ParsedConversation;
   rawText?: string;
-  source: 'backend' | 'onDevice';
+  source: 'onDevice';
   confidence?: number;
 };
 
