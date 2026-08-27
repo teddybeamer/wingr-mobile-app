@@ -39,7 +39,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "tsx --test lib/conversation-attribution-contract.test.ts lib/wingr-ai.test.ts lib/wingr-ocr.test.ts supabase/functions/_shared/conversation-turn-state.test.ts supabase/functions/_shared/language.test.ts supabase/functions/_shared/prompting.test.ts supabase/functions/_shared/reply-ownership.test.ts"
+    "test": "tsx --test lib/conversation-attribution-contract.test.ts lib/wingr-ai.test.ts lib/wingr-ocr.test.ts supabase/functions/_shared/conversation-turn-state.test.ts supabase/functions/_shared/language.test.ts supabase/functions/_shared/prompting.test.ts supabase/functions/_shared/reply-batch.test.ts supabase/functions/_shared/reply-ownership.test.ts"
   },
   "private": true
 }

@@ -10,7 +10,6 @@ import {
   buildReplyGroundingRepairPrompt,
   buildReplyLanguageRepairPrompt,
   createReplyBatchSchema,
-  getMockReplyBatch,
 } from './prompting.ts';
 import {
   getOwnershipCheckedReplies,
@@ -18,6 +17,9 @@ import {
   getOwnershipSafeReplies,
 } from './reply-ownership.ts';
 import type { ReplyBatch, RepliesRequest, ReplyTone } from './types.ts';
+
+const OPTIONAL_RECOVERY_BUDGET_MS = 15_000;
+const MIN_OPTIONAL_RECOVERY_WINDOW_MS = 1_000;
 
 type ReplyBatchResult = {
   replyBatch?: ReplyBatch;
@@ -31,11 +33,12 @@ type ReplyGenerationTiming = {
 export type ReplyGenerationTelemetry = {
   finalOutcome: 'success' | 'fallback' | 'error';
   groundingRepair: ReplyGenerationTiming & {
-    reason: 'not_triggered' | 'no_ownership_safe_reply';
+    reason: 'latency_budget_exhausted' | 'not_triggered' | 'no_ownership_safe_reply';
     triggered: boolean;
   };
   initialGeneration: ReplyGenerationTiming;
   languageRepair: ReplyGenerationTiming & {
+    skippedForLatencyBudget: boolean;
     triggered: boolean;
   };
   ownershipValidation: 'accepted' | 'not_run' | 'rejected';
@@ -92,34 +95,18 @@ function hasWrongLanguageInBatch(replyBatch: ReplyBatch, request: RepliesRequest
   );
 }
 
-function getMockFollowUpReplies(selectedTone: ReplyTone) {
-  const map: Record<ReplyTone, string> = {
-    playful: 'Actually, I need your honest answer on that.',
-    direct: 'No rush, but I would like to hear what you think.',
-    casualSmallTalk: 'Anyway, what are you up to now?',
-  };
-
-  return [{
-    id: `${selectedTone}-follow-up-1`,
-    text: map[selectedTone],
-    tone: selectedTone,
-  }];
-}
-
-function getMockBatchForRequest(request: RepliesRequest, selectedTones: ReplyTone[]) {
-  if (request.parsedConversation?.shouldGenerateDirectReply === false) {
-    return Object.fromEntries(
-      selectedTones.map((tone) => [tone, getMockFollowUpReplies(tone)]),
-    ) as ReplyBatch;
-  }
-
-  return getMockReplyBatch(selectedTones);
+function getLocalFallbackBatch(
+  request: RepliesRequest,
+  selectedTones: ReplyTone[],
+) {
+  return getFilteredReplyBatch({}, request, selectedTones);
 }
 
 export async function generateReplyBatch(
   request: RepliesRequest,
   selectedTones: ReplyTone[],
 ): Promise<ReplyBatchGenerationResult> {
+  const recoveryDeadlineAt = Date.now() + OPTIONAL_RECOVERY_BUDGET_MS;
   const telemetry: ReplyGenerationTelemetry = {
     finalOutcome: 'error',
     groundingRepair: {
@@ -135,6 +122,7 @@ export async function generateReplyBatch(
     languageRepair: {
       attemptCount: 0,
       durationMs: 0,
+      skippedForLatencyBudget: false,
       triggered: false,
     },
     ownershipValidation: 'not_run',
@@ -157,6 +145,8 @@ export async function generateReplyBatch(
         normalizedVibeCheck.targetLanguage,
     },
   };
+  const hasOptionalRecoveryBudget = () =>
+    Date.now() + MIN_OPTIONAL_RECOVERY_WINDOW_MS < recoveryDeadlineAt;
 
   try {
     const schema = createReplyBatchSchema(selectedTones);
@@ -192,105 +182,110 @@ export async function generateReplyBatch(
       ? 'rejected'
       : 'accepted';
 
+    let replyBatchSource: 'model' | 'localFallback' = 'model';
+
     if (hasMissingReply(replyBatch, selectedTones)) {
-      telemetry.groundingRepair.triggered = true;
-      telemetry.groundingRepair.reason = 'no_ownership_safe_reply';
-      const groundingRepairStartedAt = Date.now();
-      let repairResult: ReplyBatchResult;
+      if (!hasOptionalRecoveryBudget()) {
+        telemetry.groundingRepair.reason = 'latency_budget_exhausted';
+        replyBatch = getLocalFallbackBatch(normalizedRequest, selectedTones);
+        replyBatchSource = 'localFallback';
+      } else {
+        telemetry.groundingRepair.triggered = true;
+        telemetry.groundingRepair.reason = 'no_ownership_safe_reply';
+        const groundingRepairStartedAt = Date.now();
+        let repairResult: ReplyBatchResult;
 
-      try {
-        repairResult = await callOpenRouterStructured<ReplyBatchResult>({
-          instrumentation: {
-            onAttemptStart: () => {
-              telemetry.groundingRepair.attemptCount += 1;
+        try {
+          repairResult = await callOpenRouterStructured<ReplyBatchResult>({
+            deadlineAt: recoveryDeadlineAt,
+            instrumentation: {
+              onAttemptStart: () => {
+                telemetry.groundingRepair.attemptCount += 1;
+              },
             },
-          },
-          prompt: buildReplyGroundingRepairPrompt(
-            normalizedRequest,
-            getFlattenedReplies(result.replyBatch ?? {}),
-            selectedTones,
-          ),
-          schema,
-          schemaName: `wingr_reply_batch_grounding_repair_${selectedTones.join('_')}`,
-          task: 'reply',
-        });
-      } finally {
-        telemetry.groundingRepair.durationMs = Date.now() - groundingRepairStartedAt;
-      }
+            prompt: buildReplyGroundingRepairPrompt(
+              normalizedRequest,
+              getFlattenedReplies(result.replyBatch ?? {}),
+              selectedTones,
+              telemetry.ownershipValidationTrace.initial?.rejectionCodes,
+            ),
+            schema,
+            schemaName: `wingr_reply_batch_grounding_repair_${selectedTones.join('_')}`,
+            task: 'reply',
+          });
+        } finally {
+          telemetry.groundingRepair.durationMs = Date.now() - groundingRepairStartedAt;
+        }
 
-      replyBatch = getCheckedReplyBatch(
-        repairResult.replyBatch ?? {},
-        normalizedRequest,
-        selectedTones,
-      );
-      telemetry.ownershipValidationTrace.repair = getReplyOwnershipValidationTrace(
-        getFlattenedReplies(repairResult.replyBatch ?? {}),
-        normalizedRequest,
-      );
-
-      if (hasMissingReply(replyBatch, selectedTones)) {
-        replyBatch = getFilteredReplyBatch(
+        replyBatch = getCheckedReplyBatch(
           repairResult.replyBatch ?? {},
           normalizedRequest,
           selectedTones,
         );
+        telemetry.ownershipValidationTrace.repair = getReplyOwnershipValidationTrace(
+          getFlattenedReplies(repairResult.replyBatch ?? {}),
+          normalizedRequest,
+        );
+        telemetry.ownershipValidation = hasMissingReply(replyBatch, selectedTones)
+          ? 'rejected'
+          : 'accepted';
+
+        if (hasMissingReply(replyBatch, selectedTones)) {
+          replyBatch = getLocalFallbackBatch(normalizedRequest, selectedTones);
+          replyBatchSource = 'localFallback';
+        }
       }
     }
 
-    if (hasWrongLanguageInBatch(replyBatch, normalizedRequest)) {
-      telemetry.languageRepair.triggered = true;
-      const languageRepairStartedAt = Date.now();
-      let repairResult: ReplyBatchResult;
+    if (replyBatchSource === 'model' && hasWrongLanguageInBatch(replyBatch, normalizedRequest)) {
+      if (!hasOptionalRecoveryBudget()) {
+        telemetry.languageRepair.skippedForLatencyBudget = true;
+        replyBatch = getLocalFallbackBatch(normalizedRequest, selectedTones);
+        replyBatchSource = 'localFallback';
+      } else {
+        telemetry.languageRepair.triggered = true;
+        const languageRepairStartedAt = Date.now();
+        let repairResult: ReplyBatchResult;
 
-      try {
-        repairResult = await callOpenRouterStructured<ReplyBatchResult>({
-          instrumentation: {
-            onAttemptStart: () => {
-              telemetry.languageRepair.attemptCount += 1;
+        try {
+          repairResult = await callOpenRouterStructured<ReplyBatchResult>({
+            deadlineAt: recoveryDeadlineAt,
+            instrumentation: {
+              onAttemptStart: () => {
+                telemetry.languageRepair.attemptCount += 1;
+              },
             },
-          },
-          prompt: buildReplyLanguageRepairPrompt(
-            normalizedRequest,
-            getFlattenedReplies(replyBatch),
-            selectedTones,
-          ),
-          schema: createReplyBatchSchema(selectedTones),
-          schemaName: `wingr_reply_batch_repair_${selectedTones.join('_')}`,
-          task: 'reply',
-        });
-      } finally {
-        telemetry.languageRepair.durationMs = Date.now() - languageRepairStartedAt;
-      }
+            prompt: buildReplyLanguageRepairPrompt(
+              normalizedRequest,
+              getFlattenedReplies(replyBatch),
+              selectedTones,
+            ),
+            schema: createReplyBatchSchema(selectedTones),
+            schemaName: `wingr_reply_batch_repair_${selectedTones.join('_')}`,
+            task: 'reply',
+          });
+        } finally {
+          telemetry.languageRepair.durationMs = Date.now() - languageRepairStartedAt;
+        }
 
-      replyBatch = getFilteredReplyBatch(
-        repairResult.replyBatch ?? {},
-        normalizedRequest,
-        selectedTones,
-      );
+        replyBatch = getCheckedReplyBatch(
+          repairResult.replyBatch ?? {},
+          normalizedRequest,
+          selectedTones,
+        );
 
-      if (hasWrongLanguageInBatch(replyBatch, normalizedRequest)) {
-        throw new Error(`Could not generate replies in ${normalizedRequest.vibeCheck.targetLanguage}.`);
+        if (hasMissingReply(replyBatch, selectedTones) || hasWrongLanguageInBatch(replyBatch, normalizedRequest)) {
+          replyBatch = getLocalFallbackBatch(normalizedRequest, selectedTones);
+          replyBatchSource = 'localFallback';
+        }
       }
     }
 
-    telemetry.finalOutcome = 'success';
+    telemetry.finalOutcome = replyBatchSource === 'localFallback' ? 'fallback' : 'success';
     logReplyGenerationTiming(telemetry, selectedTones);
     return { replyBatch, telemetry };
   } catch (error) {
-    const fallbackBatch = getFilteredReplyBatch(
-      getMockBatchForRequest(normalizedRequest, selectedTones),
-      normalizedRequest,
-      selectedTones,
-    );
-
-    if (hasWrongLanguageInBatch(fallbackBatch, normalizedRequest)) {
-      telemetry.finalOutcome = 'error';
-      logReplyGenerationTiming(telemetry, selectedTones);
-      throw error instanceof Error
-        ? error
-        : new Error(`Could not generate replies in ${normalizedRequest.vibeCheck.targetLanguage}.`);
-    }
-
+    const fallbackBatch = getLocalFallbackBatch(normalizedRequest, selectedTones);
     telemetry.finalOutcome = 'fallback';
     logReplyGenerationTiming(telemetry, selectedTones);
     return { replyBatch: fallbackBatch, telemetry };

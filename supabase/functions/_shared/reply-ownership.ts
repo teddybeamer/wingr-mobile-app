@@ -54,8 +54,31 @@ export type ReplyOwnershipValidationTrace = {
   acceptedReplyCount: number;
   checkedReplyCount: number;
   meFactDirectedAtThemRejected: boolean;
+  rejectionCodes: ReplyOwnershipRejectionCode[];
   rejectedReplyCount: number;
 };
+
+export type ReplyOwnershipRejectionCode =
+  | 'me_fact_directed_at_them'
+  | 'ownership_or_grounding';
+
+function getReplyOwnershipRejectionCodes(
+  replies: SuggestedReply[],
+  request: RepliesRequest,
+): ReplyOwnershipRejectionCode[] {
+  const issues = replies.flatMap((reply) => getReplyOwnershipIssues(reply.text, request));
+  const codes = new Set<ReplyOwnershipRejectionCode>();
+
+  if (issues.includes('Reply asks the other person about a fact established only for the user.')) {
+    codes.add('me_fact_directed_at_them');
+  }
+
+  if (issues.length > 0 && codes.size === 0) {
+    codes.add('ownership_or_grounding');
+  }
+
+  return [...codes];
+}
 
 const QUESTION_FOR_OTHER_PATTERN =
   /\b(?:you|your|yours|du|dig|din|dit|dine|jer|dein|deine|deinen|deiner|euch|ihr|tu|vous|ton|ta|tes|votre|vos|tú|tu|usted|ustedes|vuestro|vuestra)\b/i;
@@ -228,7 +251,7 @@ function getThemFactKeywords(notes: ContextNotes) {
 
   words.forEach((word) => keywords.add(word));
 
-  if (contextMentionsPets(notes)) {
+  if (contextMentionsPets(notes) && (language === 'danish' || language === 'english')) {
     ['dog', 'pup', 'puppy', 'pet'].forEach((word) => keywords.add(word));
   }
 
@@ -342,28 +365,72 @@ export function getReplyOwnershipValidationTrace(
     meFactDirectedAtThemRejected: issueLists.some((issues) =>
       issues.includes('Reply asks the other person about a fact established only for the user.'),
     ),
+    rejectionCodes: getReplyOwnershipRejectionCodes(replies, request),
     rejectedReplyCount: replies.length - acceptedReplyCount,
   };
 }
 
+function getFallbackLanguage(targetLanguage?: string) {
+  return targetLanguage?.trim().toLowerCase() ?? 'english';
+}
+
 function getFallbackReplies(request: RepliesRequest): SuggestedReply[] {
   const notes = normalizeNotes(request);
+  const language = getFallbackLanguage(request.vibeCheck.targetLanguage);
 
   if (contextMentionsPets(notes)) {
+    const petFallbackByLanguage: Record<string, string> = {
+      danish: 'Det lyder som en historie om din hund — hvad er den seneste?',
+      english: 'That detail deserves a dog story. What is the latest one?',
+    };
+
     return [
       {
         id: 'ownership-safe-dog-1',
-        text: 'That detail deserves a dog story. What is the latest one?',
+        text: petFallbackByLanguage[language] ?? petFallbackByLanguage.english,
         tone: request.selectedTone,
       },
     ];
   }
 
-  const fallbackByTone: Record<RepliesRequest['selectedTone'], string> = {
-    casualSmallTalk: 'Could be... what are you thinking?',
-    direct: 'Got something in mind?',
-    playful: 'Careful, that sounds like a suggestion 👀',
+  const fallbackByLanguage: Record<string, Record<RepliesRequest['selectedTone'], string>> = {
+    danish: {
+      casualSmallTalk: 'Måske... hvad tænker du på?',
+      direct: 'Har du noget i tankerne?',
+      playful: 'Pas på, det lyder som et forslag 👀',
+    },
+    english: {
+      casualSmallTalk: 'Could be... what are you thinking?',
+      direct: 'Got something in mind?',
+      playful: 'Careful, that sounds like a suggestion 👀',
+    },
+    french: {
+      casualSmallTalk: 'Peut-être... tu as une idée en tête ?',
+      direct: 'Tu as quelque chose en tête ?',
+      playful: 'Attention, ça ressemble à une proposition 👀',
+    },
+    german: {
+      casualSmallTalk: 'Vielleicht... was schwebt dir vor?',
+      direct: 'Hast du etwas im Sinn?',
+      playful: 'Vorsicht, das klingt nach einem Vorschlag 👀',
+    },
+    norwegian: {
+      casualSmallTalk: 'Kanskje... hva tenker du på?',
+      direct: 'Har du noe i tankene?',
+      playful: 'Forsiktig, det høres ut som et forslag 👀',
+    },
+    spanish: {
+      casualSmallTalk: 'Puede ser... ¿qué tienes en mente?',
+      direct: '¿Tienes algo en mente?',
+      playful: 'Cuidado, eso suena a propuesta 👀',
+    },
+    swedish: {
+      casualSmallTalk: 'Kanske... vad tänker du på?',
+      direct: 'Har du något i åtanke?',
+      playful: 'Försiktigt, det låter som ett förslag 👀',
+    },
   };
+  const fallbackByTone = fallbackByLanguage[language] ?? fallbackByLanguage.english;
 
   return [{
     id: `ownership-safe-context-${request.selectedTone}`,

@@ -24,12 +24,25 @@ export type VisualBubbleAttributionDiagnostic = {
 
 export type VisualBubbleAttribution = {
   confidence: number;
+  continuousPairs: Array<{ firstId: string; secondId: string }>;
   diagnostics: VisualBubbleAttributionDiagnostic[];
   messages: DetectedMessage[];
 };
 
 export type VisualBubbleAttributionAttempt = {
   attribution: VisualBubbleAttribution | null;
+  continuityDiagnostics: Array<{
+    firstId: string;
+    nearestBubbleDistance: number | null;
+    outcome:
+      | "accepted"
+      | "bridge-page-like"
+      | "bridge-style-mismatch"
+      | "different-visual-cluster"
+      | "missing-bridge-sample";
+    pageDistance: number | null;
+    secondId: string;
+  }>;
   evidenceDiagnostics: Array<{
     id: string;
     outcome:
@@ -45,6 +58,17 @@ export type VisualBubbleAttributionAttempt = {
     | "low-confidence-or-incomplete-bubble-evidence"
     | "samples-unavailable";
 };
+
+export function isVisuallyContinuousBridge(
+  samples: Array<{ nearestBubbleDistance: number; pageDistance: number }>,
+) {
+  const bubbleLikeSamples = samples.filter(
+    (sample) =>
+      sample.nearestBubbleDistance <= 48 && sample.pageDistance >= 14,
+  ).length;
+
+  return bubbleLikeSamples >= Math.ceil(samples.length / 2);
+}
 
 const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
@@ -77,6 +101,7 @@ export function resolveVisualBubbleAttributionFromEvidence(messages: DetectedMes
 
   return {
     confidence,
+    continuousPairs: [],
     diagnostics: evidence.map((item, index) => ({
       cluster: clusterIds[index],
       id: item.id,
@@ -91,7 +116,7 @@ export function resolveVisualBubbleAttributionFromEvidence(messages: DetectedMes
 }
 
 function getRegions(messages: DetectedMessage[], imageWidth: number): ImageSampleRegion[] {
-  return messages.flatMap((message) => {
+  const messageRegions = messages.flatMap((message) => {
     const frame = message.boundingBox; const y = frame.y + frame.height / 2;
     const inset = Math.max(12, Math.min(28, frame.width * 0.12)); const avatarOffset = Math.max(42, Math.min(86, imageWidth * 0.075));
     return [
@@ -102,6 +127,30 @@ function getRegions(messages: DetectedMessage[], imageWidth: number): ImageSampl
       { id: `${message.id}:avatar`, radius: 12, x: frame.x - avatarOffset, y },
     ];
   });
+
+  const bridgeRegions = messages.slice(0, -1).flatMap((first, index) => {
+    const second = messages[index + 1];
+    const firstBottom = first.boundingBox.y + first.boundingBox.height;
+    const gap = second.boundingBox.y - firstBottom;
+    const sharedLeft = Math.max(first.boundingBox.x, second.boundingBox.x);
+    const sharedRight = Math.min(
+      first.boundingBox.x + first.boundingBox.width,
+      second.boundingBox.x + second.boundingBox.width,
+    );
+
+    if (gap <= 0 || sharedRight - sharedLeft < 20) return [];
+
+    const sharedWidth = sharedRight - sharedLeft;
+
+    return [0.25, 0.5, 0.75].map((position, bridgeIndex) => ({
+      id: `bridge:${first.id}:${second.id}:${bridgeIndex}`,
+      radius: 7,
+      x: sharedLeft + sharedWidth * position,
+      y: firstBottom + gap / 2,
+    }));
+  });
+
+  return [...messageRegions, ...bridgeRegions];
 }
 
 function deriveEvidence(messages: DetectedMessage[], samples: ImageColorSample[], imageWidth: number) {
@@ -129,7 +178,102 @@ function deriveEvidence(messages: DetectedMessage[], samples: ImageColorSample[]
       ? null
       : evidence as VisualBubbleEvidence[],
     evidenceDiagnostics,
+    pageColor,
+    sampleMap,
   };
+}
+
+function getVisuallyContinuousPairs(
+  messages: DetectedMessage[],
+  evidence: VisualBubbleEvidence[],
+  attribution: VisualBubbleAttribution,
+  sampleMap: Map<string, ImageColorSample>,
+  pageColor: RgbColor,
+): Pick<VisualBubbleAttributionAttempt, "continuityDiagnostics"> & {
+  pairs: VisualBubbleAttribution["continuousPairs"];
+} {
+  const evidenceById = new Map(evidence.map((item) => [item.id, item]));
+  const visualById = new Map(
+    attribution.diagnostics.map((item) => [item.id, item]),
+  );
+
+  const pairs: VisualBubbleAttribution["continuousPairs"] = [];
+  const continuityDiagnostics: VisualBubbleAttributionAttempt["continuityDiagnostics"] = [];
+
+  for (const [index, first] of messages.slice(0, -1).entries()) {
+    const second = messages[index + 1];
+    const firstVisual = visualById.get(first.id);
+    const secondVisual = visualById.get(second.id);
+    const firstEvidence = evidenceById.get(first.id);
+    const secondEvidence = evidenceById.get(second.id);
+    const bridgeSamples = [0, 1, 2]
+      .map((bridgeIndex) =>
+        sampleMap.get(`bridge:${first.id}:${second.id}:${bridgeIndex}`),
+      )
+      .filter((sample): sample is ImageColorSample => Boolean(sample));
+
+    if (!firstVisual || !secondVisual || firstVisual.cluster !== secondVisual.cluster) {
+      continuityDiagnostics.push({
+        firstId: first.id,
+        nearestBubbleDistance: null,
+        outcome: "different-visual-cluster",
+        pageDistance: null,
+        secondId: second.id,
+      });
+      continue;
+    }
+
+    if (!firstEvidence || !secondEvidence || bridgeSamples.length === 0) {
+      continuityDiagnostics.push({
+        firstId: first.id,
+        nearestBubbleDistance: null,
+        outcome: "missing-bridge-sample",
+        pageDistance: null,
+        secondId: second.id,
+      });
+      continue;
+    }
+
+    const bridgeDistances = bridgeSamples.map((bridge) => {
+      const bridgeColor = asColor(bridge);
+
+      return {
+        nearestBubbleDistance: Math.min(
+          colorDistance(bridgeColor, firstEvidence.bubbleColor),
+          colorDistance(bridgeColor, secondEvidence.bubbleColor),
+        ),
+        pageDistance: colorDistance(bridgeColor, pageColor),
+      };
+    });
+    const nearestBubbleDistance = Math.min(
+      ...bridgeDistances.map((sample) => sample.nearestBubbleDistance),
+    );
+    const pageDistance = Math.min(
+      ...bridgeDistances.map((sample) => sample.pageDistance),
+    );
+    const accepted = isVisuallyContinuousBridge(bridgeDistances);
+    const pageLikeSamples = bridgeDistances.filter(
+      (sample) => sample.pageDistance < 14,
+    ).length;
+    const outcome = accepted
+      ? "accepted"
+      : pageLikeSamples >= Math.ceil(bridgeDistances.length / 2)
+        ? "bridge-page-like"
+        : "bridge-style-mismatch";
+    continuityDiagnostics.push({
+      firstId: first.id,
+      nearestBubbleDistance: Number(nearestBubbleDistance.toFixed(1)),
+      outcome,
+      pageDistance: Number(pageDistance.toFixed(1)),
+      secondId: second.id,
+    });
+
+    if (accepted) {
+      pairs.push({ firstId: first.id, secondId: second.id });
+    }
+  }
+
+  return { continuityDiagnostics, pairs };
 }
 
 export async function resolveVisualBubbleAttribution({ messages, screenshotUri }: { messages: DetectedMessage[]; screenshotUri: string }): Promise<VisualBubbleAttribution | null> {
@@ -139,27 +283,44 @@ export async function resolveVisualBubbleAttribution({ messages, screenshotUri }
 
 export async function inspectVisualBubbleAttribution({ messages, screenshotUri }: { messages: DetectedMessage[]; screenshotUri: string }): Promise<VisualBubbleAttributionAttempt> {
   if (messages.length < 2) {
-    return { attribution: null, evidenceDiagnostics: [], outcome: "insufficient-messages" };
+    return { attribution: null, continuityDiagnostics: [], evidenceDiagnostics: [], outcome: "insufficient-messages" };
   }
   const dimensions = await sampleImageRegions(screenshotUri, [{ id: "dimensions", radius: 1, x: 0, y: 0 }]);
   if (!dimensions || dimensions.width < 40 || dimensions.height < 40) {
-    return { attribution: null, evidenceDiagnostics: [], outcome: "dimensions-unavailable" };
+    return { attribution: null, continuityDiagnostics: [], evidenceDiagnostics: [], outcome: "dimensions-unavailable" };
   }
   const sampled = await sampleImageRegions(screenshotUri, getRegions(messages, dimensions.width));
   if (!sampled) {
-    return { attribution: null, evidenceDiagnostics: [], outcome: "samples-unavailable" };
+    return { attribution: null, continuityDiagnostics: [], evidenceDiagnostics: [], outcome: "samples-unavailable" };
   }
-  const { evidence, evidenceDiagnostics } = deriveEvidence(
+  const { evidence, evidenceDiagnostics, pageColor, sampleMap } = deriveEvidence(
     messages,
     sampled.samples,
     sampled.width,
   );
-  const attribution = evidence
+  const baseAttribution = evidence
     ? resolveVisualBubbleAttributionFromEvidence(messages, evidence)
     : null;
+  const continuity = baseAttribution && evidence
+    ? getVisuallyContinuousPairs(
+        messages,
+        evidence,
+        baseAttribution,
+        sampleMap,
+        pageColor,
+      )
+    : { continuityDiagnostics: [], pairs: [] };
+  const attribution =
+    baseAttribution && evidence
+      ? {
+          ...baseAttribution,
+          continuousPairs: continuity.pairs,
+        }
+      : null;
 
   return {
     attribution,
+    continuityDiagnostics: continuity.continuityDiagnostics,
     evidenceDiagnostics: attribution || !evidence
       ? evidenceDiagnostics
       : evidenceDiagnostics.map((item) => ({

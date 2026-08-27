@@ -460,11 +460,18 @@ export function buildReplyGroundingRepairPrompt(
   request: RepliesRequest,
   previousReplies: SuggestedReply[],
   selectedTones: ReplyTone[],
+  rejectionCodes: string[] = [],
 ) {
+  const rejectionReason = rejectionCodes.length > 0
+    ? rejectionCodes.join(', ')
+    : 'ownership_or_grounding';
+
   return [
     buildReplyBatchPrompt(request, selectedTones),
     '',
     'Grounding and relevance repair:',
+    `- Privacy-safe validator reason code(s): ${rejectionReason}.`,
+    '- If the code is me_fact_directed_at_them, do not ask THEM about a fact, activity, location, plan, or experience established only for ME. Use THEIR latest hook or reply from ME\'s already-established perspective instead.',
     '- The previous reply was rejected because it may be unsupported, mis-owned, or disconnected from the clearest conversational hook.',
     '- Re-read the transcript before rewriting. Preserve only facts established about ME; do not turn an activity into a favorite, hobby, plan, preference, or other stronger claim.',
     '- If THEM asks something ME has not answered in the transcript or userFacts, use a natural non-committal answer, playful deflection, turnaround, or invitation rather than inventing details.',

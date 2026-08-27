@@ -163,12 +163,22 @@ test('grounding repair rewrites unsupported or irrelevant replies from the trans
   );
 
   assert.match(repairPrompt, /Grounding and relevance repair/i);
+  assert.match(repairPrompt, /validator reason code\(s\): ownership_or_grounding/i);
   assert.match(repairPrompt, /may be unsupported, mis-owned, or disconnected/i);
   assert.match(repairPrompt, /activity into a favorite, hobby, plan, preference/i);
   assert.match(repairPrompt, /natural non-committal answer, playful deflection, turnaround/i);
   assert.match(repairPrompt, /Unknown information is not evidence of its opposite/i);
   assert.match(repairPrompt, /Choose a fresh conversational move/i);
   assert.match(repairPrompt, /planning to catch up on reading/i);
+});
+
+test('grounding repair receives a privacy-safe ownership rejection code', () => {
+  const repairPrompt = buildReplyGroundingRepairPrompt(request, [], ['direct'], [
+    'me_fact_directed_at_them',
+  ]);
+
+  assert.match(repairPrompt, /validator reason code\(s\): me_fact_directed_at_them/i);
+  assert.match(repairPrompt, /do not ask THEM about a fact.*established only for ME/i);
 });
 
 test('vibe-check prompt defines the agreed interest rubric', () => {

@@ -244,12 +244,14 @@ function extractTextContent(content: unknown): string {
 }
 
 export async function callOpenRouterStructured<T>({
+  deadlineAt,
   instrumentation,
   prompt,
   schema,
   schemaName,
   task,
 }: {
+  deadlineAt?: number;
   instrumentation?: OpenRouterRequestInstrumentation;
   prompt: string;
   schema: OpenRouterSchema;
@@ -262,6 +264,7 @@ export async function callOpenRouterStructured<T>({
   try {
     return await callOpenRouterStructuredOnce<T>({
       apiKey,
+      deadlineAt,
       prompt,
       schema,
       schemaName,
@@ -270,13 +273,18 @@ export async function callOpenRouterStructured<T>({
       task: requestTask,
       ...getPrimaryRequestOptions(requestTask),
     });
-  } catch {
+  } catch (error) {
+    if (deadlineAt !== undefined && Date.now() >= deadlineAt) {
+      throw error;
+    }
+
     // Do not log the provider error object: it can contain response data from an
     // upstream service. The retry preserves the same privacy routing guarantees.
     console.warn('OpenRouter primary provider failed; retrying with privacy-preserving latency routing.');
 
     return callOpenRouterStructuredOnce<T>({
       apiKey,
+      deadlineAt,
       prompt,
       schema,
       schemaName,
@@ -291,6 +299,7 @@ export async function callOpenRouterStructured<T>({
 async function callOpenRouterStructuredOnce<T>({
   apiKey,
   attempt,
+  deadlineAt,
   instrumentation,
   model,
   prompt,
@@ -301,6 +310,7 @@ async function callOpenRouterStructuredOnce<T>({
 }: {
   apiKey: string;
   attempt: OpenRouterAttempt;
+  deadlineAt?: number;
   instrumentation?: OpenRouterRequestInstrumentation;
   model: string;
   prompt: string;
@@ -309,8 +319,19 @@ async function callOpenRouterStructuredOnce<T>({
   schemaName: string;
   task: OpenRouterTask;
 }): Promise<T> {
+  const remainingDeadlineMs = deadlineAt === undefined
+    ? undefined
+    : deadlineAt - Date.now();
+
+  if (remainingDeadlineMs !== undefined && remainingDeadlineMs <= 0) {
+    throw new Error('OpenRouter request deadline exceeded.');
+  }
+
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), getOpenRouterTimeoutMs());
+  const timeoutMs = remainingDeadlineMs === undefined
+    ? getOpenRouterTimeoutMs()
+    : Math.min(getOpenRouterTimeoutMs(), remainingDeadlineMs);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const startedAt = Date.now();
   const promptMetrics = getPromptMetrics(WINGR_SYSTEM_PROMPT, prompt);
   warnIfPromptExceedsBudget(task, model, promptMetrics);

@@ -1,8 +1,13 @@
 import { useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { Easing, FadeInLeft } from 'react-native-reanimated';
 import { CTAButton } from '../components/CTAButton';
 import { OnboardingScreenScaffold } from './OnboardingScreenScaffold';
 import type { OnboardingScreenProps } from '../types/onboarding';
+
+const GRAPHIC_ENTRANCE = FadeInLeft.duration(420)
+  .delay(100)
+  .easing(Easing.out(Easing.cubic));
 
 export function RatingScreen(props: OnboardingScreenProps) {
   const [ratingStarted, setRatingStarted] = useState(false);
@@ -28,14 +33,14 @@ export function RatingScreen(props: OnboardingScreenProps) {
         </View>
       }
     >
-      <View style={styles.illustrationWrap}>
+      <Animated.View entering={GRAPHIC_ENTRANCE} style={styles.illustrationWrap}>
         <Image
           accessibilityIgnoresInvertColors
           resizeMode="contain"
           source={require('../../assets/images/3d-msg.png')}
           style={styles.messageImage}
         />
-      </View>
+      </Animated.View>
     </OnboardingScreenScaffold>
   );
 }
@@ -50,8 +55,8 @@ const styles = StyleSheet.create({
   alreadyRated: {
     alignItems: 'center',
     alignSelf: 'center',
+    marginBottom: 16,
     paddingVertical: 4,
-    transform: [{ translateY: -10 }],
   },
   alreadyRatedPressed: {
     opacity: 0.72,
@@ -65,7 +70,9 @@ const styles = StyleSheet.create({
   },
   illustrationWrap: {
     alignItems: 'center',
+    height: 328,
     justifyContent: 'center',
+    width: '100%',
   },
   messageImage: {
     height: 328,

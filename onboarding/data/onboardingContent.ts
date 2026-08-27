@@ -89,12 +89,14 @@ export const onboardingContent: Record<
   vibecheck: {
     id: "vibecheck",
     title: "Your reply",
+    titleParts: [{ color: "blue", text: "Your" }, { text: " reply" }],
     body: "Check the vibe, then tap the reply to copy it.",
     ctaLabel: "Next",
   },
   replies: {
     id: "replies",
     title: "Your reply",
+    titleParts: [{ color: "blue", text: "Your" }, { text: " reply" }],
     body: "Based on the vibe, these are your best next moves.",
     ctaLabel: "Next",
   },
@@ -108,6 +110,11 @@ export const onboardingContent: Record<
   testimonials: {
     id: "testimonials",
     title: "Don’t take our word for it",
+    titleParts: [
+      { text: "Don’t take " },
+      { color: "blue", text: "our word" },
+      { text: " for it" },
+    ],
     body: "Here’s what people using WiNGR are saying.",
     ctaLabel: "Next",
   },

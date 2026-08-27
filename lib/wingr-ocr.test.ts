@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  mergeVisuallyContinuousMessages,
   needsSpeakerConfirmation,
   reconstructConversationFromOcrLines,
   type OcrLineInput,
 } from "./wingr-ocr";
 import {
+  isVisuallyContinuousBridge,
   resolveVisualBubbleAttributionFromEvidence,
 } from "./visual-bubble-attribution";
 import type { DetectedMessage } from "../types/wingr";
@@ -142,6 +144,79 @@ test("removes a compact top-right header control even when OCR reads it as words
       (message) => message.text,
     ),
     ["Hey", "How is your week going?"],
+  );
+});
+
+test("merges only visually continuous wrapped groups, not separate same-speaker bubbles", () => {
+  const messages: DetectedMessage[] = [
+    {
+      ...visualMessage("norway-first", 292, 560),
+      sender: "me",
+      speaker: "user",
+      text: "First part",
+    },
+    {
+      ...visualMessage("norway-last", 292, 480),
+      sender: "me",
+      speaker: "user",
+      text: "Continuation",
+    },
+    {
+      ...visualMessage("roommate", 160, 620),
+      sender: "them",
+      speaker: "other",
+      text: "Separate message",
+    },
+    {
+      ...visualMessage("storm", 160, 610),
+      sender: "them",
+      speaker: "other",
+      text: "Another separate message",
+    },
+  ];
+
+  const merged = mergeVisuallyContinuousMessages(messages, [
+    { firstId: "norway-first", secondId: "norway-last" },
+  ]);
+
+  assert.deepEqual(merged.map((message) => message.id), [
+    "norway-first",
+    "roommate",
+    "storm",
+  ]);
+  assert.equal(merged[0]?.text, "First part Continuation");
+});
+
+test("uses the shared bubble interior when one bridge point is visually obstructed", () => {
+  assert.equal(
+    isVisuallyContinuousBridge([
+      { nearestBubbleDistance: 277.5, pageDistance: 194.1 },
+      { nearestBubbleDistance: 0, pageDistance: 194.1 },
+      { nearestBubbleDistance: 0, pageDistance: 194.1 },
+    ]),
+    true,
+  );
+});
+
+test("does not merge separate same-speaker bubbles when the bridge is page-like", () => {
+  assert.equal(
+    isVisuallyContinuousBridge([
+      { nearestBubbleDistance: 120, pageDistance: 3 },
+      { nearestBubbleDistance: 110, pageDistance: 5 },
+      { nearestBubbleDistance: 118, pageDistance: 4 },
+    ]),
+    false,
+  );
+});
+
+test("preserves an existing accepted visual continuation", () => {
+  assert.equal(
+    isVisuallyContinuousBridge([
+      { nearestBubbleDistance: 0, pageDistance: 19.5 },
+      { nearestBubbleDistance: 0, pageDistance: 19.5 },
+      { nearestBubbleDistance: 0, pageDistance: 19.5 },
+    ]),
+    true,
   );
 });
 

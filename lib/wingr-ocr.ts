@@ -929,6 +929,48 @@ function buildStructuredConversation(
   }));
 }
 
+export function mergeVisuallyContinuousMessages(
+  messages: DetectedMessage[],
+  continuousPairs: Array<{ firstId: string; secondId: string }>,
+) {
+  const continuations = new Set(
+    continuousPairs.map((pair) => `${pair.firstId}:${pair.secondId}`),
+  );
+
+  return messages.reduce<DetectedMessage[]>((merged, message) => {
+    const previous = merged[merged.length - 1];
+
+    if (
+      previous &&
+      previous.sender === message.sender &&
+      continuations.has(`${previous.id}:${message.id}`)
+    ) {
+      const previousRight = previous.boundingBox.x + previous.boundingBox.width;
+      const messageRight = message.boundingBox.x + message.boundingBox.width;
+      const previousBottom = previous.boundingBox.y + previous.boundingBox.height;
+      const messageBottom = message.boundingBox.y + message.boundingBox.height;
+      const left = Math.min(previous.boundingBox.x, message.boundingBox.x);
+      const top = Math.min(previous.boundingBox.y, message.boundingBox.y);
+
+      merged[merged.length - 1] = {
+        ...previous,
+        boundingBox: {
+          height: Math.max(previousBottom, messageBottom) - top,
+          width: Math.max(previousRight, messageRight) - left,
+          x: left,
+          y: top,
+        },
+        confidence: Math.min(previous.confidence, message.confidence),
+        text: `${previous.text} ${message.text}`.replace(/\s+/g, " ").trim(),
+      };
+      return merged;
+    }
+
+    merged.push(message);
+    return merged;
+  }, []);
+}
+
 function formatTranscript(
   structuredConversation: StructuredConversationMessage[],
 ) {
@@ -1215,6 +1257,9 @@ export async function extractChatTextFromImage(
   let visualEvidenceDiagnostics:
     | Awaited<ReturnType<typeof inspectVisualBubbleAttribution>>["evidenceDiagnostics"] =
     [];
+  let visualContinuityDiagnostics:
+    | Awaited<ReturnType<typeof inspectVisualBubbleAttribution>>["continuityDiagnostics"] =
+    [];
   let visualAttemptOutcome = "not-attempted";
 
   try {
@@ -1231,6 +1276,7 @@ export async function extractChatTextFromImage(
           })
         : {
             attribution: null,
+            continuityDiagnostics: [],
             evidenceDiagnostics: [],
             outcome: "insufficient-messages" as const,
           };
@@ -1239,10 +1285,15 @@ export async function extractChatTextFromImage(
     visualAttemptOutcome = visualAttempt.outcome;
     visualDiagnostics = visualAttribution;
     visualEvidenceDiagnostics = visualAttempt.evidenceDiagnostics;
+    visualContinuityDiagnostics = visualAttempt.continuityDiagnostics;
 
     if (visualAttribution) {
-      const parsedConversation = buildParsedConversation(
+      const visuallyMergedMessages = mergeVisuallyContinuousMessages(
         visualAttribution.messages,
+        visualAttribution.continuousPairs,
+      );
+      const parsedConversation = buildParsedConversation(
+        visuallyMergedMessages,
         {
           confidence: visualAttribution.confidence,
           meColumn: null,
@@ -1253,7 +1304,7 @@ export async function extractChatTextFromImage(
       reconstruction = {
         ...reconstruction,
         confidence: parsedConversation.speakerAttributionConfidence,
-        detectedMessages: visualAttribution.messages,
+        detectedMessages: visuallyMergedMessages,
         geometryAttributionAmbiguous: false,
         parsedConversation,
         transcriptText: formatTranscript(parsedConversation.structuredConversation),
@@ -1273,7 +1324,7 @@ export async function extractChatTextFromImage(
       visualDiagnostics?.diagnostics.map((item) => [item.id, item]) ?? [],
     );
 
-    console.info("[Wingr native OCR attribution diagnostics]", {
+    const attributionDiagnostics = {
       // Intentionally excludes OCR text, raw screenshots, names, and pixels.
       conversationGroups: initialReconstruction.diagnostics.geometryGroups.map(
         (group) => {
@@ -1304,7 +1355,14 @@ export async function extractChatTextFromImage(
       ),
       visualAttemptOutcome,
       visualEvidence: visualEvidenceDiagnostics,
-    });
+      visualContinuousPairs: visualDiagnostics?.continuousPairs ?? [],
+      visualContinuity: visualContinuityDiagnostics,
+    };
+
+    console.info(
+      "[Wingr native OCR attribution diagnostics]",
+      JSON.stringify(attributionDiagnostics, null, 2),
+    );
     console.info("[Wingr native OCR] reconstruction ready", {
       detectedMessages: reconstruction.detectedMessages.length,
       speakerAttributionConfidence:
