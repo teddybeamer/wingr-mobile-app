@@ -46,6 +46,12 @@ Deno.serve(async (request) => {
 
     if (needsSpeakerConfirmation(body.parsedConversation)) {
       finalOutcome = 'speakerConfirmation';
+      console.warn('[Wingr AI] Reply generation diagnostic', {
+        event: 'needs_speaker_confirmation_empty_batch',
+        hasParsedConversation: Boolean(body.parsedConversation),
+        selectedTone,
+        turnState: getConversationTurnState(body.parsedConversation),
+      });
       return json({ needsSpeakerConfirmation: true });
     }
 

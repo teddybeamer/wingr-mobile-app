@@ -3,9 +3,9 @@ import test from 'node:test';
 import {
   buildGeminiVibeCheckPrompt,
   buildVibeCheckPrompt,
+  buildReplyEmergencyPrompt,
   buildReplyGroundingRepairPrompt,
   buildRepliesPrompt,
-  buildReplyLanguageRepairPrompt,
   createReplyBatchSchema,
   geminiVibeCheckSchema,
   getMockReplies,
@@ -58,12 +58,10 @@ test('reply batch schema requires exactly one reply for every requested tone', (
 
 test('reply prompts and mocks use one reply per selected tone', () => {
   const replyPrompt = buildRepliesPrompt(request);
-  const repairPrompt = buildReplyLanguageRepairPrompt(request, [], ['playful']);
 
   assert.match(replyPrompt, /playful: generate exactly 1 reply/);
   assert.match(replyPrompt, /Write one suggested reply in English/);
   assert.doesNotMatch(replyPrompt, /exactly 2|both suggested replies/);
-  assert.match(repairPrompt, /Rewrite exactly one reply in English for each requested tone/);
   assert.equal(getMockReplies('playful').length, 1);
 });
 
@@ -87,11 +85,23 @@ test('reply grounding applies to every selectable tone and prioritizes actionabl
     assert.match(prompt, /played a game.*does not establish it is their favorite/i);
     assert.match(prompt, /unknown.*stay non-specific, playfully deflect, turn it back/i);
     assert.match(prompt, /Unknown is not a negative fact/i);
+    assert.match(prompt, /Light conversational inferences are allowed/i);
+    assert.match(prompt, /With limited context, a short neutral follow-up/i);
     assert.match(prompt, /meaningfully different conversational moves/i);
     assert.match(prompt, /Do not use the emergency fallback wording/i);
-    assert.match(prompt, /vague orphan references/i);
+    assert.match(prompt, /With limited context, a short neutral follow-up/i);
     assert.match(prompt, /Tone changes how a grounded strategy is expressed/i);
   });
+});
+
+test('emergency reply prompt keeps generation contextual without local intent branches', () => {
+  const prompt = buildReplyEmergencyPrompt(request, ['playful'], ['ownership_or_grounding']);
+
+  assert.match(prompt, /Emergency reply generation/);
+  assert.match(prompt, /Respond to the latest message from THEM/);
+  assert.match(prompt, /answer a direct question naturally/i);
+  assert.match(prompt, /original transcript and context/i);
+  assert.match(prompt, /ownership_or_grounding/);
 });
 
 test('prompts preserve structured speaker ownership and turn state', () => {
@@ -137,8 +147,8 @@ test('prompts preserve structured speaker ownership and turn state', () => {
   const replyPrompt = buildRepliesPrompt({ ...request, parsedConversation, transcriptText });
   const vibePrompt = buildGeminiVibeCheckPrompt({ parsedConversation, transcriptText });
 
-  assert.match(replyPrompt, /Preserve fact ownership exactly/i);
-  assert.match(replyPrompt, /Never ask THEM about a detail.*only ME already supplied/i);
+  assert.match(replyPrompt, /Preserve fact ownership: ME-established facts are not evidence/i);
+  assert.match(replyPrompt, /Do not state an unsupported concrete fact about THEM as true/i);
   assert.match(vibePrompt, /latestMessageSender: them/i);
   assert.match(vibePrompt, /THEM messages after the most recent ME message: 2/i);
   assert.match(vibePrompt, /THEM has responded after ME: yes/i);
@@ -164,21 +174,20 @@ test('grounding repair rewrites unsupported or irrelevant replies from the trans
 
   assert.match(repairPrompt, /Grounding and relevance repair/i);
   assert.match(repairPrompt, /validator reason code\(s\): ownership_or_grounding/i);
-  assert.match(repairPrompt, /may be unsupported, mis-owned, or disconnected/i);
+  assert.match(repairPrompt, /may invent a concrete fact, reverse fact ownership/i);
   assert.match(repairPrompt, /activity into a favorite, hobby, plan, preference/i);
   assert.match(repairPrompt, /natural non-committal answer, playful deflection, turnaround/i);
+  assert.match(repairPrompt, /Limited context is not itself a rejection reason/i);
   assert.match(repairPrompt, /Unknown information is not evidence of its opposite/i);
   assert.match(repairPrompt, /Choose a fresh conversational move/i);
   assert.match(repairPrompt, /planning to catch up on reading/i);
 });
 
-test('grounding repair receives a privacy-safe ownership rejection code', () => {
-  const repairPrompt = buildReplyGroundingRepairPrompt(request, [], ['direct'], [
-    'me_fact_directed_at_them',
-  ]);
+test('grounding repair keeps social inference available while protecting concrete facts', () => {
+  const repairPrompt = buildReplyGroundingRepairPrompt(request, [], ['direct']);
 
-  assert.match(repairPrompt, /validator reason code\(s\): me_fact_directed_at_them/i);
-  assert.match(repairPrompt, /do not ask THEM about a fact.*established only for ME/i);
+  assert.match(repairPrompt, /not evidence that the same concrete fact is true of THEM/i);
+  assert.match(repairPrompt, /playful assumptions, teasing, and clearly framed social interpretations/i);
 });
 
 test('vibe-check prompt defines the agreed interest rubric', () => {

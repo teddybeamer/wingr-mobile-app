@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getOwnershipCheckedReplies, getOwnershipSafeReplies } from './reply-ownership.ts';
+import {
+  getOwnershipCheckedReplies,
+  getReplyOwnershipValidationTrace,
+  getTerminalFallbackReply,
+} from './reply-ownership.ts';
 import type { RepliesRequest } from './types.ts';
 
 const request: RepliesRequest = {
@@ -15,33 +19,31 @@ const request: RepliesRequest = {
   },
 };
 
-test('uses a grounded fallback instead of the old vague ownership fallback', () => {
-  const replies = getOwnershipSafeReplies(
-    [
-      {
-        id: 'direct-1',
-        text: 'Morgan, I am planning a hike and some reading.',
-        tone: 'direct',
-      },
-    ],
-    request,
-  );
+test('keeps light conversational inferences and neutral follow-ups', () => {
+  [
+    'Sounds like you’re getting the full family interrogation 😂',
+    'Okay, so what’s the story there?',
+    'I’m choosing to believe that was a compliment.',
+    'You seem suspiciously confident about that.',
+  ].forEach((text, index) => {
+    const replies = getOwnershipCheckedReplies(
+      [{ id: `reply-${index}`, text, tone: 'playful' }],
+      request,
+    );
 
-  assert.equal(replies[0]?.text, 'Got something in mind?');
-  assert.doesNotMatch(replies[0]?.text ?? '', /what is the story/i);
+    assert.equal(replies[0]?.text, text);
+  });
 });
 
-test('uses distinct emergency fallbacks for different tones', () => {
-  const invalidReply = [{ id: 'reply-1', text: 'Morgan, tell me more.', tone: 'playful' as const }];
-
-  const playful = getOwnershipSafeReplies(invalidReply, { ...request, selectedTone: 'playful' });
-  const casual = getOwnershipSafeReplies(invalidReply, { ...request, selectedTone: 'casualSmallTalk' });
-
-  assert.notEqual(playful[0]?.text, casual[0]?.text);
-  assert.notEqual(playful[0]?.text, 'Got something in mind?');
+test('uses one minimal language-aware terminal fallback', () => {
+  assert.equal(getTerminalFallbackReply(request).text, 'Okay, tell me more 👀');
+  assert.equal(getTerminalFallbackReply({
+    ...request,
+    vibeCheck: { ...request.vibeCheck, targetLanguage: 'Danish' },
+  }).text, 'Fortæl mig lidt mere.');
 });
 
-test('rejects a question that assigns a ME-only fact to THEM', () => {
+test('accepts harmless Playful inference while recording the ME-only lexical overlap as advisory', () => {
   const conversationRequest: RepliesRequest = {
     ...request,
     parsedConversation: {
@@ -53,7 +55,7 @@ test('rejects a question that assigns a ME-only fact to THEM', () => {
           id: 'me-1',
           sender: 'me',
           speaker: 'user',
-          text: 'Jeg er på fjellet og skulle bygge en ishytte.',
+          text: 'I am very competitive.',
           xPosition: 'right',
         },
         {
@@ -62,7 +64,7 @@ test('rejects a question that assigns a ME-only fact to THEM', () => {
           id: 'them-1',
           sender: 'them',
           speaker: 'other',
-          text: 'Håber du overlever stormen.',
+          text: 'Haha, I can tell.',
           xPosition: 'left',
         },
       ],
@@ -70,14 +72,28 @@ test('rejects a question that assigns a ME-only fact to THEM', () => {
       speakerAttributionConfidence: 0.98,
     },
     transcriptText: [
-      'ME: Jeg er på fjellet og skulle bygge en ishytte.',
-      'THEM: Håber du overlever stormen.',
+      'ME: I am very competitive.',
+      'THEM: Haha, I can tell.',
     ].join('\n'),
   };
 
+  const candidate = { id: 'reply-1', text: 'You sound competitive too, huh? 👀', tone: 'playful' as const };
   const replies = getOwnershipCheckedReplies(
-    [{ id: 'reply-1', text: 'Har I fundet på noget andet i stedet for ishytten?', tone: 'direct' }],
+    [candidate],
     conversationRequest,
+  );
+
+  assert.deepEqual(replies, [candidate]);
+  assert.equal(getReplyOwnershipValidationTrace([candidate], conversationRequest).meFactDirectedAtThemDetected, true);
+});
+
+test('still rejects unsupported first-person ownership claims', () => {
+  const replies = getOwnershipCheckedReplies(
+    [{ id: 'reply-1', text: 'I love dogs too.', tone: 'playful' }],
+    {
+      ...request,
+      contextNotes: { replyInstruction: [], situationNotes: [], themFacts: ['They have a dog.'], userFacts: [] },
+    },
   );
 
   assert.deepEqual(replies, []);

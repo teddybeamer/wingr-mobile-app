@@ -44,7 +44,7 @@ export function OnboardingScreenScaffold({
     <View style={styles.screen}>
       <View>
         <OnboardingHeader
-          canGoBack={canGoBack}
+          canGoBack={content.id !== "replies" && canGoBack}
           currentIndex={currentIndex}
           onBack={onBack}
           totalSteps={totalSteps}

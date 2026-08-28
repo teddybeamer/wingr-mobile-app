@@ -6,6 +6,7 @@ import {
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_DEEPSEEK_MODEL = 'deepseek/deepseek-v3.2';
+const DEEPINFRA_PROVIDER = 'deepinfra';
 const DEFAULT_VIBE_CHECK_MODEL = 'google/gemini-2.5-flash-lite';
 const DEFAULT_OPENROUTER_TIMEOUT_MS = 20_000;
 const WINGR_SYSTEM_PROMPT =
@@ -14,6 +15,7 @@ const WINGR_SYSTEM_PROMPT =
 type OpenRouterTask = 'reply' | 'vibeCheck';
 
 type OpenRouterProviderRouting = {
+  allow_fallbacks?: boolean;
   data_collection: 'deny';
   only?: string[];
   sort?: 'latency' | 'price' | 'throughput';
@@ -33,6 +35,7 @@ type OpenRouterRequestOptions = {
 };
 
 type OpenRouterAttempt = 'primary' | 'latencyFallback';
+type OpenRouterFailureReason = 'deadline_budget_exhausted' | 'empty_response' | 'http_status' | 'json_parse' | 'network_or_timeout';
 
 type OpenRouterRequestInstrumentation = {
   onAttemptStart?: () => void;
@@ -92,14 +95,24 @@ function getTaskProvider(task: OpenRouterTask) {
 }
 
 function getPrimaryRequestOptions(task: OpenRouterTask): OpenRouterRequestOptions {
+  if (task === 'reply') {
+    return {
+      model: getTaskModel(task),
+      provider: {
+        allow_fallbacks: false,
+        data_collection: 'deny',
+        only: [DEEPINFRA_PROVIDER],
+        zdr: true,
+      },
+    };
+  }
+
   const taskProvider = getTaskProvider(task);
   const providerSlugs = taskProvider ? getProviderSlugs(taskProvider) : [];
   const routing =
     providerSlugs.length > 0
       ? { only: providerSlugs }
-      : task === 'reply'
-        ? { sort: 'latency' as const }
-        : {};
+      : {};
 
   return {
     model: getTaskModel(task),
@@ -127,6 +140,8 @@ function getOpenRouterTimeoutMs() {
 
   return Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_OPENROUTER_TIMEOUT_MS;
 }
+
+class OpenRouterTransportError extends Error {}
 
 function getModelProviderName(model: string) {
   if (model.startsWith('google/gemini')) {
@@ -169,35 +184,78 @@ function getProviderRoutingLabel(provider: OpenRouterProviderRouting) {
   return 'custom';
 }
 
+function getReportedProvider(payload: unknown) {
+  if (!payload || typeof payload !== 'object') {
+    return undefined;
+  }
+
+  const metadata = (payload as { openrouter_metadata?: unknown }).openrouter_metadata;
+  if (!metadata || typeof metadata !== 'object') {
+    return undefined;
+  }
+
+  const availableEndpoints = (metadata as {
+    endpoints?: { available?: unknown };
+  }).endpoints?.available;
+  if (!Array.isArray(availableEndpoints)) {
+    return undefined;
+  }
+
+  const selectedEndpoint = availableEndpoints.find((endpoint) =>
+    endpoint && typeof endpoint === 'object' && (endpoint as { selected?: unknown }).selected === true
+  );
+  const provider = selectedEndpoint && typeof selectedEndpoint === 'object'
+    ? (selectedEndpoint as { provider?: unknown }).provider
+    : undefined;
+
+  return typeof provider === 'string' ? provider : undefined;
+}
+
 function logOpenRouterRequest({
   attempt,
   durationMs,
+  generationId,
   model,
   promptMetrics,
   provider,
+  reportedProvider,
   result,
   task,
+  totalGenerationDurationMs,
+  failureReason,
+  httpStatus,
 }: {
   attempt: OpenRouterAttempt;
   durationMs?: number;
+  generationId?: string;
   model: string;
   promptMetrics: ReturnType<typeof getPromptMetrics>;
   provider: OpenRouterProviderRouting;
-  result: 'start' | 'success' | 'failure';
+  reportedProvider?: string;
+  result: 'start' | 'success' | 'failure' | 'skipped';
   task: OpenRouterTask;
+  totalGenerationDurationMs?: number;
+  failureReason?: OpenRouterFailureReason;
+  httpStatus?: number;
 }) {
   console.info(`[Wingr AI] ${getTaskLogName(task)} provider: ${getModelProviderName(model)}`, {
     attempt,
     durationMs,
     endpointType: 'OpenRouter chat completions',
+    event: 'openrouter_request',
     estimatedTokens: promptMetrics.estimatedTokens,
     model,
+    failureReason,
+    generationId,
+    httpStatus,
+    reportedProvider,
     providerRouting: getProviderRoutingLabel(provider),
     requestType: getRequestTypeLabel(task),
     result,
     systemPromptChars: promptMetrics.systemPromptChars,
     task,
     totalChars: promptMetrics.totalChars,
+    totalGenerationDurationMs,
     url: OPENROUTER_URL,
     userPromptChars: promptMetrics.userPromptChars,
   });
@@ -245,14 +303,22 @@ function extractTextContent(content: unknown): string {
 
 export async function callOpenRouterStructured<T>({
   deadlineAt,
+  generationId,
   instrumentation,
+  maxLatencyFallbackAttemptMs,
+  maxPrimaryAttemptMs,
+  minLatencyFallbackWindowMs = 0,
   prompt,
   schema,
   schemaName,
   task,
 }: {
   deadlineAt?: number;
+  generationId?: string;
   instrumentation?: OpenRouterRequestInstrumentation;
+  maxLatencyFallbackAttemptMs?: number;
+  maxPrimaryAttemptMs?: number;
+  minLatencyFallbackWindowMs?: number;
   prompt: string;
   schema: OpenRouterSchema;
   schemaName: string;
@@ -260,21 +326,42 @@ export async function callOpenRouterStructured<T>({
 }): Promise<T> {
   const apiKey = getOpenRouterApiKey();
   const requestTask = task ?? 'reply';
+  const requestStartedAt = Date.now();
 
   try {
     return await callOpenRouterStructuredOnce<T>({
       apiKey,
       deadlineAt,
+      generationId,
+      maxAttemptMs: maxPrimaryAttemptMs,
       prompt,
       schema,
       schemaName,
       attempt: 'primary',
       instrumentation,
+      requestStartedAt,
       task: requestTask,
       ...getPrimaryRequestOptions(requestTask),
     });
   } catch (error) {
-    if (deadlineAt !== undefined && Date.now() >= deadlineAt) {
+    if (!(error instanceof OpenRouterTransportError)) {
+      throw error;
+    }
+
+    if (deadlineAt !== undefined && Date.now() + minLatencyFallbackWindowMs >= deadlineAt) {
+      const fallbackOptions = getLatencyFallbackRequestOptions(requestTask);
+      logOpenRouterRequest({
+        attempt: 'latencyFallback',
+        failureReason: 'deadline_budget_exhausted',
+        generationId,
+        model: fallbackOptions.model,
+        promptMetrics: getPromptMetrics(WINGR_SYSTEM_PROMPT, prompt),
+        provider: fallbackOptions.provider,
+        reportedProvider: undefined,
+        result: 'skipped',
+        task: requestTask,
+        totalGenerationDurationMs: Date.now() - requestStartedAt,
+      });
       throw error;
     }
 
@@ -285,11 +372,14 @@ export async function callOpenRouterStructured<T>({
     return callOpenRouterStructuredOnce<T>({
       apiKey,
       deadlineAt,
+      generationId,
+      maxAttemptMs: maxLatencyFallbackAttemptMs,
       prompt,
       schema,
       schemaName,
       attempt: 'latencyFallback',
       instrumentation,
+      requestStartedAt,
       task: requestTask,
       ...getLatencyFallbackRequestOptions(requestTask),
     });
@@ -300,10 +390,13 @@ async function callOpenRouterStructuredOnce<T>({
   apiKey,
   attempt,
   deadlineAt,
+  generationId,
   instrumentation,
+  maxAttemptMs,
   model,
   prompt,
   provider,
+  requestStartedAt,
   schema,
   schemaName,
   task,
@@ -311,10 +404,13 @@ async function callOpenRouterStructuredOnce<T>({
   apiKey: string;
   attempt: OpenRouterAttempt;
   deadlineAt?: number;
+  generationId?: string;
   instrumentation?: OpenRouterRequestInstrumentation;
+  maxAttemptMs?: number;
   model: string;
   prompt: string;
   provider: OpenRouterProviderRouting;
+  requestStartedAt: number;
   schema: OpenRouterSchema;
   schemaName: string;
   task: OpenRouterTask;
@@ -329,8 +425,8 @@ async function callOpenRouterStructuredOnce<T>({
 
   const controller = new AbortController();
   const timeoutMs = remainingDeadlineMs === undefined
-    ? getOpenRouterTimeoutMs()
-    : Math.min(getOpenRouterTimeoutMs(), remainingDeadlineMs);
+    ? Math.min(getOpenRouterTimeoutMs(), maxAttemptMs ?? Number.POSITIVE_INFINITY)
+    : Math.min(getOpenRouterTimeoutMs(), maxAttemptMs ?? Number.POSITIVE_INFINITY, remainingDeadlineMs);
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const startedAt = Date.now();
   const promptMetrics = getPromptMetrics(WINGR_SYSTEM_PROMPT, prompt);
@@ -342,9 +438,11 @@ async function callOpenRouterStructuredOnce<T>({
     instrumentation?.onAttemptStart?.();
     logOpenRouterRequest({
       attempt,
+      generationId,
       model,
       promptMetrics,
       provider,
+      reportedProvider: undefined,
       result: 'start',
       task,
     });
@@ -375,6 +473,7 @@ async function callOpenRouterStructuredOnce<T>({
       headers: {
         authorization: `Bearer ${apiKey}`,
         'content-type': 'application/json',
+        'x-openrouter-metadata': 'enabled',
       },
       method: 'POST',
       signal: controller.signal,
@@ -383,14 +482,18 @@ async function callOpenRouterStructuredOnce<T>({
     logOpenRouterRequest({
       attempt,
       durationMs: Date.now() - startedAt,
+      generationId,
       model,
       promptMetrics,
       provider,
+      reportedProvider: undefined,
       result: 'failure',
       task,
+      totalGenerationDurationMs: Date.now() - requestStartedAt,
+      failureReason: 'network_or_timeout',
     });
 
-    throw fetchError;
+    throw new OpenRouterTransportError('OpenRouter transport request failed.');
   } finally {
     clearTimeout(timeoutId);
   }
@@ -403,29 +506,62 @@ async function callOpenRouterStructuredOnce<T>({
     logOpenRouterRequest({
       attempt,
       durationMs: Date.now() - startedAt,
+      generationId,
       model,
       promptMetrics,
       provider,
+      reportedProvider: undefined,
       result: 'failure',
       task,
+      totalGenerationDurationMs: Date.now() - requestStartedAt,
+      failureReason: 'http_status',
+      httpStatus: response.status,
     });
     // Do not include the upstream response body in errors or logs. Providers can
     // include request-derived content in error responses.
-    throw new Error(`OpenRouter request failed with ${response.status}.`);
+    throw new OpenRouterTransportError(`OpenRouter request failed with ${response.status}.`);
   }
 
-  const payload = await response.json();
-  const content = extractTextContent(payload?.choices?.[0]?.message?.content);
+  let payload: unknown;
+
+  try {
+    payload = await response.json();
+  } catch (parseError) {
+    logOpenRouterRequest({
+      attempt,
+      durationMs: Date.now() - startedAt,
+      generationId,
+      model,
+      promptMetrics,
+      provider,
+      reportedProvider: undefined,
+      result: 'failure',
+      task,
+      totalGenerationDurationMs: Date.now() - requestStartedAt,
+      failureReason: 'json_parse',
+    });
+
+    throw parseError;
+  }
+
+  const content = extractTextContent(
+    (payload as { choices?: Array<{ message?: { content?: unknown } }> })
+      .choices?.[0]?.message?.content,
+  );
 
   if (!content) {
     logOpenRouterRequest({
       attempt,
       durationMs: Date.now() - startedAt,
+      generationId,
       model,
       promptMetrics,
       provider,
+      reportedProvider: undefined,
       result: 'failure',
       task,
+      totalGenerationDurationMs: Date.now() - requestStartedAt,
+      failureReason: 'empty_response',
     });
     throw new Error('OpenRouter returned an empty response.');
   }
@@ -438,11 +574,15 @@ async function callOpenRouterStructuredOnce<T>({
     logOpenRouterRequest({
       attempt,
       durationMs: Date.now() - startedAt,
+      generationId,
       model,
       promptMetrics,
       provider,
+      reportedProvider: undefined,
       result: 'failure',
       task,
+      totalGenerationDurationMs: Date.now() - requestStartedAt,
+      failureReason: 'json_parse',
     });
 
     throw parseError;
@@ -451,11 +591,14 @@ async function callOpenRouterStructuredOnce<T>({
   logOpenRouterRequest({
     attempt,
     durationMs: Date.now() - startedAt,
+    generationId,
     model,
     promptMetrics,
     provider,
+    reportedProvider: getReportedProvider(payload),
     result: 'success',
     task,
+    totalGenerationDurationMs: Date.now() - requestStartedAt,
   });
 
   return parsedContent;

@@ -377,7 +377,7 @@ export function useConversationFlow() {
 
       if (!nextReply) {
         throw new Error(
-          "Wingr could not create a safe reply from that screenshot.",
+          "Wingr couldn’t create another reply. Try again.",
         );
       }
 

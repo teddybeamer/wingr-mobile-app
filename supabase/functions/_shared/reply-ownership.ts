@@ -53,14 +53,13 @@ const DIRECT_ADDRESS_ALLOWLIST = new Set([
 export type ReplyOwnershipValidationTrace = {
   acceptedReplyCount: number;
   checkedReplyCount: number;
-  meFactDirectedAtThemRejected: boolean;
+  meFactDirectedAtThemDetected: boolean;
   rejectionCodes: ReplyOwnershipRejectionCode[];
   rejectedReplyCount: number;
 };
 
 export type ReplyOwnershipRejectionCode =
-  | 'me_fact_directed_at_them'
-  | 'ownership_or_grounding';
+  'ownership_or_grounding';
 
 function getReplyOwnershipRejectionCodes(
   replies: SuggestedReply[],
@@ -68,10 +67,6 @@ function getReplyOwnershipRejectionCodes(
 ): ReplyOwnershipRejectionCode[] {
   const issues = replies.flatMap((reply) => getReplyOwnershipIssues(reply.text, request));
   const codes = new Set<ReplyOwnershipRejectionCode>();
-
-  if (issues.includes('Reply asks the other person about a fact established only for the user.')) {
-    codes.add('me_fact_directed_at_them');
-  }
 
   if (issues.length > 0 && codes.size === 0) {
     codes.add('ownership_or_grounding');
@@ -239,7 +234,11 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function getThemFactKeywords(notes: ContextNotes) {
+function getFallbackLanguage(targetLanguage?: string) {
+  return targetLanguage?.trim().toLowerCase() ?? 'english';
+}
+
+function getThemFactKeywords(notes: ContextNotes, targetLanguage?: string) {
   const keywords = new Set<string>();
   const words = notes.themFacts
     .join(' ')
@@ -250,6 +249,8 @@ function getThemFactKeywords(notes: ContextNotes) {
     .filter((word) => word.length > 3 && !STOPWORDS.has(word));
 
   words.forEach((word) => keywords.add(word));
+
+  const language = getFallbackLanguage(targetLanguage);
 
   if (contextMentionsPets(notes) && (language === 'danish' || language === 'english')) {
     ['dog', 'pup', 'puppy', 'pet'].forEach((word) => keywords.add(word));
@@ -285,10 +286,15 @@ function hasUnsupportedPetClaim(replyText: string, notes: ContextNotes, transcri
   return USER_PET_CLAIM_PATTERNS.some((pattern) => pattern.test(replyText));
 }
 
-function hasUnsupportedKeywordOwnership(replyText: string, notes: ContextNotes, transcriptText: string) {
+function hasUnsupportedKeywordOwnership(
+  replyText: string,
+  notes: ContextNotes,
+  transcriptText: string,
+  targetLanguage?: string,
+) {
   const userOwnedKeywords = getUserOwnedKeywords(notes, transcriptText);
 
-  return getThemFactKeywords(notes).some((keyword) => {
+  return getThemFactKeywords(notes, targetLanguage).some((keyword) => {
     if (userOwnedKeywords.has(keyword)) {
       return false;
     }
@@ -317,12 +323,13 @@ function getReplyOwnershipIssues(replyText: string, request: RepliesRequest) {
     issues.push('Reply implies the user owns or loves a pet without user evidence.');
   }
 
-  if (hasUnsupportedKeywordOwnership(replyText, notes, request.transcriptText)) {
+  if (hasUnsupportedKeywordOwnership(
+    replyText,
+    notes,
+    request.transcriptText,
+    request.vibeCheck.targetLanguage,
+  )) {
     issues.push('Reply turns a fact about the other person into a user-owned claim.');
-  }
-
-  if (asksOtherPersonAboutMeOnlyFact(replyText, request)) {
-    issues.push('Reply asks the other person about a fact established only for the user.');
   }
 
   const addressedName = getUnsupportedDirectAddress(replyText, request.transcriptText);
@@ -362,81 +369,31 @@ export function getReplyOwnershipValidationTrace(
   return {
     acceptedReplyCount,
     checkedReplyCount: replies.length,
-    meFactDirectedAtThemRejected: issueLists.some((issues) =>
-      issues.includes('Reply asks the other person about a fact established only for the user.'),
+    meFactDirectedAtThemDetected: replies.some((reply) =>
+      asksOtherPersonAboutMeOnlyFact(reply.text, request),
     ),
     rejectionCodes: getReplyOwnershipRejectionCodes(replies, request),
     rejectedReplyCount: replies.length - acceptedReplyCount,
   };
 }
 
-function getFallbackLanguage(targetLanguage?: string) {
-  return targetLanguage?.trim().toLowerCase() ?? 'english';
-}
-
-function getFallbackReplies(request: RepliesRequest): SuggestedReply[] {
-  const notes = normalizeNotes(request);
-  const language = getFallbackLanguage(request.vibeCheck.targetLanguage);
-
-  if (contextMentionsPets(notes)) {
-    const petFallbackByLanguage: Record<string, string> = {
-      danish: 'Det lyder som en historie om din hund — hvad er den seneste?',
-      english: 'That detail deserves a dog story. What is the latest one?',
-    };
-
-    return [
-      {
-        id: 'ownership-safe-dog-1',
-        text: petFallbackByLanguage[language] ?? petFallbackByLanguage.english,
-        tone: request.selectedTone,
-      },
-    ];
-  }
-
-  const fallbackByLanguage: Record<string, Record<RepliesRequest['selectedTone'], string>> = {
-    danish: {
-      casualSmallTalk: 'Måske... hvad tænker du på?',
-      direct: 'Har du noget i tankerne?',
-      playful: 'Pas på, det lyder som et forslag 👀',
-    },
-    english: {
-      casualSmallTalk: 'Could be... what are you thinking?',
-      direct: 'Got something in mind?',
-      playful: 'Careful, that sounds like a suggestion 👀',
-    },
-    french: {
-      casualSmallTalk: 'Peut-être... tu as une idée en tête ?',
-      direct: 'Tu as quelque chose en tête ?',
-      playful: 'Attention, ça ressemble à une proposition 👀',
-    },
-    german: {
-      casualSmallTalk: 'Vielleicht... was schwebt dir vor?',
-      direct: 'Hast du etwas im Sinn?',
-      playful: 'Vorsicht, das klingt nach einem Vorschlag 👀',
-    },
-    norwegian: {
-      casualSmallTalk: 'Kanskje... hva tenker du på?',
-      direct: 'Har du noe i tankene?',
-      playful: 'Forsiktig, det høres ut som et forslag 👀',
-    },
-    spanish: {
-      casualSmallTalk: 'Puede ser... ¿qué tienes en mente?',
-      direct: '¿Tienes algo en mente?',
-      playful: 'Cuidado, eso suena a propuesta 👀',
-    },
-    swedish: {
-      casualSmallTalk: 'Kanske... vad tänker du på?',
-      direct: 'Har du något i åtanke?',
-      playful: 'Försiktigt, det låter som ett förslag 👀',
-    },
+export function getTerminalFallbackReply(request: RepliesRequest): SuggestedReply {
+  const language = request.vibeCheck.targetLanguage?.trim().toLowerCase() ?? 'english';
+  const fallbackByLanguage: Record<string, string> = {
+    danish: 'Fortæl mig lidt mere.',
+    english: 'Okay, tell me more 👀',
+    french: 'Dis-m’en un peu plus.',
+    german: 'Erzähl mir ein bisschen mehr.',
+    norwegian: 'Fortell meg litt mer.',
+    spanish: 'Cuéntame un poco más.',
+    swedish: 'Berätta lite mer.',
   };
-  const fallbackByTone = fallbackByLanguage[language] ?? fallbackByLanguage.english;
 
-  return [{
-    id: `ownership-safe-context-${request.selectedTone}`,
-    text: fallbackByTone[request.selectedTone],
+  return {
+    id: 'terminal-safe-fallback',
+    text: fallbackByLanguage[language] ?? fallbackByLanguage.english,
     tone: request.selectedTone,
-  }];
+  };
 }
 
 export function getOwnershipCheckedReplies(
@@ -446,18 +403,4 @@ export function getOwnershipCheckedReplies(
   return replies.filter(
     (reply) => getReplyOwnershipIssues(reply.text, request).length === 0,
   ).slice(0, 1);
-}
-
-export function getOwnershipSafeReplies(replies: SuggestedReply[], request: RepliesRequest) {
-  const safeReplies = getOwnershipCheckedReplies(replies, request);
-
-  if (safeReplies.length >= 1) {
-    return safeReplies.slice(0, 1);
-  }
-
-  const fallbackReplies = getFallbackReplies(request).filter(
-    (reply) => getReplyOwnershipIssues(reply.text, request).length === 0,
-  );
-
-  return [...safeReplies, ...fallbackReplies].slice(0, 1);
 }

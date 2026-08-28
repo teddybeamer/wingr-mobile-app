@@ -389,17 +389,19 @@ export function buildReplyBatchPrompt(
     '- Mirror humor, emoji use, casualness, and texting style lightly without copying.',
     '- Every reply should naturally move the conversation forward by giving THEM something easy or enjoyable to respond to.',
     'Grounding and relevance (apply before choosing the tone):',
-    '- First identify THEM\'s latest direct question, invitation/proposal, strongest concrete hook, and emotional or flirty intent. Address the strongest/latest actionable hook before starting a new topic.',
+    '- First identify THEM\'s latest direct question, invitation/proposal, strongest concrete hook, and emotional or flirty intent. Address the strongest/latest actionable hook when one is clear; with limited context, a harmless conversational opening is allowed.',
     '- Separate facts established about ME, facts established about THEM, and facts that are unknown. The transcript and userFacts are the only evidence for a concrete claim about ME.',
-    '- Preserve fact ownership exactly: ME-established facts remain about ME and THEM-established facts remain about THEM. Never ask THEM about a detail, action, plan, place, or experience that only ME already supplied, as though THEM had supplied it.',
+    '- Preserve fact ownership: ME-established facts are not evidence that the same concrete fact is true of THEM. Do not state an unsupported concrete fact about THEM as true, but natural questions, playful assumptions, teasing, and clearly framed social interpretations are allowed.',
     '- Invent wording, not ME\'s reality. Never introduce an unsupported concrete personal fact about ME, including plans, hobbies, favorites, preferences, work/studies, friends/family, locations, experiences, possessions, opinions, or activities.',
     '- Do not strengthen evidence: ME saying they played a game supports saying they have played it, but does not establish it is their favorite game or hobby.',
     '- When THEM asks for information that is unknown, answer without committing to an invented fact: stay non-specific, playfully deflect, turn it back, or invite a suggestion when natural.',
     '- Unknown is not a negative fact. If ME\'s favorite, plan, preference, or opinion is not established, do not claim that ME does not have one or is not interested; simply avoid committing to an answer.',
-    '- A grounded reply can still be creative: tease THEIR intent, lightly answer using an established fact, make a playful assumption about the moment, or create an opening. Do not become literal or generic just because a fact is unknown.',
+    '- A grounded reply can still be creative: tease THEIR intent, lightly answer using an established fact, make a playful interpretation of THEIR visible message, or create an opening. Do not become literal or generic just because a fact is unknown.',
+    '- Light conversational inferences are allowed when phrased as teasing, uncertainty, or a question, rather than as a concrete fact about ME or THEM.',
+    '- A harmless new conversational direction is allowed when it does not assert a specific personal fact, event, relationship, location, plan, preference, or detail that is not established in the conversation.',
     '- When generating more than one reply, use meaningfully different conversational moves instead of rephrasing the same deflection or question.',
     '- Do not use the emergency fallback wording "Got something in mind?" as a normal generated reply.',
-    '- Do not use vague orphan references such as "what is the story?" or "tell me more about that" unless the referent is unmistakable in THEM\'s immediately preceding message.',
+    '- With limited context, a short neutral follow-up such as "Okay, now I need the story behind that" or "Haha wait, elaborate" is allowed when it naturally responds to THEM\'s latest message. Avoid an orphan reference only when there is no visible conversational cue at all.',
     '- Tone changes how a grounded strategy is expressed—playfulness, warmth, directness, flirtiness, length—not what facts ME can claim or which hook the reply addresses.',
     '- Do not force a question into every reply; a playful observation, tease, callback, assumption, or open-ended statement can also create momentum.',
     '- Avoid dead-end acknowledgements unless ending or pausing the conversation is clearly appropriate.',
@@ -435,27 +437,6 @@ export function buildReplyBatchPrompt(
     .join('\n');
 }
 
-export function buildReplyLanguageRepairPrompt(
-  request: RepliesRequest,
-  previousReplies: SuggestedReply[],
-  selectedTones: ReplyTone[],
-) {
-  const targetLanguage = normalizeTargetLanguage(request.vibeCheck.targetLanguage);
-
-  return [
-    buildReplyBatchPrompt(request, selectedTones),
-    '',
-    'Language repair:',
-    `- The previous attempt did not follow the language requirement. Rewrite exactly one reply in ${targetLanguage} for each requested tone.`,
-    '- Do not write any English words unless they are names, app names, game names, or quoted terms already present in the transcript.',
-    '- Do not carry over random OCR-looking tokens or unclear mixed-symbol words from the previous replies.',
-    '- Do not mention ME\'s name unless that name appears naturally in the actual chat messages.',
-    '- Preserve the selected tone and all ownership rules.',
-    'Previous invalid replies:',
-    previousReplies.map((reply) => `- ${reply.text}`).join('\n'),
-  ].join('\n');
-}
-
 export function buildReplyGroundingRepairPrompt(
   request: RepliesRequest,
   previousReplies: SuggestedReply[],
@@ -471,15 +452,38 @@ export function buildReplyGroundingRepairPrompt(
     '',
     'Grounding and relevance repair:',
     `- Privacy-safe validator reason code(s): ${rejectionReason}.`,
-    '- If the code is me_fact_directed_at_them, do not ask THEM about a fact, activity, location, plan, or experience established only for ME. Use THEIR latest hook or reply from ME\'s already-established perspective instead.',
-    '- The previous reply was rejected because it may be unsupported, mis-owned, or disconnected from the clearest conversational hook.',
+    '- Do not treat a fact established only about ME as proof that it is true of THEM. Avoid unsupported concrete claims about THEM while keeping natural questions, playful assumptions, teasing, and clearly framed social interpretations available.',
+    '- The previous reply was rejected because it may invent a concrete fact, reverse fact ownership, use an unsupported name, contain OCR noise, or reply from the wrong speaker perspective.',
     '- Re-read the transcript before rewriting. Preserve only facts established about ME; do not turn an activity into a favorite, hobby, plan, preference, or other stronger claim.',
     '- If THEM asks something ME has not answered in the transcript or userFacts, use a natural non-committal answer, playful deflection, turnaround, or invitation rather than inventing details.',
     '- Unknown information is not evidence of its opposite: never turn an unknown favorite, plan, preference, or opinion into a negative personal claim.',
-    '- Choose a fresh conversational move for every rewrite: tease THEIR intent, lightly use an established fact, playfully deflect, turn the question back, or create an opening. Do not reuse or paraphrase a rejected fallback.',
-    '- Rewrite exactly one grounded, specific reply for each requested tone. When more than one tone is requested, the replies must use meaningfully distinct moves. Keep the requested tone, language, speaker ownership, and direct-reply rules.',
+    '- Choose a fresh conversational move for every rewrite: tease THEIR intent, lightly use an established fact, make a playful interpretation, use a neutral follow-up, playfully deflect, turn the question back, or create an opening. Do not reuse or paraphrase a rejected fallback.',
+    '- Limited context is not itself a rejection reason. A neutral follow-up or clearly playful interpretation is valid when it does not invent a concrete personal fact. Rewrite exactly one natural reply for each requested tone. When more than one tone is requested, the replies must use meaningfully distinct moves. Keep the requested tone, language, speaker ownership, and direct-reply rules.',
     'Previous rejected replies:',
     previousReplies.map((reply) => `- ${reply.text}`).join('\n'),
+  ].join('\n');
+}
+
+export function buildReplyEmergencyPrompt(
+  request: RepliesRequest,
+  selectedTones: ReplyTone[],
+  rejectionCodes: string[] = [],
+) {
+  const rejectionReason = rejectionCodes.length > 0
+    ? rejectionCodes.join(', ')
+    : 'previous_generation_failed';
+
+  return [
+    buildReplyBatchPrompt(request, selectedTones),
+    '',
+    'Emergency reply generation:',
+    `- Earlier attempts did not produce a valid reply. Privacy-safe reason code(s): ${rejectionReason}.`,
+    '- Generate exactly one short, natural reply for each requested tone using the original transcript and context above.',
+    '- Respond to the latest message from THEM: answer a direct question naturally when possible; otherwise continue the actual conversational thread.',
+    '- Preserve the requested tone where it is safe. For Playful, use warm light teasing only when the transcript supports it.',
+    '- Use only clearly established context. Do not invent concrete facts, plans, locations, relationships, possessions, preferences, work, hobbies, events, experiences, or names.',
+    '- Keep the reply text-message-like. Never use the terminal fallback wording.',
+    '- The same strict ownership, language, speaker perspective, and schema requirements still apply.',
   ].join('\n');
 }
 

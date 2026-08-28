@@ -11,11 +11,9 @@ Add these secrets in the Supabase dashboard or CLI:
 
 - `OPENROUTER_API_KEY`
 - `DEEPSEEK_MODEL` optional shared model, defaults to `deepseek/deepseek-v3.2`
-- `DEEPSEEK_PROVIDER` optional shared provider override
 - `VIBE_CHECK_MODEL` optional vibe-check model override, defaults to `google/gemini-2.5-flash-lite`
 - `VIBE_CHECK_PROVIDER` optional vibe-check provider override
 - `REPLY_MODEL` optional reply-generation model override
-- `REPLY_PROVIDER` optional reply-generation provider override
 - `OPENROUTER_TIMEOUT_MS` optional request timeout, defaults to `20000`
 
 ## Local setup
@@ -74,5 +72,5 @@ The mobile app should call:
 
 - `ai-vibe-check` uses Gemini 2.5 Flash-Lite through OpenRouter with structured JSON output.
 - `ai-replies` stays on OpenRouter / DeepSeek.
-- DeepSeek replies use OpenRouter latency sorting by default: `provider: { sort: "latency" }`.
-- Set `REPLY_PROVIDER`, `DEEPSEEK_PROVIDER`, or `OPENROUTER_PROVIDER` only when you want to pin replies to a specific provider.
+- DeepSeek replies first use DeepInfra only: `provider: { only: ["deepinfra"], allow_fallbacks: false }`.
+- If that request fails, the existing retry uses OpenRouter latency sorting with `data_collection: "deny"` and `zdr: true` preserved.
