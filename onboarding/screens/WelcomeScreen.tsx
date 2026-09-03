@@ -9,6 +9,7 @@ import Animated, {
   withDelay,
   withTiming,
 } from 'react-native-reanimated';
+import { posthog } from '../../lib/posthog';
 import { CTAButton } from '../components/CTAButton';
 import type { OnboardingScreenProps } from '../types/onboarding';
 
@@ -127,6 +128,7 @@ export function WelcomeScreen({ content, onNext }: OnboardingScreenProps) {
 
   const handleGetStarted = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    posthog.capture('onboarding_started');
     onNext();
   };
 

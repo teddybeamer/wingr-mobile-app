@@ -1,5 +1,7 @@
 import "./global.css";
 
+import { PostHogProvider } from "posthog-react-native";
+import { posthog } from "./lib/posthog";
 import { StatusBar } from "expo-status-bar";
 import { BlurView } from "expo-blur";
 import { useFonts } from "expo-font";
@@ -663,6 +665,7 @@ export default function App() {
   };
 
   return (
+    <PostHogProvider client={posthog} autocapture={{ captureTouches: true, propsToCapture: ["testID"] }}>
     <BootErrorBoundary>
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="light" />
@@ -736,6 +739,7 @@ export default function App() {
         ) : null}
       </SafeAreaView>
     </BootErrorBoundary>
+    </PostHogProvider>
   );
 }
 

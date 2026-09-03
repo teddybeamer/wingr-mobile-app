@@ -7,6 +7,7 @@ export type ImageSampleRegion = {
 
 export type ImageColorSample = {
   blue: number;
+  coverage: number;
   green: number;
   id: string;
   red: number;

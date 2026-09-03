@@ -12,7 +12,13 @@ import type {
   ParsedConversation,
   StructuredConversationMessage,
 } from "../types/wingr";
-import { inspectVisualBubbleAttribution } from "./visual-bubble-attribution";
+import {
+  inspectVisualBubbleAttribution,
+  inspectVisualBubbleRecovery,
+  shouldCommitVisualBubbleRecovery,
+  type VisualBubbleRecoveryDiagnostics,
+  type VisualBubbleRecoveryFragment,
+} from "./visual-bubble-attribution";
 
 export type OcrLineInput = {
   text: string;
@@ -1122,9 +1128,20 @@ export function reconstructConversationFromOcrLines(
   return reconstructConversationFromOcrLinesWithDiagnostics(lineInputs).result;
 }
 
+export function reconstructVisualRecoveryFragmentsFromOcrLines(
+  lineInputs: OcrLineInput[],
+) {
+  return reconstructConversationFromOcrLinesWithDiagnostics(lineInputs)
+    .recoveryFragments;
+}
+
 function reconstructConversationFromOcrLinesWithDiagnostics(
   lineInputs: OcrLineInput[],
-): { diagnostics: ReconstructionAttributionDiagnostics; result: OcrResult } {
+): {
+  diagnostics: ReconstructionAttributionDiagnostics;
+  recoveryFragments: VisualBubbleRecoveryFragment[];
+  result: OcrResult;
+} {
   const rawLines = lineInputs
     .map((line, index) => ({
       frame: line.frame,
@@ -1175,9 +1192,49 @@ function reconstructConversationFromOcrLinesWithDiagnostics(
       };
     },
   );
+  const recoverableBottomLineIndexes = new Set(
+    lineDiagnostics
+      .filter((line) => line.reason === "bottom-composer")
+      .map((line) => line.ocrIndex),
+  );
+  const recoveryFragments: VisualBubbleRecoveryFragment[] = [
+    ...detectedMessages.map((message) => ({
+      message,
+      ocrLineIndexes: groupLineIndexes[message.id] ?? [],
+      recoverable: false,
+    })),
+    ...rawLines
+      .filter((line) =>
+        recoverableBottomLineIndexes.has(Number(line.id.replace("line-", ""))),
+      )
+      .map((line) => {
+        const bubble: Bubble = {
+          frame: line.frame,
+          id: `recovery-${line.id}`,
+          lines: [line],
+        };
+        const languageEvidence = getBubbleLanguageEvidence(bubble);
+
+        return {
+          message: {
+            boundingBox: getBoundingBox(line.frame),
+            confidence: 0.2,
+            id: `recovery-${line.id}`,
+            sender: "unknown" as const,
+            speaker: "unknown" as const,
+            text: line.text,
+            xPosition: "center" as const,
+            ...(languageEvidence.length > 0 ? { languageEvidence } : {}),
+          },
+          ocrLineIndexes: [Number(line.id.replace("line-", ""))],
+          recoverable: true,
+        };
+      }),
+  ];
 
   return {
     diagnostics: { geometryGroups, lines: lineDiagnostics },
+    recoveryFragments,
     result: {
       confidence: parsedConversation.speakerAttributionConfidence,
       detectedMessages,
@@ -1260,6 +1317,20 @@ export async function extractChatTextFromImage(
   let visualContinuityDiagnostics:
     | Awaited<ReturnType<typeof inspectVisualBubbleAttribution>>["continuityDiagnostics"] =
     [];
+  let croppedFallback:
+    | Awaited<ReturnType<typeof inspectVisualBubbleAttribution>>["croppedFallback"] =
+    null;
+  let croppedCandidateDiagnostics:
+    | Awaited<ReturnType<typeof inspectVisualBubbleAttribution>>["croppedCandidateDiagnostics"] =
+    undefined;
+  let recoveryDiagnostics: VisualBubbleRecoveryDiagnostics = {
+    committed: false,
+    entered: false,
+    excludedFragmentIds: [],
+    mergePairs: [],
+    reconstructedCount: 0,
+    recoveredOcrLineIndexes: [],
+  };
   let visualAttemptOutcome = "not-attempted";
 
   try {
@@ -1277,15 +1348,82 @@ export async function extractChatTextFromImage(
         : {
             attribution: null,
             continuityDiagnostics: [],
+            croppedCandidateDiagnostics: undefined,
+            croppedFallback: null,
             evidenceDiagnostics: [],
             outcome: "insufficient-messages" as const,
           };
-    const visualAttribution = visualAttempt.attribution;
+    let visualAttribution = visualAttempt.attribution;
+    let attributionMessages = reconstruction.detectedMessages;
+    let recoveryNeedsConfirmation = false;
 
     visualAttemptOutcome = visualAttempt.outcome;
     visualDiagnostics = visualAttribution;
     visualEvidenceDiagnostics = visualAttempt.evidenceDiagnostics;
     visualContinuityDiagnostics = visualAttempt.continuityDiagnostics;
+    croppedCandidateDiagnostics = visualAttempt.croppedCandidateDiagnostics;
+    croppedFallback = visualAttempt.croppedFallback;
+
+    if (!visualAttribution) {
+      const recoveryProposal = await inspectVisualBubbleRecovery({
+        fragments: initialReconstruction.recoveryFragments,
+        screenshotUri,
+      });
+      const proposalChanged = Boolean(
+        recoveryProposal &&
+          (recoveryProposal.diagnostics.excludedFragmentIds.length > 0 ||
+            recoveryProposal.diagnostics.mergePairs.length > 0 ||
+            recoveryProposal.diagnostics.recoveredOcrLineIndexes.length > 0),
+      );
+
+      if (
+        recoveryProposal &&
+        proposalChanged &&
+        recoveryProposal.messages.length >= 2
+      ) {
+        recoveryDiagnostics = recoveryProposal.diagnostics;
+        const recoveredAttempt = await inspectVisualBubbleAttribution({
+          messages: recoveryProposal.messages,
+          screenshotUri,
+        });
+        const recoveredCandidate = recoveredAttempt.croppedCandidateDiagnostics;
+        const recoveredObstruction = recoveredCandidate?.edgeCoverageDetected
+          ? "edge-coverage"
+          : recoveredCandidate?.composerOverlayDetected
+            ? "composer-overlay"
+            : null;
+        const recoveryQualifies = shouldCommitVisualBubbleRecovery({
+          chronologicallyLast: Boolean(
+            recoveredCandidate?.candidateIsChronologicallyLast,
+          ),
+          lowerViewport: Boolean(recoveredCandidate?.lowerViewport),
+          obstruction: recoveredObstruction,
+          proposalChanged,
+        });
+
+        if (recoveryQualifies) {
+          recoveryDiagnostics = {
+            ...recoveryProposal.diagnostics,
+            committed: true,
+          };
+          attributionMessages = recoveryProposal.messages;
+          visualAttribution = recoveredAttempt.attribution;
+          visualDiagnostics = recoveredAttempt.attribution;
+          visualEvidenceDiagnostics = recoveredAttempt.evidenceDiagnostics;
+          visualContinuityDiagnostics = recoveredAttempt.continuityDiagnostics;
+          croppedCandidateDiagnostics = recoveredCandidate;
+          croppedFallback = recoveredAttempt.croppedFallback;
+          visualAttemptOutcome = recoveredAttempt.attribution
+            ? "recovery-accepted"
+            : "recovery-incomplete";
+          recoveryNeedsConfirmation = Boolean(
+            !recoveredAttempt.attribution &&
+              (!recoveredAttempt.croppedFallback ||
+                recoveredAttempt.croppedFallback.kind === "needs-confirmation"),
+          );
+        }
+      }
+    }
 
     if (visualAttribution) {
       const visuallyMergedMessages = mergeVisuallyContinuousMessages(
@@ -1306,6 +1444,82 @@ export async function extractChatTextFromImage(
         confidence: parsedConversation.speakerAttributionConfidence,
         detectedMessages: visuallyMergedMessages,
         geometryAttributionAmbiguous: false,
+        parsedConversation,
+        transcriptText: formatTranscript(parsedConversation.structuredConversation),
+      };
+    } else if (recoveryNeedsConfirmation) {
+      const messages = attributionMessages.map((message) => ({
+        ...message,
+        confidence: Math.min(message.confidence, 0.35),
+        sender: "unknown" as const,
+        speaker: "unknown" as const,
+      }));
+      const parsedConversation = buildParsedConversation(messages, {
+        confidence: 0,
+        meColumn: null,
+        resolved: false,
+      });
+
+      reconstruction = {
+        ...reconstruction,
+        confidence: parsedConversation.speakerAttributionConfidence,
+        detectedMessages: messages,
+        geometryAttributionAmbiguous: true,
+        parsedConversation,
+        transcriptText: formatTranscript(parsedConversation.structuredConversation),
+      };
+    } else if (croppedFallback) {
+      const recoveryPrototypeSpeakers = new Map(
+        recoveryDiagnostics.committed
+          ? croppedFallback.prototypeSpeakers.map(({ id, sender }) => [id, sender])
+          : [],
+      );
+      const messages = attributionMessages.map((message) => {
+        if (message.id !== croppedFallback?.candidateId) {
+          const prototypeSender = recoveryPrototypeSpeakers.get(message.id);
+          if (prototypeSender) {
+            return {
+              ...message,
+              confidence: Math.max(
+                message.confidence,
+                croppedFallback.prototypeConfidence ?? 0.68,
+              ),
+              sender: prototypeSender,
+              speaker: getSpeakerFromSender(prototypeSender),
+            };
+          }
+          return message;
+        }
+
+        if (croppedFallback.kind === "resolved" && croppedFallback.sender) {
+          return {
+            ...message,
+            confidence: Math.max(
+              message.confidence,
+              croppedFallback.prototypeConfidence ?? 0.68,
+            ),
+            sender: croppedFallback.sender,
+            speaker: getSpeakerFromSender(croppedFallback.sender),
+          };
+        }
+
+        return {
+          ...message,
+          confidence: Math.min(message.confidence, 0.35),
+          sender: "unknown" as const,
+          speaker: "unknown" as const,
+        };
+      });
+      const parsedConversation = buildParsedConversation(messages, {
+        confidence: croppedFallback.prototypeConfidence ?? 0,
+        meColumn: null,
+        resolved: croppedFallback.kind === "resolved",
+      });
+
+      reconstruction = {
+        ...reconstruction,
+        confidence: parsedConversation.speakerAttributionConfidence,
+        detectedMessages: messages,
         parsedConversation,
         transcriptText: formatTranscript(parsedConversation.structuredConversation),
       };
@@ -1344,7 +1558,11 @@ export async function extractChatTextFromImage(
               ? visualOverrodeGeometry
                 ? "visual-high-confidence-override"
                 : "visual-high-confidence-confirmed-geometry"
-              : "geometry-only",
+              : croppedFallback?.candidateId === group.id
+                ? croppedFallback.kind === "resolved"
+                  ? "cropped-prototype-override"
+                  : "cropped-weak-evidence-confirmation"
+                : "geometry-only",
             visualCluster: visual?.cluster ?? null,
             visualSpeaker: visual?.speaker ?? null,
           };
@@ -1354,6 +1572,9 @@ export async function extractChatTextFromImage(
         (first, second) => first.ocrIndex - second.ocrIndex,
       ),
       visualAttemptOutcome,
+      visualBubbleRecovery: recoveryDiagnostics,
+      croppedCandidate: croppedCandidateDiagnostics,
+      croppedFallback,
       visualEvidence: visualEvidenceDiagnostics,
       visualContinuousPairs: visualDiagnostics?.continuousPairs ?? [],
       visualContinuity: visualContinuityDiagnostics,

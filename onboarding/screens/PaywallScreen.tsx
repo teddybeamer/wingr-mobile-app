@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { posthog } from "../../lib/posthog";
 import { OnboardingScreenScaffold } from "./OnboardingScreenScaffold";
 import type { OnboardingScreenProps } from "../types/onboarding";
 
@@ -14,7 +15,7 @@ export function PaywallScreen(props: OnboardingScreenProps) {
         <Pressable
           accessibilityRole="radio"
           accessibilityState={{ selected: selectedPlan === "weekly" }}
-          onPress={() => setSelectedPlan("weekly")}
+          onPress={() => { setSelectedPlan("weekly"); posthog.capture('paywall_plan_selected', { plan: 'weekly' }); }}
           style={[styles.planCard, selectedPlan === "weekly" && styles.selectedPlan]}
         >
           <Text style={styles.planName}>Weekly Plan</Text>
@@ -27,7 +28,7 @@ export function PaywallScreen(props: OnboardingScreenProps) {
         <Pressable
           accessibilityRole="radio"
           accessibilityState={{ selected: selectedPlan === "monthly" }}
-          onPress={() => setSelectedPlan("monthly")}
+          onPress={() => { setSelectedPlan("monthly"); posthog.capture('paywall_plan_selected', { plan: 'monthly' }); }}
           style={[
             styles.planCard,
             styles.monthlyPlan,

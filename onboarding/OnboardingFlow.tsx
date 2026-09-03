@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
+import { posthog } from "../lib/posthog";
 import { useConversationFlow } from "../hooks/useConversationFlow";
 import { ChangeScreen } from "./screens/ChangeScreen";
 import { PaywallScreen } from "./screens/PaywallScreen";
@@ -48,6 +49,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     conversation.reset();
     setAnalysisFailureCount(0);
     generatedReplyForScreenshotUriRef.current = null;
+    posthog.capture('onboarding_completed');
     onComplete();
   }, [conversation, onComplete]);
   const {
@@ -123,6 +125,12 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     if (!stepCanContinue || ctaLoading) {
       return;
     }
+
+    posthog.capture('onboarding_step_advanced', {
+      step_id: currentStep.id,
+      step_index: currentIndex,
+      total_steps: totalSteps,
+    });
 
     if (isUploadStep) {
       goNext();

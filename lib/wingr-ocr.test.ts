@@ -1,16 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildParsedConversation,
   mergeVisuallyContinuousMessages,
   needsSpeakerConfirmation,
   reconstructConversationFromOcrLines,
+  reconstructVisualRecoveryFragmentsFromOcrLines,
   type OcrLineInput,
 } from "./wingr-ocr";
 import {
+  getCroppedBottomObstruction,
   isVisuallyContinuousBridge,
+  reconstructVisualBubblesFromSamples,
+  resolveCroppedBottomBubbleFromEvidence,
   resolveVisualBubbleAttributionFromEvidence,
+  shouldCommitVisualBubbleRecovery,
+  type VisualBubbleRecoveryFragment,
+  type VisualBubbleEvidence,
 } from "./visual-bubble-attribution";
 import type { DetectedMessage } from "../types/wingr";
+import type { ImageColorSample } from "../modules/visual-bubble-attribution/src";
 
 function line(
   text: string,
@@ -89,6 +98,28 @@ test("learns columns from a cropped screenshot instead of absolute screen positi
   ]);
   assert.equal(result.parsedConversation.speakerAttributionResolved, true);
   assert.equal(result.geometryAttributionAmbiguous, false);
+});
+
+test("keeps the supplied cropped-bottom Danish outgoing message as ME", () => {
+  const result = reconstructConversationFromOcrLines([
+    line("Hey Lang tid siden - how goes?", 252, 120, 350),
+    line("Delivered", 296, 146, 350, 160),
+    line("Hey! Ja det er så :) stille og roligt, nyder søndagen med en lille gåtur. Hvad med dig?", 22, 210, 200),
+    line("Lyder da fedt Her står den bare på arbejde. Har en app idé jeg går og nørkler med... Men burde tage en pause her snart haha", 236, 300, 350),
+    line("Spændende, hvad er det for en app? :) altid vigtigt med pauser ;)", 22, 430, 210),
+    line("Det er en ai dating coach haha. Vil lige teste om der er et marked eller ikke. Vi burde da få gået anden tur snart", 236, 520, 350),
+  ]);
+
+  assert.deepEqual(
+    result.parsedConversation.structuredConversation.map((message) => message.speaker),
+    ["me", "them", "me", "them", "me"],
+  );
+  assert.equal(result.parsedConversation.latestMessageSender, "me");
+  assert.equal(result.parsedConversation.shouldGenerateDirectReply, false);
+  assert.equal(
+    result.parsedConversation.structuredConversation.at(-2)?.text,
+    "Spændende, hvad er det for en app? :) altid vigtigt med pauser ;)",
+  );
 });
 
 test("uses confirmation only when a sparse screenshot has no resolved column mapping", () => {
@@ -420,4 +451,314 @@ test("keeps manual confirmation available when visual styles and geometry are bo
   );
 
   assert.equal(result, null);
+});
+
+function visualEvidence(
+  id: string,
+  color: { blue: number; green: number; red: number },
+  rightExtent: number,
+  avatarVariance = 8,
+): VisualBubbleEvidence {
+  return {
+    avatarVariance,
+    backgroundVariance: 7,
+    bubbleColor: color,
+    id,
+    leftExtent: 0.18,
+    rightExtent,
+  };
+}
+
+function sampledColor(
+  id: string,
+  color: { blue: number; green: number; red: number },
+  coverage = 1,
+  variance = 4,
+): ImageColorSample {
+  return { ...color, coverage, id, variance };
+}
+
+test("resolves the supplied cropped-bottom ME bubble from local visual prototypes", () => {
+  const priorEvidence = [
+    visualEvidence("message-1", { blue: 30, green: 0, red: 50 }, 0.91),
+    visualEvidence("message-2", { blue: 232, green: 232, red: 232 }, 0.77, 680),
+    visualEvidence("message-3", { blue: 31, green: 1, red: 51 }, 0.9),
+    visualEvidence("message-4", { blue: 233, green: 233, red: 233 }, 0.78, 700),
+  ];
+  const result = resolveCroppedBottomBubbleFromEvidence({
+    candidate: visualEvidence("message-5", { blue: 29, green: 1, red: 52 }, 0.9),
+    candidateId: "message-5",
+    obstruction: "composer-overlay",
+    priorEvidence,
+  });
+
+  assert.deepEqual(result, {
+    candidateId: "message-5",
+    kind: "resolved",
+    obstruction: "composer-overlay",
+    prototypeSpeakers: result.prototypeSpeakers,
+    prototypeConfidence: result.prototypeConfidence,
+    sender: "me",
+  });
+  assert.ok((result.prototypeConfidence ?? 0) >= 0.68);
+});
+
+test("does not treat a fully visible lower message as cropped", () => {
+  const candidate = visualEvidence("message-5", { blue: 30, green: 0, red: 50 }, 0.9);
+  const result = getCroppedBottomObstruction({
+    candidate,
+    lowerSamples: [
+      sampledColor("lower-1", { blue: 30, green: 0, red: 50 }),
+      sampledColor("lower-2", { blue: 30, green: 0, red: 50 }),
+      sampledColor("lower-3", { blue: 30, green: 0, red: 50 }),
+    ],
+    normalVisualAttributionRejected: true,
+    pageColor: { blue: 245, green: 245, red: 245 },
+  });
+
+  assert.equal(result, null);
+});
+
+test("requires confirmation when an obstructed cropped bubble cannot uniquely match a prototype", () => {
+  const priorEvidence = [
+    visualEvidence("message-1", { blue: 30, green: 0, red: 50 }, 0.91),
+    visualEvidence("message-2", { blue: 232, green: 232, red: 232 }, 0.77, 680),
+    visualEvidence("message-3", { blue: 31, green: 1, red: 51 }, 0.9),
+    visualEvidence("message-4", { blue: 233, green: 233, red: 233 }, 0.78, 700),
+  ];
+  const result = resolveCroppedBottomBubbleFromEvidence({
+    candidate: visualEvidence("message-5", { blue: 132, green: 116, red: 142 }, 0.9),
+    candidateId: "message-5",
+    obstruction: "edge-coverage",
+    priorEvidence,
+  });
+
+  assert.deepEqual(result, {
+    candidateId: "message-5",
+    kind: "needs-confirmation",
+    obstruction: "edge-coverage",
+    prototypeSpeakers: result.prototypeSpeakers,
+    prototypeConfidence: result.prototypeConfidence,
+    sender: null,
+  });
+  const unresolved = buildParsedConversation(
+    [
+      {
+        ...visualMessage("message-5", 180, 600),
+        sender: "unknown",
+        speaker: "unknown",
+      },
+    ],
+    { confidence: 0, meColumn: null, resolved: false },
+  );
+  assert.equal(needsSpeakerConfirmation(unresolved), true);
+});
+
+function physicalFailureOcrLines() {
+  return [
+    line("12.42", 88, 35, 180, 72),
+    line("App Store", 38, 92, 170, 132),
+    line("Tobias", 470, 205, 700, 252),
+    line("Du matchede med Tobias den 16.05.2026", 250, 470, 925, 512),
+    line("17. maj, 1.30 PM", 465, 570, 705, 612),
+    line("Hey 😁", 360, 680, 535, 722),
+    line("Lang tid siden - how goes? 😊", 360, 730, 1080, 772),
+    line("Hey! Ja det er så :) stille og roligt,", 200, 900, 940, 942),
+    line("nyder søndagen med en lille gåtur.", 200, 950, 865, 992),
+    line("Hvad med dig?", 200, 1000, 500, 1042),
+    line("Dobbelttryk for at", 165, 1100, 430, 1142),
+    line("Lyder da fedt 😊", 315, 1240, 675, 1282),
+    line("Her står den bare på arbejde. Har", 315, 1290, 1040, 1332),
+    line("en app idé jeg går og nørkler", 315, 1340, 930, 1382),
+    line("med... Men burde tage en pause", 315, 1390, 970, 1432),
+    line("her snart haha", 315, 1440, 650, 1482),
+    line("Spændende, hvad er det for en", 200, 1630, 890, 1672),
+    line("app? :) altid vigtigt med pauser ;)", 200, 1680, 850, 1722),
+    line("Det er en ai dating coach haha.", 315, 1880, 990, 1922),
+    line("Vil lige teste om der er et marked", 315, 1930, 1010, 1972),
+    line("eller ikke.", 315, 1980, 570, 2022),
+    line("Vi burde da få gået anden", 315, 2170, 900, 2212),
+    line("tur snart 😚", 315, 2220, 590, 2262),
+    line("GIF", 35, 2290, 115, 2332),
+    line("Skriv en besked", 180, 2290, 1000, 2332),
+  ];
+}
+
+function recoverySample(
+  id: string,
+  color: { blue: number; green: number; red: number },
+  variance = 4,
+) {
+  return sampledColor(id, color, 1, variance);
+}
+
+function recoveryFixtureSamples(
+  fragments: VisualBubbleRecoveryFragment[],
+  bubbleColors: Map<string, { blue: number; green: number; red: number }>,
+  continuousPairs: Set<string>,
+) {
+  const page = { blue: 248, green: 248, red: 248 };
+  const samples: ImageColorSample[] = [];
+
+  for (const { message } of fragments) {
+    samples.push(
+      recoverySample(`recovery:${message.id}:page-left`, page),
+      recoverySample(`recovery:${message.id}:page-right`, page),
+      recoverySample(`recovery:${message.id}:avatar`, page),
+    );
+    const bubble = bubbleColors.get(message.id);
+    for (let index = 0; index < 4; index += 1) {
+      samples.push(
+        recoverySample(
+          `recovery:${message.id}:halo-${index}`,
+          bubble ?? page,
+        ),
+      );
+    }
+  }
+
+  for (const first of fragments) {
+    for (const second of fragments) {
+      if (first.message.boundingBox.y >= second.message.boundingBox.y) continue;
+      const key = `${first.message.id}:${second.message.id}`;
+      const bridgeColor = continuousPairs.has(key)
+        ? bubbleColors.get(first.message.id) ?? { blue: 31, green: 1, red: 51 }
+        : page;
+      for (let index = 0; index < 3; index += 1) {
+        samples.push(
+          recoverySample(`recovery:${key}:bridge-${index}`, bridgeColor),
+        );
+      }
+    }
+  }
+
+  return samples;
+}
+
+test("reconstructs the physical 25-line OCR failure as five visual bubbles", () => {
+  const fragments = reconstructVisualRecoveryFragmentsFromOcrLines(
+    physicalFailureOcrLines(),
+  );
+  assert.deepEqual(
+    fragments.filter((fragment) => !fragment.recoverable).map((fragment) => fragment.message.id),
+    [
+      "message-1",
+      "message-2",
+      "message-3",
+      "message-4",
+      "message-5",
+      "message-6",
+      "message-7",
+      "message-8",
+    ],
+  );
+  assert.deepEqual(
+    fragments.filter((fragment) => fragment.recoverable).map((fragment) => fragment.ocrLineIndexes),
+    [[23], [25]],
+  );
+
+  const outgoing = { blue: 30, green: 0, red: 50 };
+  const incoming = { blue: 232, green: 232, red: 232 };
+  const bubbleColors = new Map([
+    ["message-2", outgoing],
+    ["message-3", incoming],
+    ["message-5", outgoing],
+    ["message-6", incoming],
+    ["message-7", outgoing],
+    ["message-8", outgoing],
+  ]);
+  const proposal = reconstructVisualBubblesFromSamples({
+    fragments,
+    imageWidth: 1170,
+    samples: recoveryFixtureSamples(
+      fragments,
+      bubbleColors,
+      new Set([
+        "message-7:message-8",
+        "message-8:recovery-line-23",
+      ]),
+    ),
+  });
+
+  assert.equal(proposal.messages.length, 5);
+  assert.deepEqual(proposal.diagnostics.excludedFragmentIds, [
+    "message-1",
+    "message-4",
+    "recovery-line-25",
+  ]);
+  assert.deepEqual(proposal.diagnostics.recoveredOcrLineIndexes, [23]);
+  assert.deepEqual(
+    proposal.messages.map((message) => message.id),
+    ["message-2", "message-3", "message-5", "message-6", "message-7"],
+  );
+  assert.ok(proposal.messages.at(-1)?.text.includes("tur snart 😚"));
+
+  const attribution = resolveVisualBubbleAttributionFromEvidence(
+    proposal.messages,
+    proposal.messages.map((message) => {
+      const isOutgoing = ["message-2", "message-5", "message-7"].includes(message.id);
+      return visualEvidence(
+        message.id,
+        isOutgoing ? outgoing : incoming,
+        isOutgoing ? 0.92 : 0.76,
+        isOutgoing ? 8 : 700,
+      );
+    }),
+  );
+  assert.deepEqual(
+    attribution?.messages.map((message) => message.sender),
+    ["me", "them", "me", "them", "me"],
+  );
+  assert.equal(attribution?.messages.at(-1)?.sender, "me");
+  const parsedConversation = buildParsedConversation(attribution?.messages ?? []);
+  assert.equal(parsedConversation.latestMessageSender, "me");
+  assert.equal(parsedConversation.shouldGenerateDirectReply, false);
+});
+
+test("resolves an equivalent cropped final THEM bubble from local prototypes", () => {
+  const priorEvidence = [
+    visualEvidence("message-1", { blue: 30, green: 0, red: 50 }, 0.91),
+    visualEvidence("message-2", { blue: 232, green: 232, red: 232 }, 0.77, 680),
+    visualEvidence("message-3", { blue: 31, green: 1, red: 51 }, 0.9),
+    visualEvidence("message-4", { blue: 233, green: 233, red: 233 }, 0.78, 700),
+  ];
+  const result = resolveCroppedBottomBubbleFromEvidence({
+    candidate: visualEvidence("message-5", { blue: 231, green: 232, red: 234 }, 0.78, 690),
+    candidateId: "message-5",
+    obstruction: "composer-overlay",
+    priorEvidence,
+  });
+
+  assert.equal(result.kind, "resolved");
+  assert.equal(result.sender, "them");
+  const parsedConversation = buildParsedConversation([
+    {
+      ...visualMessage("message-5", 180, 600),
+      sender: result.sender ?? "unknown",
+      speaker: result.sender === "them" ? "other" : "unknown",
+    },
+  ]);
+  assert.equal(parsedConversation.latestMessageSender, "them");
+  assert.equal(parsedConversation.shouldGenerateDirectReply, true);
+});
+
+test("does not commit visual recovery for a fully visible lower bubble", () => {
+  assert.equal(
+    shouldCommitVisualBubbleRecovery({
+      chronologicallyLast: true,
+      lowerViewport: true,
+      obstruction: null,
+      proposalChanged: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCommitVisualBubbleRecovery({
+      chronologicallyLast: true,
+      lowerViewport: true,
+      obstruction: "composer-overlay",
+      proposalChanged: true,
+    }),
+    true,
+  );
 });

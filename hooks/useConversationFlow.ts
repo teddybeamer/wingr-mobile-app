@@ -7,6 +7,7 @@ import {
   refineVibeCheck,
 } from "../lib/wingr-ai";
 import { getConversationBackendContract } from "../lib/conversation-attribution-contract";
+import { posthog } from "../lib/posthog";
 import { rebuildOcrResultWithConfirmedUserSide } from "../lib/wingr-ocr";
 import type {
   OcrResult,
@@ -133,6 +134,7 @@ export function useConversationFlow() {
       analysisRequestIdRef.current += 1;
       setSelectedScreenshotUri(screenshotUri);
       resetGeneratedState();
+      posthog.capture('screenshot_selected');
       return screenshotUri;
     } catch (pickerError) {
       setError({
@@ -192,6 +194,8 @@ export function useConversationFlow() {
 
     let failureKind: ConversationFlowError["kind"] = "ocr";
 
+    posthog.capture('screenshot_analysis_started');
+
     try {
       logConversationFlow("analysis started");
       const ocr = await extractScreenshotConversation(screenshotUri);
@@ -249,6 +253,11 @@ export function useConversationFlow() {
       logConversationFlow("vibe check ready", {
         bestTone: completedVibeCheck.bestTone,
       });
+      posthog.capture('screenshot_analysis_completed', {
+        best_tone: completedVibeCheck.bestTone,
+        message_count: ocr.detectedMessages.length,
+        ocr_source: ocr.source,
+      });
       return "ready" as const;
     } catch (analysisError) {
       if (analysisRequestIdRef.current !== requestId) {
@@ -256,18 +265,22 @@ export function useConversationFlow() {
       }
 
       setAnalysisStatus("error");
+      const errorMessage = getErrorMessage(
+        analysisError,
+        failureKind === "ocr"
+          ? "Wingr could not read that screenshot. Try another image."
+          : "Wingr could not finish the vibe check. Please try again.",
+      );
       setError({
         kind: failureKind,
-        message: getErrorMessage(
-          analysisError,
-          failureKind === "ocr"
-            ? "Wingr could not read that screenshot. Try another image."
-            : "Wingr could not finish the vibe check. Please try again.",
-        ),
+        message: errorMessage,
       });
       logConversationFlow("analysis failed", {
         kind: failureKind,
         message: getErrorMessage(analysisError, "Unknown analysis error."),
+      });
+      posthog.capture('screenshot_analysis_failed', {
+        failure_kind: failureKind,
       });
       return "error" as const;
     }
@@ -288,6 +301,7 @@ export function useConversationFlow() {
     setAnalysisStatus("analyzing");
     setError(null);
     setPendingSpeakerOcr(null);
+    posthog.capture('speaker_side_confirmed', { side: userSide });
 
     try {
       const provisionalVibeCheck = buildProvisionalVibeCheck(confirmedOcr);
@@ -392,10 +406,9 @@ export function useConversationFlow() {
       ]);
       setLastGeneratedReplyId(generatedReply.id);
       setRepliesStatus("ready");
-      logConversationFlow("reply ready", {
-        durationMs: Date.now() - generationStartedAt,
-        tone,
-      });
+      const durationMs = Date.now() - generationStartedAt;
+      logConversationFlow("reply ready", { durationMs, tone });
+      posthog.capture('reply_generated', { tone, duration_ms: durationMs });
       return true;
     } catch (generationError) {
       if (replyRequestIdRef.current !== requestId) {
@@ -407,10 +420,9 @@ export function useConversationFlow() {
         kind: "replies",
         message: getErrorMessage(generationError, fallbackMessage),
       });
-      logConversationFlow("reply generation failed", {
-        durationMs: Date.now() - generationStartedAt,
-        tone,
-      });
+      const durationMs = Date.now() - generationStartedAt;
+      logConversationFlow("reply generation failed", { durationMs, tone });
+      posthog.capture('reply_generation_failed', { tone, duration_ms: durationMs });
       return false;
     }
   };
@@ -427,11 +439,13 @@ export function useConversationFlow() {
   };
 
   const changeTone = async (tone: ReplyTone) => {
+    posthog.capture('reply_tone_changed', { tone, previous_tone: selectedTone });
     setSelectedTone(tone);
     return true;
   };
 
   const refreshReplies = async () => {
+    posthog.capture('reply_refreshed', { tone: selectedTone });
     return appendReplyForTone(
       selectedTone,
       replyContext,

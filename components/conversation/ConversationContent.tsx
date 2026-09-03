@@ -1,6 +1,7 @@
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { BlurView } from "expo-blur";
+import { posthog } from "../../lib/posthog";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import Reanimated, {
   Easing as ReanimatedEasing,
@@ -934,6 +935,7 @@ export function RepliesContent({
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
         () => {},
       );
+      posthog.capture('reply_copied', { tone: reply.tone });
     }
   };
 

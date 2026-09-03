@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { Easing, FadeInLeft } from 'react-native-reanimated';
 import { CTAButton } from '../components/CTAButton';
 import { OnboardingScreenScaffold } from './OnboardingScreenScaffold';
 import type { OnboardingScreenProps } from '../types/onboarding';
+
+const APP_STORE_REVIEW_URL = 'https://apps.apple.com/app/id6805539972?action=write-review';
 
 const GRAPHIC_ENTRANCE = FadeInLeft.duration(420)
   .delay(100)
@@ -11,6 +13,16 @@ const GRAPHIC_ENTRANCE = FadeInLeft.duration(420)
 
 export function RatingScreen(props: OnboardingScreenProps) {
   const [ratingStarted, setRatingStarted] = useState(false);
+
+  const handleRatingPress = () => {
+    setRatingStarted(true);
+
+    void Linking.openURL(APP_STORE_REVIEW_URL).catch(() => {
+      if (__DEV__) {
+        console.info('[Wingr onboarding] Unable to open App Store review URL');
+      }
+    });
+  };
 
   return (
     <OnboardingScreenScaffold
@@ -28,7 +40,7 @@ export function RatingScreen(props: OnboardingScreenProps) {
           ) : null}
           <CTAButton
             label="Give us a rating"
-            onPress={() => setRatingStarted(true)}
+            onPress={handleRatingPress}
           />
         </View>
       }
