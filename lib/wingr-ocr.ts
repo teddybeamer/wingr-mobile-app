@@ -13,12 +13,20 @@ import type {
   StructuredConversationMessage,
 } from "../types/wingr";
 import {
+  getVisualBubbleRecoveryCommitDiagnostics,
   inspectVisualBubbleAttribution,
   inspectVisualBubbleRecovery,
   shouldCommitVisualBubbleRecovery,
   type VisualBubbleRecoveryDiagnostics,
   type VisualBubbleRecoveryFragment,
 } from "./visual-bubble-attribution";
+import {
+  createContentFreeDiagnosticTrace,
+  getDiagnosticDurationMs,
+  getMonotonicTimeMs,
+  startContentFreeDiagnosticStage,
+  type ContentFreeDiagnosticTrace,
+} from "./content-free-diagnostics";
 
 export type OcrLineInput = {
   text: string;
@@ -80,6 +88,8 @@ type OcrLineAttributionDiagnostic = {
   normalizedCenterX: number;
   normalizedLeft: number;
   normalizedRight: number;
+  normalizedBottom: number;
+  normalizedTop: number;
   normalizedWidth: number;
   ocrIndex: number;
   reason: string;
@@ -95,13 +105,33 @@ type GeometryAttributionDiagnostic = {
   normalizedCenterX: number;
   normalizedLeft: number;
   normalizedRight: number;
+  normalizedBottom: number;
+  normalizedTop: number;
   normalizedWidth: number;
 };
 
 type ReconstructionAttributionDiagnostics = {
+  cleanedLineCount: number;
   geometryGroups: GeometryAttributionDiagnostic[];
+  groupedMessageCount: number;
   lines: OcrLineAttributionDiagnostic[];
+  rawLineCount: number;
+  recoverableLineIndexes: number[];
 };
+
+export type OcrPipelineDiagnosticDependencies = {
+  inspectAttribution?: typeof inspectVisualBubbleAttribution;
+  inspectRecovery?: typeof inspectVisualBubbleRecovery;
+  recognizeText?: (screenshotUri: string) => Promise<RecognizedText>;
+  trace?: ContentFreeDiagnosticTrace;
+};
+
+let ocrTraceSequence = 0;
+
+function nextOcrTraceId() {
+  ocrTraceSequence += 1;
+  return `ocr-${ocrTraceSequence}`;
+}
 
 const UI_LABELS = new Set([
   "back",
@@ -387,6 +417,7 @@ function normalizedLineDiagnostic(
   reason: string,
 ): OcrLineAttributionDiagnostic {
   const width = Math.max(geometry.width, 1);
+  const height = Math.max(geometry.height, 1);
 
   return {
     characterCount: line.text.length,
@@ -402,6 +433,12 @@ function normalizedLineDiagnostic(
     ),
     normalizedRight: Number(
       ((line.frame.right - geometry.minLeft) / width).toFixed(3),
+    ),
+    normalizedBottom: Number(
+      ((line.frame.bottom - geometry.minTop) / height).toFixed(3),
+    ),
+    normalizedTop: Number(
+      ((line.frame.top - geometry.minTop) / height).toFixed(3),
     ),
     normalizedWidth: Number((getWidth(line.frame) / width).toFixed(3)),
     ocrIndex: Number(line.id.replace("line-", "")),
@@ -1137,11 +1174,14 @@ export function reconstructVisualRecoveryFragmentsFromOcrLines(
 
 function reconstructConversationFromOcrLinesWithDiagnostics(
   lineInputs: OcrLineInput[],
+  trace?: ContentFreeDiagnosticTrace,
 ): {
   diagnostics: ReconstructionAttributionDiagnostics;
   recoveryFragments: VisualBubbleRecoveryFragment[];
   result: OcrResult;
 } {
+  const reconstructionStartedAt = getMonotonicTimeMs();
+  const normalizationStartedAt = getMonotonicTimeMs();
   const rawLines = lineInputs
     .map((line, index) => ({
       frame: line.frame,
@@ -1159,8 +1199,23 @@ function reconstructConversationFromOcrLinesWithDiagnostics(
 
       return first.frame.left - second.frame.left;
     });
+  trace?.("ocr.normalization.complete", {
+    durationMs: getDiagnosticDurationMs(normalizationStartedAt),
+    inputLineCount: lineInputs.length,
+    rawLineCount: rawLines.length,
+  });
   const lineDiagnostics: OcrLineAttributionDiagnostic[] = [];
+  const filteringStartedAt = getMonotonicTimeMs();
   const cleanedLines = cleanOcrLines(rawLines, lineDiagnostics);
+  trace?.("ocr.filtering.complete", {
+    durationMs: getDiagnosticDurationMs(filteringStartedAt),
+    inputItemCount: rawLines.length,
+    outputItemCount: cleanedLines.length,
+    removedItems: lineDiagnostics
+      .filter((line) => line.classification === "ui")
+      .map((line) => ({ ocrIndex: line.ocrIndex, reason: line.reason })),
+  });
+  const groupingStartedAt = getMonotonicTimeMs();
   const {
     geometryAmbiguous,
     groupLineIndexes,
@@ -1170,6 +1225,11 @@ function reconstructConversationFromOcrLinesWithDiagnostics(
     cleanedLines,
     rawLines,
   );
+  trace?.("ocr.grouping.complete", {
+    durationMs: getDiagnosticDurationMs(groupingStartedAt),
+    groupedMessageCount: detectedMessages.length,
+    inputItemCount: cleanedLines.length,
+  });
   const parsedConversation = buildParsedConversation(detectedMessages, mapping);
   const conversationGeometry =
     cleanedLines.length > 0 ? getLineGeometry(cleanedLines) : null;
@@ -1177,7 +1237,9 @@ function reconstructConversationFromOcrLinesWithDiagnostics(
     (message, index) => {
       const frame = getFrameFromBoundingBox(message.boundingBox);
       const width = Math.max(conversationGeometry?.width ?? 1, 1);
+      const height = Math.max(conversationGeometry?.height ?? 1, 1);
       const left = conversationGeometry?.minLeft ?? 0;
+      const top = conversationGeometry?.minTop ?? 0;
 
       return {
         confidence: Number(message.confidence.toFixed(3)),
@@ -1188,6 +1250,8 @@ function reconstructConversationFromOcrLinesWithDiagnostics(
         normalizedCenterX: Number(((getCenterX(frame) - left) / width).toFixed(3)),
         normalizedLeft: Number(((frame.left - left) / width).toFixed(3)),
         normalizedRight: Number(((frame.right - left) / width).toFixed(3)),
+        normalizedBottom: Number(((frame.bottom - top) / height).toFixed(3)),
+        normalizedTop: Number(((frame.top - top) / height).toFixed(3)),
         normalizedWidth: Number((getWidth(frame) / width).toFixed(3)),
       };
     },
@@ -1232,8 +1296,29 @@ function reconstructConversationFromOcrLinesWithDiagnostics(
       }),
   ];
 
+  trace?.("ocr.reconstruction.complete", {
+    cleanedLineCount: cleanedLines.length,
+    durationMs: getDiagnosticDurationMs(reconstructionStartedAt),
+    geometryAmbiguous,
+    groupedMessageCount: detectedMessages.length,
+    rawLineCount: rawLines.length,
+    recoverableLineIndexes: [...recoverableBottomLineIndexes].sort(
+      (first, second) => first - second,
+    ),
+    recoveryFragmentCount: recoveryFragments.length,
+  });
+
   return {
-    diagnostics: { geometryGroups, lines: lineDiagnostics },
+    diagnostics: {
+      cleanedLineCount: cleanedLines.length,
+      geometryGroups,
+      groupedMessageCount: detectedMessages.length,
+      lines: lineDiagnostics,
+      rawLineCount: rawLines.length,
+      recoverableLineIndexes: [...recoverableBottomLineIndexes].sort(
+        (first, second) => first - second,
+      ),
+    },
     recoveryFragments,
     result: {
       confidence: parsedConversation.speakerAttributionConfidence,
@@ -1249,47 +1334,111 @@ function reconstructConversationFromOcrLinesWithDiagnostics(
 
 export async function extractChatTextFromImage(
   screenshotUri: string,
+  correlationId?: string,
+  diagnosticDependencies: OcrPipelineDiagnosticDependencies = {},
 ): Promise<OcrResult> {
   if (!screenshotUri) {
     throw new Error("No screenshot selected.");
   }
 
+  const traceId = correlationId
+    ? `${correlationId}.ocr`
+    : nextOcrTraceId();
+  const defaultTrace = createContentFreeDiagnosticTrace({
+    label: "[Wingr OCR trace]",
+    runId: traceId,
+  });
+  const trace: ContentFreeDiagnosticTrace = (stage, metadata = {}) => {
+    try {
+      if (diagnosticDependencies.trace) {
+        diagnosticDependencies.trace(stage, { ...metadata, runId: traceId });
+      } else {
+        defaultTrace(stage, metadata);
+      }
+    } catch {
+      // Diagnostics must never alter OCR or attribution behavior.
+    }
+  };
+  const inspectAttribution =
+    diagnosticDependencies.inspectAttribution ??
+    inspectVisualBubbleAttribution;
+  const inspectRecovery =
+    diagnosticDependencies.inspectRecovery ?? inspectVisualBubbleRecovery;
+  const pipelineStartedAt = getMonotonicTimeMs();
   let recognizedText: RecognizedText;
   let nativeOcrStage = "module-import";
+  let activeNativeStage:
+    | ReturnType<typeof startContentFreeDiagnosticStage>
+    | null = null;
+
+  trace("pipeline.started", { inputAvailable: true });
 
   if (typeof __DEV__ !== "undefined" && __DEV__) {
     console.info("[Wingr native OCR] started", {
-      uriScheme: screenshotUri.match(/^([^:]+):/)?.[1] ?? "path",
+      runId: traceId,
     });
   }
 
   try {
-    const { recognizeText } =
-      await import("@infinitered/react-native-mlkit-text-recognition");
+    activeNativeStage = startContentFreeDiagnosticStage({
+      stage: "mlkit.module-import",
+      trace,
+    });
+    const recognizeText = diagnosticDependencies.recognizeText
+      ? diagnosticDependencies.recognizeText
+      : (
+          await import(
+            "@infinitered/react-native-mlkit-text-recognition"
+          )
+        ).recognizeText;
+    activeNativeStage.complete({
+      moduleSource: diagnosticDependencies.recognizeText
+        ? "diagnostic-injection"
+        : "native-module",
+    });
+    activeNativeStage = null;
 
     if (typeof __DEV__ !== "undefined" && __DEV__) {
-      console.info("[Wingr native OCR] module ready");
+      console.info("[Wingr native OCR] module ready", { runId: traceId });
     }
 
     nativeOcrStage = "recognition";
+    activeNativeStage = startContentFreeDiagnosticStage({
+      stage: "mlkit.recognition",
+      trace,
+    });
     recognizedText = await recognizeText(screenshotUri);
+    const rawBlockCount = recognizedText.blocks.length;
+    const rawLineCount = recognizedText.blocks.reduce(
+      (total, block) => total + block.lines.length,
+      0,
+    );
+    activeNativeStage.complete({ rawBlockCount, rawLineCount });
+    activeNativeStage = null;
 
     if (typeof __DEV__ !== "undefined" && __DEV__) {
       console.info("[Wingr native OCR] recognition ready", {
-        blocks: recognizedText.blocks.length,
-        lines: recognizedText.blocks.reduce(
-          (total, block) => total + block.lines.length,
-          0,
-        ),
+        blocks: rawBlockCount,
+        lines: rawLineCount,
+        runId: traceId,
       });
     }
   } catch (error) {
     const detail =
       error instanceof Error ? error.message : "Unknown OCR error.";
+    activeNativeStage?.fail({
+      errorType: error instanceof Error ? error.name : "unknown",
+      nativeOcrStage,
+    });
+    trace("pipeline.failed", {
+      durationMs: getDiagnosticDurationMs(pipelineStartedAt),
+      failureStage: nativeOcrStage,
+    });
 
     if (typeof __DEV__ !== "undefined" && __DEV__) {
       console.info("[Wingr native OCR] failed", {
-        message: detail,
+        errorType: error instanceof Error ? error.name : "unknown",
+        runId: traceId,
         stage: nativeOcrStage,
       });
     }
@@ -1300,14 +1449,55 @@ export async function extractChatTextFromImage(
   }
 
   if (typeof __DEV__ !== "undefined" && __DEV__) {
-    console.info("[Wingr native OCR] reconstructing");
+    console.info("[Wingr native OCR] reconstructing", { runId: traceId });
+  }
+
+  const flatteningStage = startContentFreeDiagnosticStage({
+    stage: "ocr.flattening",
+    trace,
+  });
+  const flattenedLines = flattenLines(recognizedText);
+  flatteningStage.complete({ rawLineCount: flattenedLines.length });
+  if (flattenedLines.length > 0) {
+    const rawGeometry = getLineGeometry(flattenedLines);
+    const rawHeight = Math.max(rawGeometry.height, 1);
+    const rawWidth = Math.max(rawGeometry.width, 1);
+    const rawLineGeometry = flattenedLines.map((line) => ({
+      characterCount: line.text.length,
+      normalizedBottom: Number(
+        ((line.frame.bottom - rawGeometry.minTop) / rawHeight).toFixed(3),
+      ),
+      normalizedLeft: Number(
+        ((line.frame.left - rawGeometry.minLeft) / rawWidth).toFixed(3),
+      ),
+      normalizedRight: Number(
+        ((line.frame.right - rawGeometry.minLeft) / rawWidth).toFixed(3),
+      ),
+      normalizedTop: Number(
+        ((line.frame.top - rawGeometry.minTop) / rawHeight).toFixed(3),
+      ),
+      ocrIndex: Number(line.id.replace("line-", "")),
+      wordCount: normalizeText(line.text).split(" ").filter(Boolean).length,
+    }));
+    trace("mlkit.output-geometry", {
+      bottomBandLineIndexes: rawLineGeometry
+        .filter((line) => line.normalizedBottom >= 0.78)
+        .map((line) => line.ocrIndex),
+      lines: rawLineGeometry,
+      rawBlockCount: recognizedText.blocks.length,
+      rawLineCount: flattenedLines.length,
+    });
   }
 
   const initialReconstruction = reconstructConversationFromOcrLinesWithDiagnostics(
-    flattenLines(recognizedText),
+    flattenedLines,
+    trace,
   );
   let reconstruction = initialReconstruction.result;
   const rawText = recognizedText.text?.trim() ?? reconstruction.rawText;
+  const visualTrace = (stage: string, metadata: Record<string, unknown>) => {
+    trace(`visual.${stage}`, metadata);
+  };
   let visualDiagnostics:
     | Awaited<ReturnType<typeof inspectVisualBubbleAttribution>>["attribution"]
     | null = null;
@@ -1323,6 +1513,16 @@ export async function extractChatTextFromImage(
   let croppedCandidateDiagnostics:
     | Awaited<ReturnType<typeof inspectVisualBubbleAttribution>>["croppedCandidateDiagnostics"] =
     undefined;
+  let initialCroppedCandidateDiagnostics:
+    | Awaited<ReturnType<typeof inspectVisualBubbleAttribution>>["croppedCandidateDiagnostics"] =
+    undefined;
+  let recoveredCroppedCandidateDiagnostics:
+    | Awaited<ReturnType<typeof inspectVisualBubbleAttribution>>["croppedCandidateDiagnostics"] =
+    undefined;
+  let recoveredVisualAttemptOutcome = "not-attempted";
+  let recoveryCommitDiagnostics:
+    | ReturnType<typeof getVisualBubbleRecoveryCommitDiagnostics>
+    | null = null;
   let recoveryDiagnostics: VisualBubbleRecoveryDiagnostics = {
     committed: false,
     entered: false,
@@ -1332,6 +1532,9 @@ export async function extractChatTextFromImage(
     recoveredOcrLineIndexes: [],
   };
   let visualAttemptOutcome = "not-attempted";
+  let activeVisualStage:
+    | ReturnType<typeof startContentFreeDiagnosticStage>
+    | null = null;
 
   try {
     // OCR text geometry alone is not a reliable speaker signal for layouts
@@ -1339,11 +1542,20 @@ export async function extractChatTextFromImage(
     // result only replaces geometry when it independently clears the visual
     // module's confidence threshold; otherwise the established geometry result
     // remains untouched.
+    activeVisualStage = startContentFreeDiagnosticStage({
+      metadata: {
+        inputItemCount: reconstruction.detectedMessages.length,
+      },
+      stage: "visual.normal",
+      trace,
+    });
     const visualAttempt =
       reconstruction.detectedMessages.length >= 2
-        ? await inspectVisualBubbleAttribution({
+        ? await inspectAttribution({
             messages: reconstruction.detectedMessages,
             screenshotUri,
+            stagePrefix: "normal",
+            trace: visualTrace,
           })
         : {
             attribution: null,
@@ -1353,6 +1565,8 @@ export async function extractChatTextFromImage(
             evidenceDiagnostics: [],
             outcome: "insufficient-messages" as const,
           };
+    activeVisualStage.complete({ outcome: visualAttempt.outcome });
+    activeVisualStage = null;
     let visualAttribution = visualAttempt.attribution;
     let attributionMessages = reconstruction.detectedMessages;
     let recoveryNeedsConfirmation = false;
@@ -1362,31 +1576,72 @@ export async function extractChatTextFromImage(
     visualEvidenceDiagnostics = visualAttempt.evidenceDiagnostics;
     visualContinuityDiagnostics = visualAttempt.continuityDiagnostics;
     croppedCandidateDiagnostics = visualAttempt.croppedCandidateDiagnostics;
+    initialCroppedCandidateDiagnostics =
+      visualAttempt.croppedCandidateDiagnostics;
     croppedFallback = visualAttempt.croppedFallback;
 
     if (!visualAttribution) {
-      const recoveryProposal = await inspectVisualBubbleRecovery({
+      activeVisualStage = startContentFreeDiagnosticStage({
+        metadata: {
+          inputItemCount: initialReconstruction.recoveryFragments.length,
+        },
+        stage: "visual.recovery",
+        trace,
+      });
+      const recoveryProposal = await inspectRecovery({
         fragments: initialReconstruction.recoveryFragments,
         screenshotUri,
+        trace: visualTrace,
       });
+      activeVisualStage.complete({
+        outcome: recoveryProposal ? "proposal-created" : "no-proposal",
+        reconstructedCount:
+          recoveryProposal?.diagnostics.reconstructedCount ?? 0,
+      });
+      activeVisualStage = null;
+      if (recoveryProposal) {
+        recoveryDiagnostics = recoveryProposal.diagnostics;
+      }
       const proposalChanged = Boolean(
         recoveryProposal &&
           (recoveryProposal.diagnostics.excludedFragmentIds.length > 0 ||
             recoveryProposal.diagnostics.mergePairs.length > 0 ||
             recoveryProposal.diagnostics.recoveredOcrLineIndexes.length > 0),
       );
+      trace("visual.recovery.proposal", {
+        inputFragmentCount: initialReconstruction.recoveryFragments.length,
+        proposalAvailable: Boolean(recoveryProposal),
+        proposalChanged,
+        reconstructedCount:
+          recoveryProposal?.diagnostics.reconstructedCount ?? 0,
+        recoveredAttemptEligible: Boolean(
+          recoveryProposal &&
+            proposalChanged &&
+            recoveryProposal.messages.length >= 2,
+        ),
+      });
 
       if (
         recoveryProposal &&
         proposalChanged &&
         recoveryProposal.messages.length >= 2
       ) {
-        recoveryDiagnostics = recoveryProposal.diagnostics;
-        const recoveredAttempt = await inspectVisualBubbleAttribution({
+        activeVisualStage = startContentFreeDiagnosticStage({
+          metadata: { inputItemCount: recoveryProposal.messages.length },
+          stage: "visual.recovered",
+          trace,
+        });
+        const recoveredAttempt = await inspectAttribution({
           messages: recoveryProposal.messages,
           screenshotUri,
+          stagePrefix: "recovered",
+          trace: visualTrace,
         });
+        activeVisualStage.complete({ outcome: recoveredAttempt.outcome });
+        activeVisualStage = null;
         const recoveredCandidate = recoveredAttempt.croppedCandidateDiagnostics;
+        recoveredCroppedCandidateDiagnostics = recoveredCandidate;
+        recoveredVisualAttemptOutcome = recoveredAttempt.outcome;
         const recoveredObstruction = recoveredCandidate?.edgeCoverageDetected
           ? "edge-coverage"
           : recoveredCandidate?.composerOverlayDetected
@@ -1399,6 +1654,27 @@ export async function extractChatTextFromImage(
           lowerViewport: Boolean(recoveredCandidate?.lowerViewport),
           obstruction: recoveredObstruction,
           proposalChanged,
+        });
+        recoveryCommitDiagnostics =
+          getVisualBubbleRecoveryCommitDiagnostics({
+            chronologicallyLast: Boolean(
+              recoveredCandidate?.candidateIsChronologicallyLast,
+            ),
+            lowerViewport: Boolean(recoveredCandidate?.lowerViewport),
+            obstruction: recoveredObstruction,
+            proposalChanged,
+          });
+        trace("visual.recovery.commit-decision", {
+          ...recoveryCommitDiagnostics,
+          recoveredCandidateEvidenceReady: Boolean(
+            recoveredCandidate?.candidateEvidenceReady,
+          ),
+          recoveredVisualAttemptOutcome,
+        });
+        trace("visual.recovery.attempt-snapshots", {
+          initialCandidate: initialCroppedCandidateDiagnostics ?? null,
+          recoveredCandidate: recoveredCandidate ?? null,
+          recoveryCommit: recoveryCommitDiagnostics,
         });
 
         if (recoveryQualifies) {
@@ -1469,20 +1745,21 @@ export async function extractChatTextFromImage(
         transcriptText: formatTranscript(parsedConversation.structuredConversation),
       };
     } else if (croppedFallback) {
+      const activeCroppedFallback = croppedFallback;
       const recoveryPrototypeSpeakers = new Map(
         recoveryDiagnostics.committed
-          ? croppedFallback.prototypeSpeakers.map(({ id, sender }) => [id, sender])
+          ? activeCroppedFallback.prototypeSpeakers.map(({ id, sender }) => [id, sender])
           : [],
       );
       const messages = attributionMessages.map((message) => {
-        if (message.id !== croppedFallback?.candidateId) {
+        if (message.id !== activeCroppedFallback.candidateId) {
           const prototypeSender = recoveryPrototypeSpeakers.get(message.id);
           if (prototypeSender) {
             return {
               ...message,
               confidence: Math.max(
                 message.confidence,
-                croppedFallback.prototypeConfidence ?? 0.68,
+                activeCroppedFallback.prototypeConfidence ?? 0.68,
               ),
               sender: prototypeSender,
               speaker: getSpeakerFromSender(prototypeSender),
@@ -1491,15 +1768,18 @@ export async function extractChatTextFromImage(
           return message;
         }
 
-        if (croppedFallback.kind === "resolved" && croppedFallback.sender) {
+        if (
+          activeCroppedFallback.kind === "resolved" &&
+          activeCroppedFallback.sender
+        ) {
           return {
             ...message,
             confidence: Math.max(
               message.confidence,
-              croppedFallback.prototypeConfidence ?? 0.68,
+              activeCroppedFallback.prototypeConfidence ?? 0.68,
             ),
-            sender: croppedFallback.sender,
-            speaker: getSpeakerFromSender(croppedFallback.sender),
+            sender: activeCroppedFallback.sender,
+            speaker: getSpeakerFromSender(activeCroppedFallback.sender),
           };
         }
 
@@ -1511,9 +1791,9 @@ export async function extractChatTextFromImage(
         };
       });
       const parsedConversation = buildParsedConversation(messages, {
-        confidence: croppedFallback.prototypeConfidence ?? 0,
+        confidence: activeCroppedFallback.prototypeConfidence ?? 0,
         meColumn: null,
-        resolved: croppedFallback.kind === "resolved",
+        resolved: activeCroppedFallback.kind === "resolved",
       });
 
       reconstruction = {
@@ -1524,12 +1804,23 @@ export async function extractChatTextFromImage(
         transcriptText: formatTranscript(parsedConversation.structuredConversation),
       };
     }
-  } catch {
+  } catch (error) {
     // Visual attribution is optional. The established OCR-only parser remains
     // the safe fallback when a local image cannot be sampled.
+    activeVisualStage?.fail({
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
+    activeVisualStage = null;
     visualAttemptOutcome = "sampling-failed";
+    trace("visual.pipeline.failed", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
   }
 
+  const finalAssemblyStage = startContentFreeDiagnosticStage({
+    stage: "ocr.final-assembly",
+    trace,
+  });
   if (typeof __DEV__ !== "undefined" && __DEV__) {
     const finalMessagesById = new Map(
       reconstruction.detectedMessages.map((message) => [message.id, message]),
@@ -1537,9 +1828,26 @@ export async function extractChatTextFromImage(
     const visualById = new Map(
       visualDiagnostics?.diagnostics.map((item) => [item.id, item]) ?? [],
     );
+    const finalGeometry =
+      flattenedLines.length > 0 ? getLineGeometry(flattenedLines) : null;
+    const finalGeometryWidth = Math.max(finalGeometry?.width ?? 1, 1);
+    const finalGeometryHeight = Math.max(finalGeometry?.height ?? 1, 1);
+    const finalGeometryLeft = finalGeometry?.minLeft ?? 0;
+    const finalGeometryTop = finalGeometry?.minTop ?? 0;
 
     const attributionDiagnostics = {
       // Intentionally excludes OCR text, raw screenshots, names, and pixels.
+      counts: {
+        cleanedLines: initialReconstruction.diagnostics.cleanedLineCount,
+        finalMessages: reconstruction.detectedMessages.length,
+        groupedMessages: initialReconstruction.diagnostics.groupedMessageCount,
+        rawBlocks: recognizedText.blocks.length,
+        rawLines: initialReconstruction.diagnostics.rawLineCount,
+        recoveryFragments: initialReconstruction.recoveryFragments.length,
+        visualCandidates: recoveryDiagnostics.fragmentEvidence?.filter(
+          (item) => item.evidenceReady,
+        ).length ?? 0,
+      },
       conversationGroups: initialReconstruction.diagnostics.geometryGroups.map(
         (group) => {
           const visual = visualById.get(group.id);
@@ -1550,6 +1858,7 @@ export async function extractChatTextFromImage(
           return {
             ...group,
             classification: "conversation",
+            presentInFinalConversation: Boolean(finalMessage),
             finalConfidence: Number(
               (finalMessage?.confidence ?? group.confidence).toFixed(3),
             ),
@@ -1571,9 +1880,60 @@ export async function extractChatTextFromImage(
       lineClassification: initialReconstruction.diagnostics.lines.sort(
         (first, second) => first.ocrIndex - second.ocrIndex,
       ),
+      finalMessages: reconstruction.detectedMessages.map((message, index) => ({
+        attributionSource: visualById.has(message.id)
+          ? "visual"
+          : croppedFallback?.candidateId === message.id
+            ? croppedFallback.kind === "resolved"
+              ? "cropped-prototype"
+              : "manual-confirmation"
+            : "geometry",
+        confidence: Number(message.confidence.toFixed(3)),
+        finalIndex: index,
+        id: message.id,
+        normalizedBottom: Number(
+          (
+            (message.boundingBox.y + message.boundingBox.height -
+              finalGeometryTop) /
+            finalGeometryHeight
+          ).toFixed(3),
+        ),
+        normalizedLeft: Number(
+          (
+            (message.boundingBox.x - finalGeometryLeft) /
+            finalGeometryWidth
+          ).toFixed(3),
+        ),
+        normalizedRight: Number(
+          (
+            (message.boundingBox.x + message.boundingBox.width -
+              finalGeometryLeft) /
+            finalGeometryWidth
+          ).toFixed(3),
+        ),
+        normalizedTop: Number(
+          (
+            (message.boundingBox.y - finalGeometryTop) /
+            finalGeometryHeight
+          ).toFixed(3),
+        ),
+        sender: message.sender,
+      })),
+      backendDecision: {
+        backendEligible:
+          reconstruction.parsedConversation.speakerAttributionResolved &&
+          reconstruction.detectedMessages.length > 0,
+        manualSpeakerConfirmationRequired:
+          !reconstruction.parsedConversation.speakerAttributionResolved ||
+          reconstruction.detectedMessages.length === 0,
+      },
       visualAttemptOutcome,
       visualBubbleRecovery: recoveryDiagnostics,
-      croppedCandidate: croppedCandidateDiagnostics,
+      initialCroppedCandidate: initialCroppedCandidateDiagnostics,
+      recoveredCroppedCandidate: recoveredCroppedCandidateDiagnostics,
+      activeCroppedCandidate: croppedCandidateDiagnostics,
+      recoveredVisualAttemptOutcome,
+      recoveryCommit: recoveryCommitDiagnostics,
       croppedFallback,
       visualEvidence: visualEvidenceDiagnostics,
       visualContinuousPairs: visualDiagnostics?.continuousPairs ?? [],
@@ -1584,20 +1944,50 @@ export async function extractChatTextFromImage(
       "[Wingr native OCR attribution diagnostics]",
       JSON.stringify(attributionDiagnostics, null, 2),
     );
+    trace("pipeline.summary", attributionDiagnostics);
     console.info("[Wingr native OCR] reconstruction ready", {
       detectedMessages: reconstruction.detectedMessages.length,
+      latestMessageSender:
+        reconstruction.parsedConversation.latestMessageSender,
+      manualSpeakerConfirmationRequired:
+        !reconstruction.parsedConversation.speakerAttributionResolved,
+      runId: traceId,
+      senderSequence: reconstruction.detectedMessages.map(
+        (message) => message.sender,
+      ),
       speakerAttributionConfidence:
         reconstruction.parsedConversation.speakerAttributionConfidence,
       speakerAttributionResolved:
         reconstruction.parsedConversation.speakerAttributionResolved,
     });
   }
+  finalAssemblyStage.complete({
+    detectedMessageCount: reconstruction.detectedMessages.length,
+    speakerAttributionResolved:
+      reconstruction.parsedConversation.speakerAttributionResolved,
+  });
 
   if (!reconstruction.transcriptText.trim()) {
+    trace("pipeline.failed", {
+      durationMs: getDiagnosticDurationMs(pipelineStartedAt),
+      failureStage: "empty-reconstruction",
+    });
     throw new Error(
       "No readable conversation text was detected in that screenshot.",
     );
   }
+
+  trace("pipeline.complete", {
+    detectedMessageCount: reconstruction.detectedMessages.length,
+    durationMs: getDiagnosticDurationMs(pipelineStartedAt),
+    latestMessageSender:
+      reconstruction.parsedConversation.latestMessageSender,
+    manualSpeakerConfirmationRequired:
+      !reconstruction.parsedConversation.speakerAttributionResolved,
+    senderSequence: reconstruction.detectedMessages.map(
+      (message) => message.sender,
+    ),
+  });
 
   return {
     ...reconstruction,

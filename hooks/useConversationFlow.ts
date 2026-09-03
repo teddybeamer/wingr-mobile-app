@@ -5,6 +5,7 @@ import {
   extractScreenshotConversation,
   generateReplies,
   refineVibeCheck,
+  type WingrDiagnosticsContext,
 } from "../lib/wingr-ai";
 import { getConversationBackendContract } from "../lib/conversation-attribution-contract";
 import { posthog } from "../lib/posthog";
@@ -51,6 +52,58 @@ function logConversationFlow(
   if (__DEV__) {
     console.info(`[Wingr flow] ${stage}`, metadata ?? {});
   }
+}
+
+function monotonicNow() {
+  return typeof performance !== "undefined" &&
+    typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+}
+
+function elapsedMilliseconds(startedAt: number) {
+  return Math.round(monotonicNow() - startedAt);
+}
+
+function startPendingFlowDiagnostics(
+  stage: string,
+  startedAt: number,
+  diagnostics: WingrDiagnosticsContext,
+) {
+  if (typeof __DEV__ === "undefined" || !__DEV__) {
+    return () => {};
+  }
+
+  const timers = [5_000, 15_000].map((pendingThresholdMs) =>
+    setTimeout(() => {
+      logConversationFlow("stage still pending", {
+        ...diagnostics,
+        durationMs: elapsedMilliseconds(startedAt),
+        pendingThresholdMs,
+        stage,
+      });
+    }, pendingThresholdMs),
+  );
+
+  return () => {
+    timers.forEach((timer) => clearTimeout(timer));
+  };
+}
+
+function getAttributionDiagnosticMetadata(
+  parsedConversation?: ParsedConversation | null,
+) {
+  return {
+    ...getConversationStateMetadata(parsedConversation),
+    shouldGenerateDirectReply:
+      parsedConversation?.shouldGenerateDirectReply ?? false,
+    speakerAttributionConfidence:
+      parsedConversation?.speakerAttributionConfidence ?? 0,
+    speakerAttributionResolved:
+      parsedConversation?.speakerAttributionResolved ?? false,
+    speakerSequence:
+      parsedConversation?.messages.map((message) => message.sender) ?? [],
+  };
 }
 
 export function useConversationFlow() {
@@ -177,6 +230,11 @@ export function useConversationFlow() {
     }
 
     const requestId = analysisRequestIdRef.current + 1;
+    const diagnostics: WingrDiagnosticsContext = {
+      correlationId: `analysis-${requestId}`,
+      requestId,
+    };
+    const analysisStartedAt = monotonicNow();
     const trimmedContext = nextExtraContext.trim();
 
     analysisRequestIdRef.current = requestId;
@@ -193,21 +251,36 @@ export function useConversationFlow() {
     setLastGeneratedReplyId(null);
 
     let failureKind: ConversationFlowError["kind"] = "ocr";
+    const stopPendingDiagnostics = startPendingFlowDiagnostics(
+      "screenshot-analysis",
+      analysisStartedAt,
+      diagnostics,
+    );
 
     posthog.capture('screenshot_analysis_started');
 
     try {
-      logConversationFlow("analysis started");
-      const ocr = await extractScreenshotConversation(screenshotUri);
+      logConversationFlow("analysis started", diagnostics);
+      const ocrStartedAt = monotonicNow();
+      const ocr = await extractScreenshotConversation(
+        screenshotUri,
+        diagnostics,
+      );
 
       logConversationFlow("ocr completed", {
+        ...diagnostics,
         detectedMessages: ocr.detectedMessages.length,
+        durationMs: elapsedMilliseconds(ocrStartedAt),
         source: ocr.source,
         transcriptLength: ocr.transcriptText.length,
       });
 
       if (analysisRequestIdRef.current !== requestId) {
-        logConversationFlow("analysis cancelled", { stage: "after-ocr" });
+        logConversationFlow("analysis cancelled", {
+          ...diagnostics,
+          durationMs: elapsedMilliseconds(analysisStartedAt),
+          stage: "after-ocr",
+        });
         return "cancelled" as const;
       }
 
@@ -220,9 +293,23 @@ export function useConversationFlow() {
       const backendContract = getConversationBackendContract(
         ocr.parsedConversation,
       );
+      const requiresSpeakerConfirmation =
+        backendContract.kind === "needsSpeakerConfirmation";
 
-      if (backendContract.kind === "needsSpeakerConfirmation") {
-        logConversationFlow("speaker confirmation required");
+      logConversationFlow("backend gate", {
+        ...diagnostics,
+        ...getAttributionDiagnosticMetadata(ocr.parsedConversation),
+        backendEligible: !requiresSpeakerConfirmation,
+        confirmationDecision: requiresSpeakerConfirmation
+          ? "required"
+          : "not-required",
+      });
+
+      if (requiresSpeakerConfirmation) {
+        logConversationFlow("speaker confirmation required", {
+          ...diagnostics,
+          durationMs: elapsedMilliseconds(analysisStartedAt),
+        });
         setChatTranscript(ocr.transcriptText);
         setParsedConversation(ocr.parsedConversation);
         setPendingSpeakerOcr(ocr);
@@ -235,9 +322,14 @@ export function useConversationFlow() {
       const provisionalVibeCheck = buildProvisionalVibeCheck(ocr);
       logConversationFlow(
         "vibe check request",
-        getConversationStateMetadata(backendContract.parsedConversation),
+        {
+          ...diagnostics,
+          ...getConversationStateMetadata(backendContract.parsedConversation),
+        },
       );
+      const vibeCheckStartedAt = monotonicNow();
       const completedVibeCheck = await refineVibeCheck({
+        diagnostics,
         extraContext: nextExtraContext || undefined,
         fallbackVibeCheck: provisionalVibeCheck,
         parsedConversation: backendContract.parsedConversation,
@@ -245,22 +337,44 @@ export function useConversationFlow() {
       });
 
       if (analysisRequestIdRef.current !== requestId) {
-        logConversationFlow("analysis cancelled", { stage: "after-vibe" });
+        logConversationFlow("analysis cancelled", {
+          ...diagnostics,
+          durationMs: elapsedMilliseconds(analysisStartedAt),
+          stage: "after-vibe",
+        });
         return "cancelled" as const;
       }
 
+      const finalAssemblyStartedAt = monotonicNow();
       applyConversationResult(ocr, completedVibeCheck);
       logConversationFlow("vibe check ready", {
+        ...diagnostics,
         bestTone: completedVibeCheck.bestTone,
+        durationMs: elapsedMilliseconds(vibeCheckStartedAt),
+      });
+      logConversationFlow("final assembly completed", {
+        ...diagnostics,
+        ...getAttributionDiagnosticMetadata(ocr.parsedConversation),
+        durationMs: elapsedMilliseconds(finalAssemblyStartedAt),
       });
       posthog.capture('screenshot_analysis_completed', {
         best_tone: completedVibeCheck.bestTone,
         message_count: ocr.detectedMessages.length,
         ocr_source: ocr.source,
       });
+      logConversationFlow("analysis completed", {
+        ...diagnostics,
+        durationMs: elapsedMilliseconds(analysisStartedAt),
+        result: "ready",
+      });
       return "ready" as const;
     } catch (analysisError) {
       if (analysisRequestIdRef.current !== requestId) {
+        logConversationFlow("analysis cancelled", {
+          ...diagnostics,
+          durationMs: elapsedMilliseconds(analysisStartedAt),
+          stage: "failure-after-cancellation",
+        });
         return "cancelled" as const;
       }
 
@@ -276,13 +390,18 @@ export function useConversationFlow() {
         message: errorMessage,
       });
       logConversationFlow("analysis failed", {
+        ...diagnostics,
+        durationMs: elapsedMilliseconds(analysisStartedAt),
+        errorType:
+          analysisError instanceof Error ? analysisError.name : "unknown",
         kind: failureKind,
-        message: getErrorMessage(analysisError, "Unknown analysis error."),
       });
       posthog.capture('screenshot_analysis_failed', {
         failure_kind: failureKind,
       });
       return "error" as const;
+    } finally {
+      stopPendingDiagnostics();
     }
   };
 
@@ -292,6 +411,11 @@ export function useConversationFlow() {
     }
 
     const requestId = analysisRequestIdRef.current + 1;
+    const diagnostics: WingrDiagnosticsContext = {
+      correlationId: `speaker-confirmation-${requestId}`,
+      requestId,
+    };
+    const confirmationStartedAt = monotonicNow();
     const confirmedOcr = rebuildOcrResultWithConfirmedUserSide(
       pendingSpeakerOcr,
       userSide,
@@ -302,14 +426,30 @@ export function useConversationFlow() {
     setError(null);
     setPendingSpeakerOcr(null);
     posthog.capture('speaker_side_confirmed', { side: userSide });
+    const stopPendingDiagnostics = startPendingFlowDiagnostics(
+      "speaker-confirmation-analysis",
+      confirmationStartedAt,
+      diagnostics,
+    );
 
     try {
       const provisionalVibeCheck = buildProvisionalVibeCheck(confirmedOcr);
+      logConversationFlow("backend gate after speaker confirmation", {
+        ...diagnostics,
+        ...getAttributionDiagnosticMetadata(confirmedOcr.parsedConversation),
+        backendEligible: true,
+        confirmationDecision: "confirmed",
+      });
       logConversationFlow(
         "vibe check request after speaker confirmation",
-        getConversationStateMetadata(confirmedOcr.parsedConversation),
+        {
+          ...diagnostics,
+          ...getConversationStateMetadata(confirmedOcr.parsedConversation),
+        },
       );
+      const vibeCheckStartedAt = monotonicNow();
       const completedVibeCheck = await refineVibeCheck({
+        diagnostics,
         extraContext: pendingSpeakerContext || undefined,
         fallbackVibeCheck: provisionalVibeCheck,
         parsedConversation: confirmedOcr.parsedConversation,
@@ -317,11 +457,31 @@ export function useConversationFlow() {
       });
 
       if (analysisRequestIdRef.current !== requestId) {
+        logConversationFlow("analysis cancelled", {
+          ...diagnostics,
+          durationMs: elapsedMilliseconds(confirmationStartedAt),
+          stage: "after-confirmed-vibe",
+        });
         return false;
       }
 
+      const finalAssemblyStartedAt = monotonicNow();
       applyConversationResult(confirmedOcr, completedVibeCheck);
       setPendingSpeakerContext("");
+      logConversationFlow("vibe check ready after speaker confirmation", {
+        ...diagnostics,
+        durationMs: elapsedMilliseconds(vibeCheckStartedAt),
+      });
+      logConversationFlow("final assembly completed", {
+        ...diagnostics,
+        ...getAttributionDiagnosticMetadata(confirmedOcr.parsedConversation),
+        durationMs: elapsedMilliseconds(finalAssemblyStartedAt),
+      });
+      logConversationFlow("analysis completed", {
+        ...diagnostics,
+        durationMs: elapsedMilliseconds(confirmationStartedAt),
+        result: "ready-after-speaker-confirmation",
+      });
       return true;
     } catch (analysisError) {
       setAnalysisStatus("error");
@@ -332,7 +492,16 @@ export function useConversationFlow() {
           "Wingr could not finish the vibe check.",
         ),
       });
+      logConversationFlow("analysis failed", {
+        ...diagnostics,
+        durationMs: elapsedMilliseconds(confirmationStartedAt),
+        errorType:
+          analysisError instanceof Error ? analysisError.name : "unknown",
+        kind: "vibe",
+      });
       return false;
+    } finally {
+      stopPendingDiagnostics();
     }
   };
 
@@ -346,6 +515,7 @@ export function useConversationFlow() {
   const generateRepliesForTone = async (
     tone: ReplyTone,
     nextContext: string,
+    diagnostics: WingrDiagnosticsContext,
   ) => {
     if (!vibeCheck || !chatTranscript.trim()) {
       throw new Error("Finish the vibe check before generating replies.");
@@ -353,10 +523,14 @@ export function useConversationFlow() {
 
     logConversationFlow(
       "reply generation request",
-      getConversationStateMetadata(parsedConversation),
+      {
+        ...diagnostics,
+        ...getConversationStateMetadata(parsedConversation),
+      },
     );
 
     return generateReplies({
+      diagnostics,
       extraContext: nextContext || undefined,
       parsedConversation: parsedConversation ?? undefined,
       screenshotUri: selectedScreenshotUri,
@@ -371,19 +545,39 @@ export function useConversationFlow() {
     nextContext: string,
     fallbackMessage: string,
   ) => {
-    const generationStartedAt = Date.now();
+    const generationStartedAt = monotonicNow();
     const requestId = replyRequestIdRef.current + 1;
+    const diagnostics: WingrDiagnosticsContext = {
+      correlationId: `reply-${requestId}`,
+      requestId,
+    };
 
     replyRequestIdRef.current = requestId;
     setLastGeneratedReplyId(null);
     setRepliesStatus("generating");
     setError(null);
+    const stopPendingDiagnostics = startPendingFlowDiagnostics(
+      "reply-generation",
+      generationStartedAt,
+      diagnostics,
+    );
 
     try {
-      logConversationFlow("reply generation started", { tone });
-      const nextReplyBatch = await generateRepliesForTone(tone, nextContext);
+      logConversationFlow("reply generation started", {
+        ...diagnostics,
+        tone,
+      });
+      const nextReplyBatch = await generateRepliesForTone(
+        tone,
+        nextContext,
+        diagnostics,
+      );
 
       if (replyRequestIdRef.current !== requestId) {
+        logConversationFlow("reply generation cancelled", {
+          ...diagnostics,
+          durationMs: elapsedMilliseconds(generationStartedAt),
+        });
         return false;
       }
 
@@ -406,12 +600,21 @@ export function useConversationFlow() {
       ]);
       setLastGeneratedReplyId(generatedReply.id);
       setRepliesStatus("ready");
-      const durationMs = Date.now() - generationStartedAt;
-      logConversationFlow("reply ready", { durationMs, tone });
+      const durationMs = elapsedMilliseconds(generationStartedAt);
+      logConversationFlow("reply ready", {
+        ...diagnostics,
+        durationMs,
+        tone,
+      });
       posthog.capture('reply_generated', { tone, duration_ms: durationMs });
       return true;
     } catch (generationError) {
       if (replyRequestIdRef.current !== requestId) {
+        logConversationFlow("reply generation cancelled", {
+          ...diagnostics,
+          durationMs: elapsedMilliseconds(generationStartedAt),
+          stage: "failure-after-cancellation",
+        });
         return false;
       }
 
@@ -420,10 +623,18 @@ export function useConversationFlow() {
         kind: "replies",
         message: getErrorMessage(generationError, fallbackMessage),
       });
-      const durationMs = Date.now() - generationStartedAt;
-      logConversationFlow("reply generation failed", { durationMs, tone });
+      const durationMs = elapsedMilliseconds(generationStartedAt);
+      logConversationFlow("reply generation failed", {
+        ...diagnostics,
+        durationMs,
+        errorType:
+          generationError instanceof Error ? generationError.name : "unknown",
+        tone,
+      });
       posthog.capture('reply_generation_failed', { tone, duration_ms: durationMs });
       return false;
+    } finally {
+      stopPendingDiagnostics();
     }
   };
 

@@ -40,5 +40,45 @@ struct VisualBubbleAttributionSamplingParityTests {
       Array(UnsafeBufferPointer(start: pixels + bottomOffset, count: 3)) == [0, 0, 255],
       "Top-origin OCR sampling must read the blue bottom row.",
     )
+
+    let topLeftGeometry = VisualBubbleAttributionSampling.sampleGeometry(
+      width: 100,
+      height: 200,
+      requestedX: 3,
+      requestedY: 4,
+      radius: 7,
+    )
+    precondition(topLeftGeometry.clippedTop, "The top edge must be reported as clipped.")
+    precondition(topLeftGeometry.clippedLeft, "The left edge must be reported as clipped.")
+    precondition(!topLeftGeometry.clippedBottom, "The bottom edge must remain unclipped.")
+    precondition(!topLeftGeometry.clippedRight, "The right edge must remain unclipped.")
+    precondition(topLeftGeometry.requestedNormalizedX == 0.03)
+    precondition(topLeftGeometry.requestedNormalizedY == 0.02)
+
+    let bottomRightGeometry = VisualBubbleAttributionSampling.sampleGeometry(
+      width: 100,
+      height: 200,
+      requestedX: 96,
+      requestedY: 195,
+      radius: 7,
+    )
+    precondition(!bottomRightGeometry.clippedTop, "The top edge must remain unclipped.")
+    precondition(!bottomRightGeometry.clippedLeft, "The left edge must remain unclipped.")
+    precondition(bottomRightGeometry.clippedBottom, "The bottom edge must be reported as clipped.")
+    precondition(bottomRightGeometry.clippedRight, "The right edge must be reported as clipped.")
+    precondition(bottomRightGeometry.requestedNormalizedX == 0.96)
+    precondition(bottomRightGeometry.requestedNormalizedY == 0.975)
+
+    let centeredGeometry = VisualBubbleAttributionSampling.sampleGeometry(
+      width: 100,
+      height: 200,
+      requestedX: 50,
+      requestedY: 100,
+      radius: 7,
+    )
+    precondition(!centeredGeometry.clippedTop)
+    precondition(!centeredGeometry.clippedBottom)
+    precondition(!centeredGeometry.clippedLeft)
+    precondition(!centeredGeometry.clippedRight)
   }
 }

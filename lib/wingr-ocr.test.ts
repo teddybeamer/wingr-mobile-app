@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildParsedConversation,
+  extractChatTextFromImage,
   mergeVisuallyContinuousMessages,
   needsSpeakerConfirmation,
   reconstructConversationFromOcrLines,
@@ -16,10 +17,13 @@ import {
   resolveVisualBubbleAttributionFromEvidence,
   shouldCommitVisualBubbleRecovery,
   type VisualBubbleRecoveryFragment,
+  type VisualBubbleAttributionAttempt,
   type VisualBubbleEvidence,
 } from "./visual-bubble-attribution";
 import type { DetectedMessage } from "../types/wingr";
 import type { ImageColorSample } from "../modules/visual-bubble-attribution/src";
+import { isContentFreeDiagnosticPayload } from "./content-free-diagnostics";
+import type { Text as RecognizedText } from "@infinitered/react-native-mlkit-text-recognition";
 
 function line(
   text: string,
@@ -35,6 +39,32 @@ function line(
     text,
   };
 }
+
+test("allows numeric OCR diagnostics while rejecting content-bearing fields", () => {
+  assert.equal(
+    isContentFreeDiagnosticPayload({
+      bounds: { normalizedBottom: 0.91, normalizedTop: 0.78 },
+      confidence: 0.82,
+      ocrLineIndexes: [19, 20, 21, 22, 23],
+      runId: "ocr-1",
+      sender: "me",
+      stage: "speaker-attribution.complete",
+    }),
+    true,
+  );
+  assert.equal(
+    isContentFreeDiagnosticPayload({ nested: { transcriptText: "private" } }),
+    false,
+  );
+  assert.equal(
+    isContentFreeDiagnosticPayload({ samples: [{ red: 50 }] }),
+    false,
+  );
+  assert.equal(
+    isContentFreeDiagnosticPayload({ screenshotUri: "file:///private/image.png" }),
+    false,
+  );
+});
 
 test("merges a wrapped message without merging the next bubble", () => {
   const result = reconstructConversationFromOcrLines([
@@ -584,6 +614,63 @@ function physicalFailureOcrLines() {
   ];
 }
 
+function recognizedTextFixture(lines: OcrLineInput[]): RecognizedText {
+  const frame = {
+    bottom: Math.max(...lines.map((item) => item.frame.bottom)),
+    left: Math.min(...lines.map((item) => item.frame.left)),
+    right: Math.max(...lines.map((item) => item.frame.right)),
+    top: Math.min(...lines.map((item) => item.frame.top)),
+  };
+
+  return {
+    blocks: [
+      {
+        frame,
+        lines: lines.map((item) => ({
+          elements: [],
+          frame: item.frame,
+          recognizedLanguages: item.recognizedLanguages ?? [],
+          text: item.text,
+        })),
+        recognizedLanguages: [],
+        text: "",
+      },
+    ],
+    text: "",
+  };
+}
+
+function rejectedCroppedCandidate(
+  candidateId: string,
+  normalizedTop: number,
+  normalizedBottom: number,
+  candidateIndex: number,
+): NonNullable<VisualBubbleAttributionAttempt["croppedCandidateDiagnostics"]> {
+  return {
+    candidateEvidenceReady: true,
+    candidateId,
+    candidateIndex,
+    candidateIsChronologicallyLast: true,
+    composerOverlayDetected: false,
+    croppedCandidate: false,
+    edgeCoverageDetected: false,
+    finalBounds: { normalizedBottom, normalizedTop },
+    lowerProbeCoverage: [1, 1, 1],
+    lowerViewport: true,
+    normalVisualAttributionRejected: true,
+    obstruction: null,
+    prototype: {
+      candidateToMeDistance: null,
+      candidateToThemDistance: null,
+      confidence: null,
+      meSourceCount: 0,
+      separationMargin: null,
+      themSourceCount: 0,
+      uniqueMatch: false,
+    },
+  };
+}
+
 function recoverySample(
   id: string,
   color: { blue: number; green: number; red: number },
@@ -713,6 +800,102 @@ test("reconstructs the physical 25-line OCR failure as five visual bubbles", () 
   const parsedConversation = buildParsedConversation(attribution?.messages ?? []);
   assert.equal(parsedConversation.latestMessageSender, "me");
   assert.equal(parsedConversation.shouldGenerateDirectReply, false);
+});
+
+test("retains both candidate traces when a five-bubble recovery fails the obstruction commit gate", async () => {
+  const sourceLines = physicalFailureOcrLines();
+  const fragments = reconstructVisualRecoveryFragmentsFromOcrLines(sourceLines);
+  const outgoing = { blue: 30, green: 0, red: 50 };
+  const incoming = { blue: 232, green: 232, red: 232 };
+  const bubbleColors = new Map([
+    ["message-2", outgoing],
+    ["message-3", incoming],
+    ["message-5", outgoing],
+    ["message-6", incoming],
+    ["message-7", outgoing],
+    ["message-8", outgoing],
+  ]);
+  const recoveryProposal = reconstructVisualBubblesFromSamples({
+    fragments,
+    imageHeight: 2532,
+    imageWidth: 1170,
+    samples: recoveryFixtureSamples(
+      fragments,
+      bubbleColors,
+      new Set([
+        "message-7:message-8",
+        "message-8:recovery-line-23",
+      ]),
+    ),
+  });
+  const initialCandidate = rejectedCroppedCandidate(
+    "message-8",
+    0.848,
+    0.868,
+    7,
+  );
+  const recoveredCandidate = rejectedCroppedCandidate(
+    "message-7",
+    0.742,
+    0.894,
+    4,
+  );
+  const events: Array<{
+    metadata: Record<string, unknown>;
+    stage: string;
+  }> = [];
+
+  const result = await extractChatTextFromImage(
+    "file:///diagnostic-fixture.png",
+    "analysis-test",
+    {
+      inspectAttribution: async ({ stagePrefix }) => ({
+        attribution: null,
+        continuityDiagnostics: [],
+        croppedCandidateDiagnostics:
+          stagePrefix === "recovered"
+            ? recoveredCandidate
+            : initialCandidate,
+        croppedFallback: null,
+        evidenceDiagnostics: [],
+        outcome: "low-confidence-or-incomplete-bubble-evidence" as const,
+      }),
+      inspectRecovery: async () => recoveryProposal,
+      recognizeText: async () => recognizedTextFixture(sourceLines),
+      trace: (stage, metadata = {}) => {
+        events.push({ metadata, stage });
+      },
+    },
+  );
+
+  assert.equal(recoveryProposal.messages.length, 5);
+  assert.equal(result.detectedMessages.length, 8);
+  assert.deepEqual(
+    result.detectedMessages.map((message) => message.sender),
+    ["me", "me", "me", "them", "me", "me", "me", "me"],
+  );
+  assert.equal(result.parsedConversation.speakerAttributionResolved, true);
+
+  const commitEvent = events.find(
+    (event) => event.stage === "visual.recovery.commit-decision",
+  );
+  assert.deepEqual(commitEvent?.metadata.rejectionReasons, ["no-obstruction"]);
+  assert.equal(commitEvent?.metadata.committed, false);
+
+  const snapshotEvent = events.find(
+    (event) => event.stage === "visual.recovery.attempt-snapshots",
+  );
+  assert.deepEqual(snapshotEvent?.metadata.initialCandidate, initialCandidate);
+  assert.deepEqual(snapshotEvent?.metadata.recoveredCandidate, recoveredCandidate);
+  assert.equal(
+    events.every((event) =>
+      isContentFreeDiagnosticPayload({
+        ...event.metadata,
+        stage: event.stage,
+      }),
+    ),
+    true,
+  );
 });
 
 test("resolves an equivalent cropped final THEM bubble from local prototypes", () => {

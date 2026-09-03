@@ -6,6 +6,7 @@ import {
 import {
   hasWingrBackend,
   postJsonToWingrBackend,
+  type WingrBackendDiagnostics,
 } from './wingr-api';
 import type {
   AnalyzeScreenshotParams,
@@ -97,17 +98,71 @@ type BackendRepliesResponse = {
 };
 
 type RefineVibeCheckParams = {
+  diagnostics?: WingrDiagnosticsContext;
   extraContext?: string;
   fallbackVibeCheck?: VibeCheck;
   parsedConversation?: ParsedConversation;
   transcriptText: string;
 };
 
+export type WingrDiagnosticsContext = Pick<
+  WingrBackendDiagnostics,
+  'correlationId' | 'requestId'
+>;
+
+function isDevelopmentBuild() {
+  return typeof __DEV__ !== 'undefined' && __DEV__;
+}
+
+function monotonicNow() {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
+
+function elapsedMilliseconds(startedAt: number) {
+  return Math.round(monotonicNow() - startedAt);
+}
+
 function logTiming(label: string, startedAt: number, metadata?: Record<string, unknown>) {
-  console.info(`[Wingr timing] ${label}`, {
-    durationMs: Date.now() - startedAt,
-    ...metadata,
-  });
+  if (isDevelopmentBuild()) {
+    console.info(`[Wingr timing] ${label}`, {
+      durationMs: elapsedMilliseconds(startedAt),
+      ...metadata,
+    });
+  }
+}
+
+function logAiDiagnostic(stage: string, metadata: Record<string, unknown>) {
+  if (isDevelopmentBuild()) {
+    console.info(`[Wingr AI] ${stage}`, metadata);
+  }
+}
+
+function startPendingAiDiagnostics(
+  stage: string,
+  startedAt: number,
+  diagnostics?: WingrDiagnosticsContext,
+) {
+  if (!isDevelopmentBuild()) {
+    return () => {};
+  }
+
+  const timers = [5_000, 15_000].map((pendingThresholdMs) =>
+    setTimeout(() => {
+      logAiDiagnostic('stage still pending', {
+        correlationId: diagnostics?.correlationId,
+        durationMs: elapsedMilliseconds(startedAt),
+        pendingThresholdMs,
+        requestId: diagnostics?.requestId,
+        stage,
+      });
+    }, pendingThresholdMs),
+  );
+
+  return () => {
+    timers.forEach((timer) => clearTimeout(timer));
+  };
 }
 
 function normalizeBestTone(tone: unknown): RecommendedReplyTone {
@@ -412,43 +467,104 @@ export function normalizeReplyBatch(replyBatch?: ReplyBatch): ReplyBatch {
   };
 }
 
-export async function extractScreenshotConversation(screenshotUri: string) {
+export async function extractScreenshotConversation(
+  screenshotUri: string,
+  diagnostics?: WingrDiagnosticsContext,
+) {
   if (typeof document !== 'undefined') {
     throw new Error('Screenshot OCR is available only in native iOS and Android builds.');
   }
 
-  const startedAt = Date.now();
-  const ocr = await extractChatTextFromImage(screenshotUri);
+  const startedAt = monotonicNow();
+  const stopPendingDiagnostics = startPendingAiDiagnostics(
+    'ocr-pipeline',
+    startedAt,
+    diagnostics,
+  );
 
-  logTiming('ocr', startedAt, {
-    detectedMessages: ocr.detectedMessages.length,
-    source: ocr.source,
-    transcriptLength: ocr.transcriptText.length,
+  logAiDiagnostic('ocr pipeline started', {
+    correlationId: diagnostics?.correlationId,
+    requestId: diagnostics?.requestId,
   });
 
-  return ocr;
+  try {
+    const ocr = await extractChatTextFromImage(
+      screenshotUri,
+      diagnostics?.correlationId,
+    );
+
+    logTiming('ocr', startedAt, {
+      correlationId: diagnostics?.correlationId,
+      detectedMessages: ocr.detectedMessages.length,
+      requestId: diagnostics?.requestId,
+      result: 'completed',
+      source: ocr.source,
+      transcriptLength: ocr.transcriptText.length,
+    });
+
+    return ocr;
+  } catch (error) {
+    logTiming('ocr', startedAt, {
+      correlationId: diagnostics?.correlationId,
+      errorType: error instanceof Error ? error.name : 'unknown',
+      requestId: diagnostics?.requestId,
+      result: 'failed',
+    });
+
+    throw error;
+  } finally {
+    stopPendingDiagnostics();
+  }
 }
 
 export async function refineVibeCheck({
+  diagnostics,
   extraContext,
   fallbackVibeCheck = MOCK_VIBE_CHECK,
   parsedConversation,
   transcriptText,
 }: RefineVibeCheckParams): Promise<VibeCheck> {
-  if (!hasWingrBackend()) {
-    console.info('[Wingr timing] vibe-check-ai', { result: 'fallback-no-backend' });
+  const startedAt = monotonicNow();
+  const backendConfigured = hasWingrBackend();
+
+  logAiDiagnostic('backend gate', {
+    backendConfigured,
+    correlationId: diagnostics?.correlationId,
+    operation: 'vibe-check',
+    requestId: diagnostics?.requestId,
+  });
+
+  if (!backendConfigured) {
+    logTiming('vibe-check-ai', startedAt, {
+      correlationId: diagnostics?.correlationId,
+      requestId: diagnostics?.requestId,
+      result: 'fallback-no-backend',
+    });
     return fallbackVibeCheck;
   }
 
-  const startedAt = Date.now();
+  const stopPendingDiagnostics = startPendingAiDiagnostics(
+    'vibe-check-ai',
+    startedAt,
+    diagnostics,
+  );
 
   try {
     const response = await postJsonToWingrBackend<BackendAnalyzeResponse>(
       '/ai-vibe-check',
       getAnalyzePayload(transcriptText, extraContext, parsedConversation),
+      {
+        ...diagnostics,
+        operation: 'vibe-check',
+      },
     );
 
     if (response.needsSpeakerConfirmation) {
+      logTiming('vibe-check-ai', startedAt, {
+        correlationId: diagnostics?.correlationId,
+        requestId: diagnostics?.requestId,
+        result: 'speaker-confirmation',
+      });
       return {
         ...fallbackVibeCheck,
         contextWouldImproveReplyQuality: true,
@@ -458,16 +574,24 @@ export async function refineVibeCheck({
 
     const vibeCheck = normalizeVibeCheck(response);
 
-    logTiming('vibe-check-ai', startedAt, { result: 'refined' });
+    logTiming('vibe-check-ai', startedAt, {
+      correlationId: diagnostics?.correlationId,
+      requestId: diagnostics?.requestId,
+      result: 'refined',
+    });
 
     return vibeCheck;
   } catch (error) {
     logTiming('vibe-check-ai', startedAt, {
+      correlationId: diagnostics?.correlationId,
+      errorType: error instanceof Error ? error.name : 'unknown',
+      requestId: diagnostics?.requestId,
       result: 'fallback',
-      reason: error instanceof Error ? error.message : 'unknown',
     });
 
     return fallbackVibeCheck;
+  } finally {
+    stopPendingDiagnostics();
   }
 }
 
@@ -493,33 +617,82 @@ export async function analyzeScreenshot({
 }
 
 export async function generateReplies({
+  diagnostics,
   extraContext,
   parsedConversation,
   selectedTone,
   transcriptText,
   userStylePreference,
   vibeCheck,
-}: GenerateRepliesParams): Promise<ReplyBatch> {
-  if (hasWingrBackend()) {
-    const response = await postJsonToWingrBackend<BackendRepliesResponse>(
-      '/ai-replies',
-      getRepliesPayload({
-        contextNotes: getContextNotes(extraContext),
-        extraContext,
-        screenshotUri: null,
-        selectedTone,
-        parsedConversation,
-        transcriptText,
-        userStylePreference,
-        vibeCheck,
-      }),
+}: GenerateRepliesParams & {
+  diagnostics?: WingrDiagnosticsContext;
+}): Promise<ReplyBatch> {
+  const startedAt = monotonicNow();
+  const backendConfigured = hasWingrBackend();
+
+  logAiDiagnostic('backend gate', {
+    backendConfigured,
+    correlationId: diagnostics?.correlationId,
+    operation: 'reply-generation',
+    requestId: diagnostics?.requestId,
+  });
+
+  if (backendConfigured) {
+    const stopPendingDiagnostics = startPendingAiDiagnostics(
+      'reply-generation-ai',
+      startedAt,
+      diagnostics,
     );
 
-    if (response.needsSpeakerConfirmation) {
-      return {};
-    }
+    try {
+      const response = await postJsonToWingrBackend<BackendRepliesResponse>(
+        '/ai-replies',
+        getRepliesPayload({
+          contextNotes: getContextNotes(extraContext),
+          extraContext,
+          screenshotUri: null,
+          selectedTone,
+          parsedConversation,
+          transcriptText,
+          userStylePreference,
+          vibeCheck,
+        }),
+        {
+          ...diagnostics,
+          operation: 'reply-generation',
+        },
+      );
 
-    return normalizeReplyBatch(response.replyBatch);
+      if (response.needsSpeakerConfirmation) {
+        logTiming('reply-generation-ai', startedAt, {
+          correlationId: diagnostics?.correlationId,
+          requestId: diagnostics?.requestId,
+          result: 'speaker-confirmation',
+        });
+        return {};
+      }
+
+      const replyBatch = normalizeReplyBatch(response.replyBatch);
+
+      logTiming('reply-generation-ai', startedAt, {
+        correlationId: diagnostics?.correlationId,
+        requestId: diagnostics?.requestId,
+        result: 'completed',
+      });
+
+      return replyBatch;
+    } catch (error) {
+      logTiming('reply-generation-ai', startedAt, {
+        correlationId: diagnostics?.correlationId,
+        errorType: error instanceof Error ? error.name : 'unknown',
+        requestId: diagnostics?.requestId,
+        result: 'failed',
+      });
+
+      throw error;
+    } finally {
+      stopPendingDiagnostics();
+    }
   }
 
   const localReplies = parsedConversation?.shouldGenerateDirectReply === false
@@ -529,7 +702,7 @@ export async function generateReplies({
     ? FOLLOW_UP_WHY_BY_TONE
     : WHY_BY_TONE;
 
-  return normalizeReplyBatch({
+  const replyBatch = normalizeReplyBatch({
     [selectedTone]: [{
       id: `${selectedTone}-1-${Date.now()}`,
       text: localReplies[selectedTone],
@@ -537,4 +710,12 @@ export async function generateReplies({
       whyItWorks: localWhys[selectedTone],
     }],
   });
+
+  logTiming('reply-generation-ai', startedAt, {
+    correlationId: diagnostics?.correlationId,
+    requestId: diagnostics?.requestId,
+    result: 'local-no-backend',
+  });
+
+  return replyBatch;
 }

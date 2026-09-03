@@ -3,7 +3,10 @@ import {
   sampleImageRegions,
   type ImageColorSample,
   type ImageSampleRegion,
+  type VisualBubbleTrace,
 } from "../modules/visual-bubble-attribution/src";
+
+export type { VisualBubbleTrace } from "../modules/visual-bubble-attribution/src";
 
 type RgbColor = { blue: number; green: number; red: number };
 
@@ -99,16 +102,111 @@ export type VisualBubbleRecoveryFragment = {
 export type VisualBubbleRecoveryDiagnostics = {
   committed: boolean;
   entered: boolean;
+  fragmentEvidence?: Array<{
+    bubbleContrastingHaloCount: number;
+    evidenceReady: boolean;
+    fullCoverageHaloCount: number;
+    haloReturnedCount: number;
+    id: string;
+    normalizedBounds: NormalizedVisualBounds;
+    outcome: "insufficient-enclosure" | "ready";
+    recoverable: boolean;
+    strongestClusterCount: number;
+  }>;
   excludedFragmentIds: string[];
+  mergeEvaluations?: Array<{
+    availableBridgeProbeCount: number;
+    bridgeContinuous: boolean;
+    bridgeDistances: Array<{
+      bubbleAndPageRulesPass: boolean;
+      nearestBubbleDistance: number;
+      pageDistance: number;
+      probeIndex: number;
+    }>;
+    canMerge: boolean;
+    firstId: string | null;
+    frameAligned: boolean;
+    frameOverlapRatio: number;
+    fullCoverageBridgeProbeCount: number;
+    geometryCanJoin: boolean;
+    outcome:
+      | "fragment-ineligible"
+      | "geometry-rejected"
+      | "merged"
+      | "missing-bridge-evidence"
+      | "missing-previous-fragment"
+      | "missing-previous-visual-evidence"
+      | "style-mismatch"
+      | "visual-bridge-rejected";
+    secondId: string;
+    styleDistance: number | null;
+    visualStyleMatches: boolean;
+  }>;
   mergePairs: Array<{ firstId: string; secondId: string }>;
   reconstructedCount: number;
+  reconstructedBounds?: Array<{
+    id: string;
+    normalizedBounds: NormalizedVisualBounds;
+  }>;
   recoveredOcrLineIndexes: number[];
+};
+
+type NormalizedVisualBounds = {
+  normalizedBottom: number | null;
+  normalizedLeft: number;
+  normalizedRight: number;
+  normalizedTop: number | null;
+};
+
+export type VisualBubbleRecoveryCommitDiagnostics = {
+  chronologicallyLast: boolean;
+  committed: boolean;
+  lowerViewport: boolean;
+  obstruction: "edge-coverage" | "composer-overlay" | null;
+  proposalChanged: boolean;
+  rejectionReasons: Array<
+    | "candidate-not-chronologically-last"
+    | "candidate-not-lower-viewport"
+    | "no-obstruction"
+    | "proposal-unchanged"
+  >;
 };
 
 export type VisualBubbleRecoveryProposal = {
   diagnostics: VisualBubbleRecoveryDiagnostics;
   messages: DetectedMessage[];
 };
+
+export function getVisualBubbleRecoveryCommitDiagnostics({
+  chronologicallyLast,
+  lowerViewport,
+  obstruction,
+  proposalChanged,
+}: {
+  chronologicallyLast: boolean;
+  lowerViewport: boolean;
+  obstruction: "edge-coverage" | "composer-overlay" | null;
+  proposalChanged: boolean;
+}): VisualBubbleRecoveryCommitDiagnostics {
+  const rejectionReasons: VisualBubbleRecoveryCommitDiagnostics["rejectionReasons"] = [];
+  if (!proposalChanged) rejectionReasons.push("proposal-unchanged");
+  if (!chronologicallyLast) {
+    rejectionReasons.push("candidate-not-chronologically-last");
+  }
+  if (!lowerViewport) rejectionReasons.push("candidate-not-lower-viewport");
+  if (!obstruction) rejectionReasons.push("no-obstruction");
+
+  return {
+    chronologicallyLast,
+    committed: Boolean(
+      proposalChanged && chronologicallyLast && lowerViewport && obstruction,
+    ),
+    lowerViewport,
+    obstruction,
+    proposalChanged,
+    rejectionReasons,
+  };
+}
 
 export function shouldCommitVisualBubbleRecovery({
   chronologicallyLast,
@@ -121,9 +219,12 @@ export function shouldCommitVisualBubbleRecovery({
   obstruction: "edge-coverage" | "composer-overlay" | null;
   proposalChanged: boolean;
 }) {
-  return Boolean(
-    proposalChanged && chronologicallyLast && lowerViewport && obstruction,
-  );
+  return getVisualBubbleRecoveryCommitDiagnostics({
+    chronologicallyLast,
+    lowerViewport,
+    obstruction,
+    proposalChanged,
+  }).committed;
 }
 
 export function isVisuallyContinuousBridge(
@@ -140,6 +241,21 @@ export function isVisuallyContinuousBridge(
 
 const VISUAL_PAGE_DISTANCE = 14;
 const VISUAL_STYLE_DISTANCE = 48;
+
+const monotonicNow = () =>
+  typeof performance !== "undefined" ? performance.now() : Date.now();
+
+function emitVisualTrace(
+  trace: VisualBubbleTrace | undefined,
+  stage: string,
+  metadata: Record<string, unknown>,
+) {
+  try {
+    trace?.(stage, metadata);
+  } catch {
+    // Development diagnostics must never affect attribution.
+  }
+}
 
 const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
@@ -242,16 +358,52 @@ function getRecoveryRegions(
   return [...fragmentRegions, ...bridgeRegions];
 }
 
-function getRecoveryEvidence(
+function normalizedVisualBounds(
+  message: DetectedMessage,
+  imageWidth: number,
+  imageHeight?: number,
+): NormalizedVisualBounds {
+  return {
+    normalizedBottom: imageHeight
+      ? Number(
+          (
+            (message.boundingBox.y + message.boundingBox.height) /
+            imageHeight
+          ).toFixed(3),
+        )
+      : null,
+    normalizedLeft: Number((message.boundingBox.x / imageWidth).toFixed(3)),
+    normalizedRight: Number(
+      (
+        (message.boundingBox.x + message.boundingBox.width) /
+        imageWidth
+      ).toFixed(3),
+    ),
+    normalizedTop: imageHeight
+      ? Number((message.boundingBox.y / imageHeight).toFixed(3))
+      : null,
+  };
+}
+
+function getRecoveryEvidenceWithDiagnostics(
   fragment: VisualBubbleRecoveryFragment,
   sampleMap: Map<string, ImageColorSample>,
   pageColor: RgbColor,
   imageWidth: number,
-): VisualBubbleEvidence | null {
-  const haloSamples = [0, 1, 2, 3]
+  imageHeight?: number,
+): {
+  diagnostics: NonNullable<
+    VisualBubbleRecoveryDiagnostics["fragmentEvidence"]
+  >[number];
+  evidence: VisualBubbleEvidence | null;
+} {
+  const returnedHaloSamples = [0, 1, 2, 3]
     .map((index) => sampleMap.get(recoveryRegionId(fragment.message.id, `halo-${index}`)))
-    .filter((sample): sample is ImageColorSample => Boolean(sample))
-    .filter((sample) => sample.coverage >= 0.98)
+    .filter((sample): sample is ImageColorSample => Boolean(sample));
+  const fullCoverageHaloSamples = returnedHaloSamples.filter(
+    (sample) => sample.coverage >= 0.98,
+  );
+  const haloSamples = fullCoverageHaloSamples
     .filter((sample) => colorDistance(asColor(sample), pageColor) >= VISUAL_PAGE_DISTANCE);
 
   const strongestCluster = haloSamples
@@ -264,7 +416,24 @@ function getRecoveryEvidence(
     .sort((first, second) => second.members.length - first.members.length)[0];
 
   if (!strongestCluster || strongestCluster.members.length < 2) {
-    return null;
+    return {
+      diagnostics: {
+        bubbleContrastingHaloCount: haloSamples.length,
+        evidenceReady: false,
+        fullCoverageHaloCount: fullCoverageHaloSamples.length,
+        haloReturnedCount: returnedHaloSamples.length,
+        id: fragment.message.id,
+        normalizedBounds: normalizedVisualBounds(
+          fragment.message,
+          imageWidth,
+          imageHeight,
+        ),
+        outcome: "insufficient-enclosure",
+        recoverable: fragment.recoverable,
+        strongestClusterCount: strongestCluster?.members.length ?? 0,
+      },
+      evidence: null,
+    };
   }
 
   const avatar = sampleMap.get(recoveryRegionId(fragment.message.id, "avatar"));
@@ -274,18 +443,35 @@ function getRecoveryEvidence(
   ].filter((value): value is number => typeof value === "number");
 
   return {
-    avatarVariance: avatar?.variance ?? 0,
-    backgroundVariance: average(pageVariances),
-    bubbleColor: averageColor(strongestCluster.members.map(asColor)),
-    id: fragment.message.id,
-    leftExtent: fragment.message.boundingBox.x / imageWidth,
-    rightExtent:
-      (fragment.message.boundingBox.x + fragment.message.boundingBox.width) /
-      imageWidth,
+    diagnostics: {
+      bubbleContrastingHaloCount: haloSamples.length,
+      evidenceReady: true,
+      fullCoverageHaloCount: fullCoverageHaloSamples.length,
+      haloReturnedCount: returnedHaloSamples.length,
+      id: fragment.message.id,
+      normalizedBounds: normalizedVisualBounds(
+        fragment.message,
+        imageWidth,
+        imageHeight,
+      ),
+      outcome: "ready",
+      recoverable: fragment.recoverable,
+      strongestClusterCount: strongestCluster.members.length,
+    },
+    evidence: {
+      avatarVariance: avatar?.variance ?? 0,
+      backgroundVariance: average(pageVariances),
+      bubbleColor: averageColor(strongestCluster.members.map(asColor)),
+      id: fragment.message.id,
+      leftExtent: fragment.message.boundingBox.x / imageWidth,
+      rightExtent:
+        (fragment.message.boundingBox.x + fragment.message.boundingBox.width) /
+        imageWidth,
+    },
   };
 }
 
-function recoveryBridgeSamples(
+function availableRecoveryBridgeSamples(
   firstId: string,
   secondId: string,
   sampleMap: Map<string, ImageColorSample>,
@@ -296,11 +482,20 @@ function recoveryBridgeSamples(
         recoveryRegionId(`${firstId}:${secondId}`, `bridge-${index}`),
       ),
     )
-    .filter((sample): sample is ImageColorSample => Boolean(sample))
-    .filter((sample) => sample.coverage >= 0.98);
+    .filter((sample): sample is ImageColorSample => Boolean(sample));
 }
 
-function recoveryFramesCanJoin(
+function recoveryBridgeSamples(
+  firstId: string,
+  secondId: string,
+  sampleMap: Map<string, ImageColorSample>,
+) {
+  return availableRecoveryBridgeSamples(firstId, secondId, sampleMap).filter(
+    (sample) => sample.coverage >= 0.98,
+  );
+}
+
+function getRecoveryFrameJoinDiagnostics(
   first: DetectedMessage,
   second: DetectedMessage,
   imageWidth: number,
@@ -320,7 +515,11 @@ function recoveryFramesCanJoin(
       Math.abs(firstRight - secondRight),
     ) <= edgeTolerance;
 
-  return aligned || overlapRatio >= 0.45;
+  return {
+    aligned,
+    canJoin: aligned || overlapRatio >= 0.45,
+    overlapRatio,
+  };
 }
 
 function mergeLanguageEvidence(
@@ -360,10 +559,12 @@ function mergeRecoveryMessage(first: DetectedMessage, second: DetectedMessage) {
 
 export function reconstructVisualBubblesFromSamples({
   fragments,
+  imageHeight,
   imageWidth,
   samples,
 }: {
   fragments: VisualBubbleRecoveryFragment[];
+  imageHeight?: number;
   imageWidth: number;
   samples: ImageColorSample[];
 }): VisualBubbleRecoveryProposal {
@@ -378,13 +579,22 @@ export function reconstructVisualBubblesFromSamples({
       .filter((sample): sample is ImageColorSample => Boolean(sample)),
   );
   const pageColor = averageColor(pageSamples.map(asColor));
+  const evidenceResults = ordered.map((fragment) =>
+    getRecoveryEvidenceWithDiagnostics(
+      fragment,
+      sampleMap,
+      pageColor,
+      imageWidth,
+      imageHeight,
+    ),
+  );
   const evidenceById = new Map(
-    ordered.map((fragment) => [
-      fragment.message.id,
-      getRecoveryEvidence(fragment, sampleMap, pageColor, imageWidth),
-    ]),
+    evidenceResults.map((result) => [result.diagnostics.id, result.evidence]),
   );
   const excludedFragmentIds: string[] = [];
+  const mergeEvaluations: NonNullable<
+    VisualBubbleRecoveryDiagnostics["mergeEvaluations"]
+  > = [];
   const mergePairs: Array<{ firstId: string; secondId: string }> = [];
   const recoveredOcrLineIndexes: number[] = [];
   const reconstructed: Array<{
@@ -399,6 +609,13 @@ export function reconstructVisualBubblesFromSamples({
     const previousFragmentEvidence = previous
       ? evidenceById.get(previous.tailId) ?? previous.evidence
       : null;
+    const availableBridgeSamples = previous
+      ? availableRecoveryBridgeSamples(
+          previous.tailId,
+          fragment.message.id,
+          sampleMap,
+        )
+      : [];
     const bridgeSamples = previous
       ? recoveryBridgeSamples(previous.tailId, fragment.message.id, sampleMap)
       : [];
@@ -414,22 +631,84 @@ export function reconstructVisualBubblesFromSamples({
             pageDistance: colorDistance(asColor(sample), pageColor),
           }))
         : [];
+    const frameJoinDiagnostics = previous
+      ? getRecoveryFrameJoinDiagnostics(
+          previous.message,
+          fragment.message,
+          imageWidth,
+        )
+      : { aligned: false, canJoin: false, overlapRatio: 0 };
+    const styleDistance =
+      previousFragmentEvidence && evidence
+        ? colorDistance(
+            previousFragmentEvidence.bubbleColor,
+            evidence.bubbleColor,
+          )
+        : null;
     const visualStyleMatches = Boolean(
       previousFragmentEvidence &&
         (!evidence ||
-          colorDistance(previousFragmentEvidence.bubbleColor, evidence.bubbleColor) <=
-            VISUAL_STYLE_DISTANCE),
+          (styleDistance !== null && styleDistance <= VISUAL_STYLE_DISTANCE)),
     );
+    const bridgeContinuous =
+      bridgeDistances.length === 3 &&
+      isVisuallyContinuousBridge(bridgeDistances);
     const canMerge = Boolean(
       previous &&
         previousFragmentEvidence &&
-        recoveryFramesCanJoin(previous.message, fragment.message, imageWidth) &&
+        frameJoinDiagnostics.canJoin &&
         bridgeDistances.length === 3 &&
         visualStyleMatches &&
-        isVisuallyContinuousBridge(bridgeDistances),
+        bridgeContinuous,
     );
+    const eligibleForMerge = Boolean(evidence || fragment.recoverable);
+    const mergeOutcome: NonNullable<
+      VisualBubbleRecoveryDiagnostics["mergeEvaluations"]
+    >[number]["outcome"] = !previous
+      ? "missing-previous-fragment"
+      : !previousFragmentEvidence
+        ? "missing-previous-visual-evidence"
+        : !frameJoinDiagnostics.canJoin
+          ? "geometry-rejected"
+          : bridgeDistances.length !== 3
+            ? "missing-bridge-evidence"
+            : !visualStyleMatches
+              ? "style-mismatch"
+              : !bridgeContinuous
+                ? "visual-bridge-rejected"
+                : !eligibleForMerge
+                  ? "fragment-ineligible"
+                  : "merged";
 
-    if (canMerge && (evidence || fragment.recoverable)) {
+    mergeEvaluations.push({
+      availableBridgeProbeCount: availableBridgeSamples.length,
+      bridgeContinuous,
+      bridgeDistances: bridgeDistances.map((distance, probeIndex) => ({
+        bubbleAndPageRulesPass:
+          distance.nearestBubbleDistance <= VISUAL_STYLE_DISTANCE &&
+          distance.pageDistance >= VISUAL_PAGE_DISTANCE,
+        nearestBubbleDistance: Number(
+          distance.nearestBubbleDistance.toFixed(3),
+        ),
+        pageDistance: Number(distance.pageDistance.toFixed(3)),
+        probeIndex,
+      })),
+      canMerge: canMerge && eligibleForMerge,
+      firstId: previous?.tailId ?? null,
+      frameAligned: frameJoinDiagnostics.aligned,
+      frameOverlapRatio: Number(
+        frameJoinDiagnostics.overlapRatio.toFixed(3),
+      ),
+      fullCoverageBridgeProbeCount: bridgeSamples.length,
+      geometryCanJoin: frameJoinDiagnostics.canJoin,
+      outcome: mergeOutcome,
+      secondId: fragment.message.id,
+      styleDistance:
+        styleDistance === null ? null : Number(styleDistance.toFixed(3)),
+      visualStyleMatches,
+    });
+
+    if (canMerge && eligibleForMerge) {
       previous.message = mergeRecoveryMessage(previous.message, fragment.message);
       previous.tailId = fragment.message.id;
       if (evidence) {
@@ -462,9 +741,19 @@ export function reconstructVisualBubblesFromSamples({
     diagnostics: {
       committed: false,
       entered: true,
+      fragmentEvidence: evidenceResults.map((result) => result.diagnostics),
       excludedFragmentIds,
+      mergeEvaluations,
       mergePairs,
       reconstructedCount: reconstructed.length,
+      reconstructedBounds: reconstructed.map(({ message }) => ({
+        id: message.id,
+        normalizedBounds: normalizedVisualBounds(
+          message,
+          imageWidth,
+          imageHeight,
+        ),
+      })),
       recoveredOcrLineIndexes,
     },
     messages: reconstructed.map(({ message }) => message),
@@ -474,26 +763,79 @@ export function reconstructVisualBubblesFromSamples({
 export async function inspectVisualBubbleRecovery({
   fragments,
   screenshotUri,
+  trace,
 }: {
   fragments: VisualBubbleRecoveryFragment[];
   screenshotUri: string;
+  trace?: VisualBubbleTrace;
 }): Promise<VisualBubbleRecoveryProposal | null> {
-  if (fragments.length < 2) return null;
+  if (fragments.length < 2) {
+    emitVisualTrace(trace, "recovery.reconstruction", {
+      durationMs: 0,
+      inputItemCount: fragments.length,
+      outcome: "insufficient-fragments",
+      reconstructedCount: 0,
+    });
+    return null;
+  }
   const dimensions = await sampleImageRegions(screenshotUri, [
     { id: "recovery:dimensions", radius: 1, x: 0, y: 0 },
-  ]);
-  if (!dimensions || dimensions.width < 40 || dimensions.height < 40) return null;
+  ], {
+    inputItemCount: fragments.length,
+    stage: "recovery.dimensions",
+    trace,
+  });
+  if (!dimensions || dimensions.width < 40 || dimensions.height < 40) {
+    emitVisualTrace(trace, "recovery.reconstruction", {
+      durationMs: 0,
+      inputItemCount: fragments.length,
+      outcome: "dimensions-unavailable",
+      reconstructedCount: 0,
+    });
+    return null;
+  }
+  const regions = getRecoveryRegions(fragments, dimensions.width);
   const sampled = await sampleImageRegions(
     screenshotUri,
-    getRecoveryRegions(fragments, dimensions.width),
+    regions,
+    {
+      inputItemCount: fragments.length,
+      stage: "recovery.regions",
+      trace,
+    },
   );
-  if (!sampled) return null;
+  if (!sampled) {
+    emitVisualTrace(trace, "recovery.reconstruction", {
+      durationMs: 0,
+      inputItemCount: fragments.length,
+      outcome: "samples-unavailable",
+      reconstructedCount: 0,
+    });
+    return null;
+  }
 
-  return reconstructVisualBubblesFromSamples({
+  const reconstructionStartedAt = monotonicNow();
+  const proposal = reconstructVisualBubblesFromSamples({
     fragments,
+    imageHeight: sampled.height,
     imageWidth: sampled.width,
     samples: sampled.samples,
   });
+  emitVisualTrace(trace, "recovery.reconstruction", {
+    durationMs: Number(
+      (monotonicNow() - reconstructionStartedAt).toFixed(1),
+    ),
+    excludedFragmentCount: proposal.diagnostics.excludedFragmentIds.length,
+    inputItemCount: fragments.length,
+    mergeCount: proposal.diagnostics.mergePairs.length,
+    outcome: "completed",
+    reconstructedBounds: proposal.diagnostics.reconstructedBounds,
+    reconstructedCount: proposal.diagnostics.reconstructedCount,
+    recoveredOcrLineCount:
+      proposal.diagnostics.recoveredOcrLineIndexes.length,
+    requestedRegionCount: regions.length,
+  });
+  return proposal;
 }
 
 function getRegions(messages: DetectedMessage[], imageWidth: number, imageHeight: number): ImageSampleRegion[] {
@@ -955,21 +1297,76 @@ function getVisuallyContinuousPairs(
   return { continuityDiagnostics, pairs };
 }
 
-export async function resolveVisualBubbleAttribution({ messages, screenshotUri }: { messages: DetectedMessage[]; screenshotUri: string }): Promise<VisualBubbleAttribution | null> {
-  const attempt = await inspectVisualBubbleAttribution({ messages, screenshotUri });
+export async function resolveVisualBubbleAttribution({
+  messages,
+  screenshotUri,
+  stagePrefix = "normal",
+  trace,
+}: {
+  messages: DetectedMessage[];
+  screenshotUri: string;
+  stagePrefix?: "normal" | "recovered";
+  trace?: VisualBubbleTrace;
+}): Promise<VisualBubbleAttribution | null> {
+  const attempt = await inspectVisualBubbleAttribution({
+    messages,
+    screenshotUri,
+    stagePrefix,
+    trace,
+  });
   return attempt.attribution;
 }
 
-export async function inspectVisualBubbleAttribution({ messages, screenshotUri }: { messages: DetectedMessage[]; screenshotUri: string }): Promise<VisualBubbleAttributionAttempt> {
+export async function inspectVisualBubbleAttribution({
+  messages,
+  screenshotUri,
+  stagePrefix = "normal",
+  trace,
+}: {
+  messages: DetectedMessage[];
+  screenshotUri: string;
+  stagePrefix?: "normal" | "recovered";
+  trace?: VisualBubbleTrace;
+}): Promise<VisualBubbleAttributionAttempt> {
+  const attemptStartedAt = monotonicNow();
   if (messages.length < 2) {
+    emitVisualTrace(trace, `${stagePrefix}.attribution`, {
+      durationMs: Number((monotonicNow() - attemptStartedAt).toFixed(1)),
+      inputItemCount: messages.length,
+      outcome: "insufficient-messages",
+    });
     return { attribution: null, continuityDiagnostics: [], croppedFallback: null, evidenceDiagnostics: [], outcome: "insufficient-messages" };
   }
-  const dimensions = await sampleImageRegions(screenshotUri, [{ id: "dimensions", radius: 1, x: 0, y: 0 }]);
+  const dimensions = await sampleImageRegions(
+    screenshotUri,
+    [{ id: "dimensions", radius: 1, x: 0, y: 0 }],
+    {
+      inputItemCount: messages.length,
+      stage: `${stagePrefix}.dimensions`,
+      trace,
+    },
+  );
   if (!dimensions || dimensions.width < 40 || dimensions.height < 40) {
+    emitVisualTrace(trace, `${stagePrefix}.attribution`, {
+      durationMs: Number((monotonicNow() - attemptStartedAt).toFixed(1)),
+      inputItemCount: messages.length,
+      outcome: "dimensions-unavailable",
+    });
     return { attribution: null, continuityDiagnostics: [], croppedFallback: null, evidenceDiagnostics: [], outcome: "dimensions-unavailable" };
   }
-  const sampled = await sampleImageRegions(screenshotUri, getRegions(messages, dimensions.width, dimensions.height));
+  const regions = getRegions(messages, dimensions.width, dimensions.height);
+  const sampled = await sampleImageRegions(screenshotUri, regions, {
+    inputItemCount: messages.length,
+    stage: `${stagePrefix}.regions`,
+    trace,
+  });
   if (!sampled) {
+    emitVisualTrace(trace, `${stagePrefix}.attribution`, {
+      durationMs: Number((monotonicNow() - attemptStartedAt).toFixed(1)),
+      inputItemCount: messages.length,
+      outcome: "samples-unavailable",
+      requestedRegionCount: regions.length,
+    });
     return { attribution: null, continuityDiagnostics: [], croppedFallback: null, evidenceDiagnostics: [], outcome: "samples-unavailable" };
   }
   const { evidence, evidenceDiagnostics, pageColor, partialEvidence, sampleMap } = deriveEvidence(
@@ -1014,7 +1411,7 @@ export async function inspectVisualBubbleAttribution({ messages, screenshotUri }
     sampleMap,
   });
 
-  return {
+  const attempt: VisualBubbleAttributionAttempt = {
     attribution,
     continuityDiagnostics: continuity.continuityDiagnostics,
     croppedCandidateDiagnostics,
@@ -1029,4 +1426,18 @@ export async function inspectVisualBubbleAttribution({ messages, screenshotUri }
       ? "accepted"
       : "low-confidence-or-incomplete-bubble-evidence",
   };
+  emitVisualTrace(trace, `${stagePrefix}.attribution`, {
+    attributionConfidence: attribution
+      ? Number(attribution.confidence.toFixed(3))
+      : null,
+    croppedCandidate: croppedCandidateDiagnostics,
+    durationMs: Number((monotonicNow() - attemptStartedAt).toFixed(1)),
+    evidenceDiagnostics: attempt.evidenceDiagnostics,
+    inputItemCount: messages.length,
+    outcome: attempt.outcome,
+    requestedRegionCount: regions.length,
+    senderSequence:
+      attribution?.messages.map((message) => message.sender) ?? [],
+  });
+  return attempt;
 }
