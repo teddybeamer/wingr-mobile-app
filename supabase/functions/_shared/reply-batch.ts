@@ -7,6 +7,11 @@ import { callOpenRouterStructured } from './openrouter.ts';
 import { withSafeReplyTranscript } from './prompt-budget.ts';
 import { getReplyAnswerability } from './reply-answerability.ts';
 import {
+  selectReplyRecoveryStrategy,
+  type ReplyRecoverySelection,
+  type ReplyRecoveryStrategy,
+} from './reply-recovery.ts';
+import {
   buildReplyBatchPrompt,
   buildReplyEmergencyPrompt,
   buildReplyGroundingRepairPrompt,
@@ -28,6 +33,11 @@ const MIN_RECOVERY_STAGE_WINDOW_MS = 3_000;
 
 type ReplyBatchResult = { replyBatch?: ReplyBatch };
 type ReplyGenerationTiming = { attemptCount: number; durationMs: number };
+type RecoveryGenerationTiming = ReplyGenerationTiming & {
+  previouslyFailedStrategyAvoided: boolean;
+  strategy: ReplyRecoveryStrategy | null;
+  triggered: boolean;
+};
 type UnifiedRejectionCode = ReplyOwnershipRejectionCode | 'missing_selected_tone' | 'structured_output_invalid' | 'wrong_language';
 
 type ValidationResult = {
@@ -48,8 +58,8 @@ export type ReplyGenerationTelemetry = {
   finalOutcome: 'fallback' | 'success';
   generationId: string;
   initialGeneration: ReplyGenerationTiming;
-  repairGeneration: ReplyGenerationTiming & { triggered: boolean };
-  emergencyGeneration: ReplyGenerationTiming & { triggered: boolean };
+  repairGeneration: RecoveryGenerationTiming;
+  emergencyGeneration: RecoveryGenerationTiming;
   returnedStage: 'emergency_generation' | 'primary_generation' | 'repair_generation' | 'terminal_fallback';
   stageTimings: {
     emergencyValidationMs: number;
@@ -58,6 +68,11 @@ export type ReplyGenerationTelemetry = {
   };
   terminalFallback: { reasonCodes: string[]; used: boolean };
   totalDurationMs: number;
+  validationRejections: {
+    emergency: UnifiedRejectionCode[];
+    primary: UnifiedRejectionCode[];
+    repair: UnifiedRejectionCode[];
+  };
 };
 
 export type ReplyBatchGenerationResult = {
@@ -76,7 +91,9 @@ function logReplyGenerationStage({
   latestThemRequiresUnknownMeFact = false,
   outcome,
   placeholderGenerationAllowed = false,
+  previouslyFailedStrategyAvoided = false,
   reasonCodes = [],
+  recoveryStrategy = null,
   rejectedReplyCount = 0,
   selectedTone,
   stage,
@@ -91,7 +108,9 @@ function logReplyGenerationStage({
   latestThemRequiresUnknownMeFact?: boolean;
   outcome: 'failed' | 'rejected' | 'skipped' | 'succeeded' | 'used';
   placeholderGenerationAllowed?: boolean;
+  previouslyFailedStrategyAvoided?: boolean;
   reasonCodes?: string[];
+  recoveryStrategy?: ReplyRecoveryStrategy | null;
   rejectedReplyCount?: number;
   selectedTone: string;
   stage: 'primary_generation' | 'primary_validation' | 'repair_generation' | 'repair_validation' | 'emergency_generation' | 'emergency_validation' | 'terminal_fallback';
@@ -108,7 +127,9 @@ function logReplyGenerationStage({
     latestThemRequiresUnknownMeFact,
     outcome,
     placeholderGenerationAllowed,
+    previouslyFailedStrategyAvoided,
     reasonCodes,
+    recoveryStrategy,
     rejectedReplyCount,
     selectedTone,
     stage,
@@ -233,8 +254,20 @@ export async function generateReplyBatch(
     finalOutcome: 'fallback',
     generationId,
     initialGeneration: { attemptCount: 0, durationMs: 0 },
-    repairGeneration: { attemptCount: 0, durationMs: 0, triggered: false },
-    emergencyGeneration: { attemptCount: 0, durationMs: 0, triggered: false },
+    repairGeneration: {
+      attemptCount: 0,
+      durationMs: 0,
+      previouslyFailedStrategyAvoided: false,
+      strategy: null,
+      triggered: false,
+    },
+    emergencyGeneration: {
+      attemptCount: 0,
+      durationMs: 0,
+      previouslyFailedStrategyAvoided: false,
+      strategy: null,
+      triggered: false,
+    },
     returnedStage: 'terminal_fallback',
     stageTimings: {
       emergencyValidationMs: 0,
@@ -243,6 +276,7 @@ export async function generateReplyBatch(
     },
     terminalFallback: { reasonCodes: [], used: false },
     totalDurationMs: 0,
+    validationRejections: { emergency: [], primary: [], repair: [] },
   };
   const schema = createReplyBatchSchema(selectedTones);
   const hasRecoveryBudget = () => Date.now() + MIN_RECOVERY_STAGE_WINDOW_MS < deadlineAt;
@@ -253,7 +287,10 @@ export async function generateReplyBatch(
     maxPrimaryAttemptMs: MAX_PRIMARY_PROVIDER_ATTEMPT_MS,
     minLatencyFallbackWindowMs: MIN_TRANSPORT_FALLBACK_WINDOW_MS,
   };
-  const useTerminalFallback = (reasonCodes: string[]) => {
+  const useTerminalFallback = (
+    reasonCodes: string[],
+    recoverySelection?: ReplyRecoverySelection,
+  ) => {
     const replyBatch = Object.fromEntries(selectedTones.map((tone) => [
       tone,
       [getTerminalFallbackReply({ ...normalizedRequest, selectedTone: tone })],
@@ -268,23 +305,53 @@ export async function generateReplyBatch(
       generatedReplyContainedPlaceholder: Object.values(replyBatch).flat().some((reply) => reply?.text.includes('[')),
       generationId,
       outcome: 'used',
+      previouslyFailedStrategyAvoided: recoverySelection?.previouslyFailedStrategyAvoided,
       reasonCodes,
+      recoveryStrategy: recoverySelection?.strategy,
       selectedTone,
       stage: 'terminal_fallback',
     });
     return { replyBatch, telemetry };
   };
-  const runEmergencyGeneration = async (reasonCodes: string[]) => {
+  const runEmergencyGeneration = async (
+    reasonCodes: string[],
+    failedStrategies: ReplyRecoveryStrategy[] = [],
+  ) => {
+    const emergencyRecovery = selectReplyRecoveryStrategy(
+      reasonCodes,
+      answerability,
+      failedStrategies,
+    );
+    telemetry.emergencyGeneration.previouslyFailedStrategyAvoided =
+      emergencyRecovery.previouslyFailedStrategyAvoided;
+    telemetry.emergencyGeneration.strategy = emergencyRecovery.strategy;
+
+    if (emergencyRecovery.strategy === 'deterministic_placeholder_fallback') {
+      logReplyGenerationStage({
+        ...diagnosticContext,
+        generationId,
+        outcome: 'skipped',
+        previouslyFailedStrategyAvoided: true,
+        reasonCodes,
+        recoveryStrategy: emergencyRecovery.strategy,
+        selectedTone,
+        stage: 'emergency_generation',
+      });
+      return useTerminalFallback(reasonCodes, emergencyRecovery);
+    }
+
     if (!hasRecoveryBudget()) {
       logReplyGenerationStage({
         ...diagnosticContext,
         generationId,
         outcome: 'skipped',
+        previouslyFailedStrategyAvoided: emergencyRecovery.previouslyFailedStrategyAvoided,
         reasonCodes: ['latency_budget_exhausted'],
+        recoveryStrategy: emergencyRecovery.strategy,
         selectedTone,
         stage: 'emergency_generation',
       });
-      return useTerminalFallback(['latency_budget_exhausted']);
+      return useTerminalFallback(['latency_budget_exhausted'], emergencyRecovery);
     }
 
     telemetry.emergencyGeneration.triggered = true;
@@ -295,7 +362,12 @@ export async function generateReplyBatch(
       emergencyResult = await callOpenRouterStructured<ReplyBatchResult>({
         ...openRouterOptions,
         instrumentation: { onAttemptStart: () => { telemetry.emergencyGeneration.attemptCount += 1; } },
-        prompt: buildReplyEmergencyPrompt(normalizedRequest, selectedTones, reasonCodes),
+        prompt: buildReplyEmergencyPrompt(
+          normalizedRequest,
+          selectedTones,
+          reasonCodes,
+          emergencyRecovery,
+        ),
         schema,
         schemaName: `wingr_reply_batch_emergency_${selectedTones.join('_')}`,
         task: 'reply',
@@ -308,11 +380,13 @@ export async function generateReplyBatch(
         durationMs: telemetry.emergencyGeneration.durationMs,
         generationId,
         outcome: 'failed',
+        previouslyFailedStrategyAvoided: emergencyRecovery.previouslyFailedStrategyAvoided,
         reasonCodes: ['model_request_failed'],
+        recoveryStrategy: emergencyRecovery.strategy,
         selectedTone,
         stage: 'emergency_generation',
       });
-      return useTerminalFallback(['emergency_model_request_failed']);
+      return useTerminalFallback(['emergency_model_request_failed'], emergencyRecovery);
     }
 
     telemetry.emergencyGeneration.durationMs = Date.now() - emergencyStartedAt;
@@ -322,11 +396,15 @@ export async function generateReplyBatch(
       durationMs: telemetry.emergencyGeneration.durationMs,
       generationId,
       outcome: 'succeeded',
+      previouslyFailedStrategyAvoided: emergencyRecovery.previouslyFailedStrategyAvoided,
+      reasonCodes,
+      recoveryStrategy: emergencyRecovery.strategy,
       selectedTone,
       stage: 'emergency_generation',
     });
     const emergencyValidationStartedAt = Date.now();
     const emergencyValidation = validateReplyBatch(emergencyResult, normalizedRequest, selectedTones);
+    telemetry.validationRejections.emergency = emergencyValidation.rejectionCodes;
     telemetry.stageTimings.emergencyValidationMs = Date.now() - emergencyValidationStartedAt;
     logReplyGenerationStage({
       ...diagnosticContext,
@@ -337,7 +415,9 @@ export async function generateReplyBatch(
       generatedReplyContainedPlaceholder: emergencyValidation.generatedReplyContainedPlaceholder,
       generationId,
       outcome: emergencyValidation.rejectionCodes.length === 0 ? 'succeeded' : 'rejected',
+      previouslyFailedStrategyAvoided: emergencyRecovery.previouslyFailedStrategyAvoided,
       reasonCodes: emergencyValidation.rejectionCodes,
+      recoveryStrategy: emergencyRecovery.strategy,
       rejectedReplyCount: emergencyValidation.rejectedReplyCount,
       selectedTone,
       stage: 'emergency_validation',
@@ -349,7 +429,7 @@ export async function generateReplyBatch(
       return { replyBatch: emergencyValidation.replyBatch, telemetry };
     }
 
-    return useTerminalFallback(emergencyValidation.rejectionCodes);
+    return useTerminalFallback(emergencyValidation.rejectionCodes, emergencyRecovery);
   };
 
   const initialStartedAt = Date.now();
@@ -390,6 +470,7 @@ export async function generateReplyBatch(
   });
   const initialValidationStartedAt = Date.now();
   const initialValidation = validateReplyBatch(initialResult, normalizedRequest, selectedTones);
+  telemetry.validationRejections.primary = initialValidation.rejectionCodes;
   telemetry.stageTimings.primaryValidationMs = Date.now() - initialValidationStartedAt;
   logReplyGenerationStage({
     ...diagnosticContext,
@@ -424,7 +505,14 @@ export async function generateReplyBatch(
     return useTerminalFallback(['latency_budget_exhausted']);
   }
 
+  const repairRecovery = selectReplyRecoveryStrategy(
+    initialValidation.rejectionCodes,
+    answerability,
+  );
   telemetry.repairGeneration.triggered = true;
+  telemetry.repairGeneration.previouslyFailedStrategyAvoided =
+    repairRecovery.previouslyFailedStrategyAvoided;
+  telemetry.repairGeneration.strategy = repairRecovery.strategy;
   const repairStartedAt = Date.now();
   let repairResult: ReplyBatchResult;
   try {
@@ -436,6 +524,7 @@ export async function generateReplyBatch(
         getFlattenedReplies(initialResult.replyBatch ?? {}),
         selectedTones,
         initialValidation.rejectionCodes,
+        repairRecovery,
       ),
       schema,
       schemaName: `wingr_reply_batch_repair_${selectedTones.join('_')}`,
@@ -449,11 +538,15 @@ export async function generateReplyBatch(
       durationMs: telemetry.repairGeneration.durationMs,
       generationId,
       outcome: 'failed',
+      previouslyFailedStrategyAvoided: repairRecovery.previouslyFailedStrategyAvoided,
       reasonCodes: ['model_request_failed'],
+      recoveryStrategy: repairRecovery.strategy,
       selectedTone,
       stage: 'repair_generation',
     });
-    return runEmergencyGeneration(['repair_model_request_failed']);
+    return runEmergencyGeneration(
+      [...initialValidation.rejectionCodes, 'repair_model_request_failed'],
+    );
   }
 
   telemetry.repairGeneration.durationMs = Date.now() - repairStartedAt;
@@ -463,11 +556,15 @@ export async function generateReplyBatch(
     durationMs: telemetry.repairGeneration.durationMs,
     generationId,
     outcome: 'succeeded',
+    previouslyFailedStrategyAvoided: repairRecovery.previouslyFailedStrategyAvoided,
+    reasonCodes: initialValidation.rejectionCodes,
+    recoveryStrategy: repairRecovery.strategy,
     selectedTone,
     stage: 'repair_generation',
   });
   const repairValidationStartedAt = Date.now();
   const repairValidation = validateReplyBatch(repairResult, normalizedRequest, selectedTones);
+  telemetry.validationRejections.repair = repairValidation.rejectionCodes;
   telemetry.stageTimings.repairValidationMs = Date.now() - repairValidationStartedAt;
   logReplyGenerationStage({
     ...diagnosticContext,
@@ -478,7 +575,9 @@ export async function generateReplyBatch(
     generatedReplyContainedPlaceholder: repairValidation.generatedReplyContainedPlaceholder,
     generationId,
     outcome: repairValidation.rejectionCodes.length === 0 ? 'succeeded' : 'rejected',
+    previouslyFailedStrategyAvoided: repairRecovery.previouslyFailedStrategyAvoided,
     reasonCodes: repairValidation.rejectionCodes,
+    recoveryStrategy: repairRecovery.strategy,
     rejectedReplyCount: repairValidation.rejectedReplyCount,
     selectedTone,
     stage: 'repair_validation',
@@ -490,5 +589,8 @@ export async function generateReplyBatch(
     return { replyBatch: repairValidation.replyBatch, telemetry };
   }
 
-  return runEmergencyGeneration(repairValidation.rejectionCodes);
+  return runEmergencyGeneration(
+    repairValidation.rejectionCodes,
+    [repairRecovery.strategy],
+  );
 }

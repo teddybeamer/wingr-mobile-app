@@ -70,7 +70,7 @@ test('returns a primary reply after unified validation succeeds', async () => {
   });
 });
 
-test('repairs an ownership rejection using the validator reason code', async () => {
+test('repairs an unsupported name using its typed strategy', async () => {
   const invalid = reply('Morgan, tell me more.');
   const repaired = reply('That sounds like a lot — are you okay?');
   await withOpenRouterMocks([
@@ -79,9 +79,12 @@ test('repairs an ownership rejection using the validator reason code', async () 
   ], async (requests) => {
     const result = await generateReplyBatch(request, ['casualSmallTalk']);
     assert.equal(requests.length, 2);
-    assert.match(String(requests[1]?.body), /ownership_or_grounding/);
+    assert.match(String(requests[1]?.body), /unsupported_name/);
+    assert.match(String(requests[1]?.body), /omit_unsupported_name/);
     assert.equal(result.replyBatch.casualSmallTalk?.[0]?.text, repaired.text);
     assert.equal(result.telemetry.repairGeneration.triggered, true);
+    assert.equal(result.telemetry.repairGeneration.strategy, 'omit_unsupported_name');
+    assert.deepEqual(result.telemetry.validationRejections.primary, ['unsupported_name']);
     assert.equal(result.telemetry.finalOutcome, 'success');
   });
 });
@@ -158,9 +161,18 @@ test('uses emergency generation for a direct question and preserves the selected
     const result = await generateReplyBatch(playfulQuestionRequest, ['playful']);
     assert.equal(requests.length, 3);
     assert.match(String(requests[2]?.body), /Emergency reply generation/);
+    assert.match(String(requests[2]?.body), /minimal_contextual_reply/);
+    assert.match(String(requests[2]?.body), /previous recovery strategy failed/i);
     assert.equal(result.replyBatch.playful?.[0]?.text, emergency.text);
     assert.equal(result.replyBatch.playful?.[0]?.tone, 'playful');
     assert.equal(result.telemetry.emergencyGeneration.triggered, true);
+    assert.equal(result.telemetry.repairGeneration.strategy, 'omit_unsupported_name');
+    assert.equal(result.telemetry.emergencyGeneration.strategy, 'minimal_contextual_reply');
+    assert.equal(result.telemetry.emergencyGeneration.previouslyFailedStrategyAvoided, true);
+    assert.deepEqual(result.telemetry.validationRejections.primary, ['unsupported_name']);
+    assert.deepEqual(result.telemetry.validationRejections.repair, ['unsupported_name']);
+    assert.deepEqual(result.telemetry.validationRejections.emergency, []);
+    assert.equal(result.telemetry.returnedStage, 'emergency_generation');
     assert.equal(result.telemetry.terminalFallback.used, false);
   });
 });
@@ -175,7 +187,7 @@ test('rejects unsupported emergency ownership output before using terminal fallb
     const result = await generateReplyBatch(request, ['casualSmallTalk']);
     assert.equal(result.replyBatch.casualSmallTalk?.[0]?.text, 'Okay, tell me more 👀');
     assert.equal(result.telemetry.terminalFallback.used, true);
-    assert.ok(result.telemetry.terminalFallback.reasonCodes.includes('ownership_or_grounding'));
+    assert.ok(result.telemetry.terminalFallback.reasonCodes.includes('unsupported_name'));
     assert.equal(result.replyBatch.casualSmallTalk?.length, 1);
   });
 });
@@ -323,7 +335,7 @@ test('uses a deterministic contextual placeholder after repeated invalid unknown
   ], async (requests) => {
     const result = await generateReplyBatch(unknownFavoriteRequest, ['playful']);
 
-    assert.equal(requests.length, 3);
+    assert.equal(requests.length, 2);
     assert.equal(
       result.replyBatch.playful?.[0]?.text,
       "I'd probably say [your favorite game] — what about you?",
@@ -331,5 +343,12 @@ test('uses a deterministic contextual placeholder after repeated invalid unknown
     assert.equal(result.telemetry.finalOutcome, 'fallback');
     assert.equal(result.telemetry.returnedStage, 'terminal_fallback');
     assert.equal(result.telemetry.terminalFallback.used, true);
+    assert.equal(result.telemetry.repairGeneration.strategy, 'use_descriptive_placeholder');
+    assert.equal(result.telemetry.emergencyGeneration.triggered, false);
+    assert.equal(
+      result.telemetry.emergencyGeneration.strategy,
+      'deterministic_placeholder_fallback',
+    );
+    assert.equal(result.telemetry.emergencyGeneration.previouslyFailedStrategyAvoided, true);
   });
 });

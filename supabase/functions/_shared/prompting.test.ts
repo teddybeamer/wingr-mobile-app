@@ -10,6 +10,8 @@ import {
   geminiVibeCheckSchema,
   getMockReplies,
 } from './prompting.ts';
+import { getReplyAnswerability } from './reply-answerability.ts';
+import { selectReplyRecoveryStrategy } from './reply-recovery.ts';
 import type { RepliesRequest, VibeCheckRequest } from './types.ts';
 
 const request: RepliesRequest = {
@@ -170,11 +172,13 @@ test('grounding repair rewrites unsupported or irrelevant replies from the trans
       },
     ],
     ['direct'],
+    ['unsupported_me_fact'],
   );
 
   assert.match(repairPrompt, /Grounding and relevance repair/i);
-  assert.match(repairPrompt, /validator reason code\(s\): ownership_or_grounding/i);
-  assert.match(repairPrompt, /may invent a concrete fact, reverse fact ownership/i);
+  assert.match(repairPrompt, /validator reason code\(s\): unsupported_me_fact/i);
+  assert.match(repairPrompt, /Selected recovery strategy: use_descriptive_placeholder/i);
+  assert.match(repairPrompt, /requires user knowledge.*allowed editable slot/i);
   assert.match(repairPrompt, /activity into a favorite, hobby, plan, preference/i);
   assert.match(repairPrompt, /natural non-committal answer, playful deflection, turnaround/i);
   assert.match(repairPrompt, /Limited context is not itself a rejection reason/i);
@@ -200,12 +204,12 @@ test('primary, repair, and emergency prompts share the same unknown-ME placehold
     unknownFavoriteRequest,
     [{ id: 'invalid', text: 'My favorite game is Valorant.', tone: 'playful' }],
     ['playful'],
-    ['ownership_or_grounding'],
+    ['unsupported_me_fact'],
   );
   const emergencyPrompt = buildReplyEmergencyPrompt(
     unknownFavoriteRequest,
     ['playful'],
-    ['ownership_or_grounding'],
+    ['unsupported_me_fact'],
   );
 
   [primaryPrompt, repairPrompt, emergencyPrompt].forEach((prompt) => {
@@ -214,6 +218,68 @@ test('primary, repair, and emergency prompts share the same unknown-ME placehold
     assert.match(prompt, /do not (?:guess|use any other)/i);
   });
   assert.match(repairPrompt, /instead of attempting another concrete value/i);
+});
+
+test('selects a focused recovery strategy for each typed rejection code', () => {
+  const answerability = getReplyAnswerability(request);
+  const cases = [
+    ['fact_owner_reversal', 'preserve_fact_ownership'],
+    ['unsupported_me_fact', 'remove_unsupported_me_fact'],
+    ['unsupported_name', 'omit_unsupported_name'],
+    ['ocr_noise', 'omit_ocr_noise'],
+    ['wrong_speaker', 'restore_me_perspective'],
+  ] as const;
+
+  cases.forEach(([code, expectedStrategy]) => {
+    assert.deepEqual(
+      selectReplyRecoveryStrategy([code], answerability),
+      {
+        previouslyFailedStrategyAvoided: false,
+        strategy: expectedStrategy,
+      },
+    );
+  });
+});
+
+test('repair prompts explicitly address every typed rejection cause', () => {
+  const cases = [
+    ['fact_owner_reversal', /Keep THEM facts owned by THEM/i],
+    ['unsupported_me_fact', /Remove unsupported first-person facts/i],
+    ['unsupported_name', /Omit the unsupported name entirely/i],
+    ['ocr_noise', /Omit every suspicious OCR-like token/i],
+    ['wrong_speaker', /only from ME’s perspective/i],
+  ] as const;
+
+  cases.forEach(([code, instruction]) => {
+    const prompt = buildReplyGroundingRepairPrompt(
+      request,
+      [],
+      ['playful'],
+      [code],
+    );
+
+    assert.match(prompt, instruction);
+  });
+});
+
+test('uses the placeholder strategy for user knowledge and avoids a repeated failed strategy', () => {
+  const unknownFavoriteRequest: RepliesRequest = {
+    ...request,
+    transcriptText: 'THEM: What is your favorite game?',
+  };
+  const answerability = getReplyAnswerability(unknownFavoriteRequest);
+  const repair = selectReplyRecoveryStrategy(['unsupported_me_fact'], answerability);
+  const emergency = selectReplyRecoveryStrategy(
+    ['unsupported_me_fact'],
+    answerability,
+    [repair.strategy],
+  );
+
+  assert.equal(repair.strategy, 'use_descriptive_placeholder');
+  assert.deepEqual(emergency, {
+    previouslyFailedStrategyAvoided: true,
+    strategy: 'deterministic_placeholder_fallback',
+  });
 });
 
 test('does not offer a placeholder when the requested ME fact is grounded', () => {

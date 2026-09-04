@@ -70,20 +70,20 @@ export type ReplyOwnershipValidationTrace = {
 };
 
 export type ReplyOwnershipRejectionCode =
-  'ownership_or_grounding';
+  | 'fact_owner_reversal'
+  | 'ocr_noise'
+  | 'ownership_or_grounding'
+  | 'unsupported_me_fact'
+  | 'unsupported_name'
+  | 'wrong_speaker';
 
 function getReplyOwnershipRejectionCodes(
   replies: SuggestedReply[],
   request: RepliesRequest,
 ): ReplyOwnershipRejectionCode[] {
   const issues = replies.flatMap((reply) => getReplyOwnershipIssues(reply.text, request));
-  const codes = new Set<ReplyOwnershipRejectionCode>();
 
-  if (issues.length > 0 && codes.size === 0) {
-    codes.add('ownership_or_grounding');
-  }
-
-  return [...codes];
+  return [...new Set(issues)];
 }
 
 const QUESTION_FOR_OTHER_PATTERN =
@@ -323,24 +323,24 @@ function hasUnsupportedKeywordOwnership(
 
 function getReplyOwnershipIssues(replyText: string, request: RepliesRequest) {
   const notes = normalizeNotes(request);
-  const issues: string[] = [];
+  const issues = new Set<ReplyOwnershipRejectionCode>();
   const suspiciousReplyTokens = getSuspiciousOcrTokens(replyText);
   const answerability = getReplyAnswerability(request);
 
   if (suspiciousReplyTokens.length > 0) {
-    issues.push('Reply includes random OCR-looking or model-noise tokens.');
+    issues.add('ocr_noise');
   }
 
   if (hasInvalidReplyPlaceholder(replyText, answerability)) {
-    issues.push('Reply includes a placeholder that is not allowed for the latest question.');
+    issues.add('ownership_or_grounding');
   }
 
   if (claimsUnknownMeFact(replyText, answerability)) {
-    issues.push('Reply asserts a concrete answer to an unknown user fact.');
+    issues.add('unsupported_me_fact');
   }
 
   if (hasUnsupportedPetClaim(replyText, notes, request.transcriptText)) {
-    issues.push('Reply implies the user owns or loves a pet without user evidence.');
+    issues.add('unsupported_me_fact');
   }
 
   if (hasUnsupportedKeywordOwnership(
@@ -349,34 +349,34 @@ function getReplyOwnershipIssues(replyText: string, request: RepliesRequest) {
     request.transcriptText,
     request.vibeCheck.targetLanguage,
   )) {
-    issues.push('Reply turns a fact about the other person into a user-owned claim.');
+    issues.add('fact_owner_reversal');
   }
 
   const addressedName = getUnsupportedDirectAddress(replyText, request.transcriptText);
 
   if (addressedName) {
-    issues.push('Reply directly addresses a name that does not appear in the chat.');
+    issues.add('unsupported_name');
   }
 
   if (getUnsupportedProperName(replyText, request.transcriptText)) {
-    issues.push('Reply includes a proper name that does not appear in the chat.');
+    issues.add('unsupported_name');
   }
 
   const latestOtherText = getLatestOtherText(request);
 
   if (THANKS_PATTERN.test(replyText) && !THANKS_WORTHY_OTHER_PATTERN.test(latestOtherText)) {
-    issues.push('Reply thanks the other person without a thanks-worthy latest other message.');
+    issues.add('ownership_or_grounding');
   }
 
   if (request.parsedConversation?.shouldGenerateDirectReply === false && THANKS_PATTERN.test(replyText)) {
-    issues.push('Reply appears to answer the user’s own latest message.');
+    issues.add('wrong_speaker');
   }
 
   if (USER_SAID_PERSPECTIVE_PATTERN.test(replyText) || OTHER_PERSON_PERSPECTIVE_PATTERN.test(replyText)) {
-    issues.push('Reply switches perspective or describes the wrong speaker role.');
+    issues.add('wrong_speaker');
   }
 
-  return issues;
+  return [...issues];
 }
 
 export function getReplyOwnershipValidationTrace(

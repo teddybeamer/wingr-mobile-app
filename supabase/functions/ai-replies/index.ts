@@ -69,6 +69,7 @@ Deno.serve(async (request) => {
       stageTimings: telemetry.stageTimings,
       terminalFallback: telemetry.terminalFallback,
       totalDurationMs: telemetry.totalDurationMs,
+      validationRejections: telemetry.validationRejections,
     });
 
     return json({ replyBatch });

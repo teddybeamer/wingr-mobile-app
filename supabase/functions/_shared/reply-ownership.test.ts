@@ -206,7 +206,59 @@ test('still rejects a concrete favorite answer when the ME fact is unknown', () 
 
   assert.deepEqual(getOwnershipCheckedReplies([candidate], unknownFavoriteRequest), []);
   assert.equal(trace.unsupportedUnknownMeFactClaimDetected, true);
-  assert.deepEqual(trace.rejectionCodes, ['ownership_or_grounding']);
+  assert.deepEqual(trace.rejectionCodes, ['unsupported_me_fact']);
+});
+
+test('reports privacy-safe typed rejection codes only where the cause is deterministic', () => {
+  const cases: Array<{
+    expected: string[];
+    replyText: string;
+    validationRequest: RepliesRequest;
+  }> = [
+    {
+      expected: ['fact_owner_reversal'],
+      replyText: 'My former roommate is visiting too.',
+      validationRequest: {
+        ...request,
+        contextNotes: {
+          replyInstruction: [],
+          situationNotes: [],
+          themFacts: ['Their former roommate is visiting.'],
+          userFacts: [],
+        },
+      },
+    },
+    {
+      expected: ['unsupported_name'],
+      replyText: 'Morgan, tell me more.',
+      validationRequest: request,
+    },
+    {
+      expected: ['ocr_noise'],
+      replyText: 'Tell me more about that ZXCVBN.',
+      validationRequest: request,
+    },
+    {
+      expected: ['wrong_speaker'],
+      replyText: 'As the other person, I would say yes.',
+      validationRequest: request,
+    },
+    {
+      expected: ['ownership_or_grounding'],
+      replyText: 'Thanks for telling me.',
+      validationRequest: request,
+    },
+  ];
+
+  cases.forEach(({ expected, replyText, validationRequest }, index) => {
+    const candidate = { id: `typed-${index}`, text: replyText, tone: 'direct' as const };
+
+    assert.deepEqual(
+      getReplyOwnershipValidationTrace([candidate], validationRequest).rejectionCodes,
+      expected,
+    );
+    assert.deepEqual(getOwnershipCheckedReplies([candidate], validationRequest), []);
+  });
 });
 
 test('uses a grounded favorite normally without a placeholder', () => {

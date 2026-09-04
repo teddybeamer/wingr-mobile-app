@@ -1,6 +1,11 @@
 import { getContextNotes } from './context-notes.ts';
 import { getConversationTurnState } from './conversation-turn-state.ts';
 import { getReplyAnswerability } from './reply-answerability.ts';
+import {
+  getReplyRecoveryInstructions,
+  selectReplyRecoveryStrategy,
+  type ReplyRecoverySelection,
+} from './reply-recovery.ts';
 import type {
   ContextNotes,
   GeminiVibeCheck,
@@ -466,11 +471,21 @@ export function buildReplyGroundingRepairPrompt(
   previousReplies: SuggestedReply[],
   selectedTones: ReplyTone[],
   rejectionCodes: string[] = [],
+  recoverySelection?: ReplyRecoverySelection,
 ) {
   const rejectionReason = rejectionCodes.length > 0
     ? rejectionCodes.join(', ')
     : 'ownership_or_grounding';
   const answerability = getReplyAnswerability(request);
+  const selectedRecovery = recoverySelection ?? selectReplyRecoveryStrategy(
+    rejectionCodes,
+    answerability,
+  );
+  const recoveryInstructions = getReplyRecoveryInstructions(
+    rejectionCodes,
+    answerability,
+    selectedRecovery,
+  );
   const placeholderRepairInstruction = answerability.placeholderAllowed && answerability.placeholder
     ? `- This question requires user knowledge. Use the allowed editable slot ${answerability.placeholder} instead of attempting another concrete value.`
     : '';
@@ -480,8 +495,8 @@ export function buildReplyGroundingRepairPrompt(
     '',
     'Grounding and relevance repair:',
     `- Privacy-safe validator reason code(s): ${rejectionReason}.`,
+    ...recoveryInstructions,
     '- Do not treat a fact established only about ME as proof that it is true of THEM. Avoid unsupported concrete claims about THEM while keeping natural questions, playful assumptions, teasing, and clearly framed social interpretations available.',
-    '- The previous reply was rejected because it may invent a concrete fact, reverse fact ownership, use an unsupported name, contain OCR noise, or reply from the wrong speaker perspective.',
     '- Re-read the transcript before rewriting. Preserve only facts established about ME; do not turn an activity into a favorite, hobby, plan, preference, or other stronger claim.',
     '- If THEM asks something ME has not answered in the transcript or userFacts, use a natural non-committal answer, playful deflection, turnaround, or invitation rather than inventing details.',
     placeholderRepairInstruction,
@@ -497,11 +512,21 @@ export function buildReplyEmergencyPrompt(
   request: RepliesRequest,
   selectedTones: ReplyTone[],
   rejectionCodes: string[] = [],
+  recoverySelection?: ReplyRecoverySelection,
 ) {
   const rejectionReason = rejectionCodes.length > 0
     ? rejectionCodes.join(', ')
     : 'previous_generation_failed';
   const answerability = getReplyAnswerability(request);
+  const selectedRecovery = recoverySelection ?? selectReplyRecoveryStrategy(
+    rejectionCodes,
+    answerability,
+  );
+  const recoveryInstructions = getReplyRecoveryInstructions(
+    rejectionCodes,
+    answerability,
+    selectedRecovery,
+  );
   const placeholderEmergencyInstruction = answerability.placeholderAllowed && answerability.placeholder
     ? `- This question requires user knowledge. Use the allowed editable slot ${answerability.placeholder}; do not guess a concrete answer.`
     : '';
@@ -511,6 +536,7 @@ export function buildReplyEmergencyPrompt(
     '',
     'Emergency reply generation:',
     `- Earlier attempts did not produce a valid reply. Privacy-safe reason code(s): ${rejectionReason}.`,
+    ...recoveryInstructions,
     '- Generate exactly one short, natural reply for each requested tone using the original transcript and context above.',
     '- Respond to the latest message from THEM: answer a direct question naturally when possible; otherwise continue the actual conversational thread.',
     '- Preserve the requested tone where it is safe. For Playful, use warm light teasing only when the transcript supports it.',
