@@ -57,6 +57,19 @@ Deno.serve(async (request) => {
 
     const { replyBatch, telemetry } = await generateReplyBatch(body, [body.selectedTone]);
     finalOutcome = telemetry.finalOutcome;
+    console.info('[Wingr AI] Reply pipeline result', {
+      answerability: telemetry.answerability,
+      emergencyGeneration: telemetry.emergencyGeneration,
+      event: 'reply_pipeline_result',
+      finalOutcome: telemetry.finalOutcome,
+      generationId: telemetry.generationId,
+      initialGeneration: telemetry.initialGeneration,
+      repairGeneration: telemetry.repairGeneration,
+      returnedStage: telemetry.returnedStage,
+      stageTimings: telemetry.stageTimings,
+      terminalFallback: telemetry.terminalFallback,
+      totalDurationMs: telemetry.totalDurationMs,
+    });
 
     return json({ replyBatch });
   } catch (err) {

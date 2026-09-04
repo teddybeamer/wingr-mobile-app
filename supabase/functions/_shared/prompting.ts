@@ -1,5 +1,6 @@
 import { getContextNotes } from './context-notes.ts';
 import { getConversationTurnState } from './conversation-turn-state.ts';
+import { getReplyAnswerability } from './reply-answerability.ts';
 import type {
   ContextNotes,
   GeminiVibeCheck,
@@ -363,6 +364,28 @@ export function buildReplyBatchPrompt(
   const targetLanguage = normalizeTargetLanguage(vibeCheck.targetLanguage);
   const languageInstruction = getReplyLanguageInstruction(transcriptText, targetLanguage);
   const toneInstructions = selectedTones.map((tone) => `- ${tone}: generate exactly 1 reply`).join('\n');
+  const answerability = getReplyAnswerability({
+    contextNotes,
+    extraContext,
+    parsedConversation,
+    selectedTone,
+    transcriptText,
+    userStylePreference,
+    vibeCheck,
+  });
+  const placeholderInstruction = answerability.placeholderAllowed && answerability.placeholder
+    ? [
+      'Answerability state:',
+      '- THEM asks for a concrete ME fact that is not established by the transcript or userFacts.',
+      `- You may answer naturally with exactly one editable slot: ${answerability.placeholder}`,
+      '- Prefer that slot over guessing a concrete answer or avoiding the question with a generic fallback.',
+      '- Keep the slot bracketed inside an otherwise finished text message. Do not explain the slot to THEM.',
+      '- Do not use any other bracketed placeholder.',
+    ].join('\n')
+    : [
+      'Answerability state:',
+      '- Do not use bracketed placeholders for this reply; no unknown-ME-fact slot is needed.',
+    ].join('\n');
 
   return [
     'Generate a batch of reply suggestions for the user in this dating chat.',
@@ -375,6 +398,7 @@ export function buildReplyBatchPrompt(
     `Risk to avoid: ${vibeCheck.risk}`,
     formatSpeakerAttribution(parsedConversation),
     formatContextNotes(notes),
+    placeholderInstruction,
     'Rules:',
     '- Return one replyBatch object with the requested tones as keys.',
     `- Every reply must be written in ${targetLanguage}. This is a hard requirement for every tone.`,
@@ -446,6 +470,10 @@ export function buildReplyGroundingRepairPrompt(
   const rejectionReason = rejectionCodes.length > 0
     ? rejectionCodes.join(', ')
     : 'ownership_or_grounding';
+  const answerability = getReplyAnswerability(request);
+  const placeholderRepairInstruction = answerability.placeholderAllowed && answerability.placeholder
+    ? `- This question requires user knowledge. Use the allowed editable slot ${answerability.placeholder} instead of attempting another concrete value.`
+    : '';
 
   return [
     buildReplyBatchPrompt(request, selectedTones),
@@ -456,6 +484,7 @@ export function buildReplyGroundingRepairPrompt(
     '- The previous reply was rejected because it may invent a concrete fact, reverse fact ownership, use an unsupported name, contain OCR noise, or reply from the wrong speaker perspective.',
     '- Re-read the transcript before rewriting. Preserve only facts established about ME; do not turn an activity into a favorite, hobby, plan, preference, or other stronger claim.',
     '- If THEM asks something ME has not answered in the transcript or userFacts, use a natural non-committal answer, playful deflection, turnaround, or invitation rather than inventing details.',
+    placeholderRepairInstruction,
     '- Unknown information is not evidence of its opposite: never turn an unknown favorite, plan, preference, or opinion into a negative personal claim.',
     '- Choose a fresh conversational move for every rewrite: tease THEIR intent, lightly use an established fact, make a playful interpretation, use a neutral follow-up, playfully deflect, turn the question back, or create an opening. Do not reuse or paraphrase a rejected fallback.',
     '- Limited context is not itself a rejection reason. A neutral follow-up or clearly playful interpretation is valid when it does not invent a concrete personal fact. Rewrite exactly one natural reply for each requested tone. When more than one tone is requested, the replies must use meaningfully distinct moves. Keep the requested tone, language, speaker ownership, and direct-reply rules.',
@@ -472,6 +501,10 @@ export function buildReplyEmergencyPrompt(
   const rejectionReason = rejectionCodes.length > 0
     ? rejectionCodes.join(', ')
     : 'previous_generation_failed';
+  const answerability = getReplyAnswerability(request);
+  const placeholderEmergencyInstruction = answerability.placeholderAllowed && answerability.placeholder
+    ? `- This question requires user knowledge. Use the allowed editable slot ${answerability.placeholder}; do not guess a concrete answer.`
+    : '';
 
   return [
     buildReplyBatchPrompt(request, selectedTones),
@@ -482,6 +515,7 @@ export function buildReplyEmergencyPrompt(
     '- Respond to the latest message from THEM: answer a direct question naturally when possible; otherwise continue the actual conversational thread.',
     '- Preserve the requested tone where it is safe. For Playful, use warm light teasing only when the transcript supports it.',
     '- Use only clearly established context. Do not invent concrete facts, plans, locations, relationships, possessions, preferences, work, hobbies, events, experiences, or names.',
+    placeholderEmergencyInstruction,
     '- Keep the reply text-message-like. Never use the terminal fallback wording.',
     '- The same strict ownership, language, speaker perspective, and schema requirements still apply.',
   ].join('\n');

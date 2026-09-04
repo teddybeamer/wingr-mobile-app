@@ -5,11 +5,12 @@ import {
   getReplyOwnershipValidationTrace,
   getTerminalFallbackReply,
 } from './reply-ownership.ts';
+import { getReplyAnswerability } from './reply-answerability.ts';
 import type { RepliesRequest } from './types.ts';
 
 const request: RepliesRequest = {
   selectedTone: 'direct',
-  transcriptText: 'THEM: What are you doing this weekend?',
+  transcriptText: 'THEM: That sounds like a lot.',
   vibeCheck: {
     bestTone: 'direct',
     conversationEnergy: 'They asked a direct question.',
@@ -18,6 +19,49 @@ const request: RepliesRequest = {
     summary: 'Answer naturally.',
   },
 };
+
+function favoriteGameRequest(
+  themText = 'What’s your favorite game?',
+  meText?: string,
+  targetLanguage = 'English',
+): RepliesRequest {
+  const messages = [
+    ...(meText
+      ? [{
+        boundingBox: { height: 20, width: 300, x: 180, y: 10 },
+        confidence: 0.98,
+        id: 'me-1',
+        sender: 'me' as const,
+        speaker: 'user' as const,
+        text: meText,
+        xPosition: 'right' as const,
+      }]
+      : []),
+    {
+      boundingBox: { height: 20, width: 300, x: 10, y: 40 },
+      confidence: 0.98,
+      id: 'them-1',
+      sender: 'them' as const,
+      speaker: 'other' as const,
+      text: themText,
+      xPosition: 'left' as const,
+    },
+  ];
+
+  return {
+    ...request,
+    parsedConversation: {
+      latestMessageSender: 'them',
+      messages,
+      shouldGenerateDirectReply: true,
+      speakerAttributionConfidence: 0.98,
+    },
+    transcriptText: messages.map((message) =>
+      `${message.sender === 'me' ? 'ME' : 'THEM'}: ${message.text}`
+    ).join('\n'),
+    vibeCheck: { ...request.vibeCheck, targetLanguage },
+  };
+}
 
 test('keeps light conversational inferences and neutral follow-ups', () => {
   [
@@ -134,4 +178,154 @@ test('keeps a THEM-only fact available as a safe question hook', () => {
   );
 
   assert.equal(replies[0]?.text, 'How is your roommate visit going?');
+});
+
+test('accepts an exact descriptive placeholder for an unknown ME favorite', () => {
+  const unknownFavoriteRequest = favoriteGameRequest();
+  const candidate = {
+    id: 'reply-1',
+    text: "I'd probably say [your favorite game] — what do you usually play?",
+    tone: 'direct' as const,
+  };
+  const trace = getReplyOwnershipValidationTrace([candidate], unknownFavoriteRequest);
+
+  assert.equal(getReplyAnswerability(unknownFavoriteRequest).answerability, 'requires_user_knowledge');
+  assert.deepEqual(getOwnershipCheckedReplies([candidate], unknownFavoriteRequest), [candidate]);
+  assert.equal(trace.containedAllowedPlaceholder, true);
+  assert.equal(trace.rejectionCodes.length, 0);
+});
+
+test('still rejects a concrete favorite answer when the ME fact is unknown', () => {
+  const unknownFavoriteRequest = favoriteGameRequest();
+  const candidate = {
+    id: 'reply-1',
+    text: 'My favorite game is Valorant.',
+    tone: 'direct' as const,
+  };
+  const trace = getReplyOwnershipValidationTrace([candidate], unknownFavoriteRequest);
+
+  assert.deepEqual(getOwnershipCheckedReplies([candidate], unknownFavoriteRequest), []);
+  assert.equal(trace.unsupportedUnknownMeFactClaimDetected, true);
+  assert.deepEqual(trace.rejectionCodes, ['ownership_or_grounding']);
+});
+
+test('uses a grounded favorite normally without a placeholder', () => {
+  const groundedFavoriteRequest = favoriteGameRequest(
+    'What is your favorite game?',
+    'My favorite game is Dota 2.',
+  );
+  const candidate = {
+    id: 'reply-1',
+    text: 'Dota 2 for sure — have you tried it yet?',
+    tone: 'direct' as const,
+  };
+
+  assert.equal(getReplyAnswerability(groundedFavoriteRequest).answerability, 'answerable_from_transcript');
+  assert.deepEqual(getOwnershipCheckedReplies([candidate], groundedFavoriteRequest), [candidate]);
+});
+
+test('treats a strong established preference as enough favorite evidence', () => {
+  const groundedFavoriteRequest = favoriteGameRequest(
+    'What is your favorite game?',
+    "I'm obsessed with Dota 2.",
+  );
+
+  assert.equal(getReplyAnswerability(groundedFavoriteRequest).answerability, 'answerable_from_transcript');
+});
+
+test('does not enable placeholder behavior for a normal answerable question', () => {
+  const normalQuestionRequest = favoriteGameRequest('Did you enjoy the movie?');
+  const normalCandidate = { id: 'reply-1', text: 'Okay, so what’s the story there?', tone: 'direct' as const };
+  const placeholderCandidate = { id: 'reply-2', text: 'Yeah, [your favorite movie].', tone: 'direct' as const };
+
+  assert.equal(getReplyAnswerability(normalQuestionRequest).answerability, 'not_applicable');
+  assert.deepEqual(getOwnershipCheckedReplies([normalCandidate], normalQuestionRequest), [normalCandidate]);
+  assert.deepEqual(getOwnershipCheckedReplies([placeholderCandidate], normalQuestionRequest), []);
+});
+
+test('does not let an allowed placeholder bypass existing deterministic failures', () => {
+  const unknownFavoriteRequest = favoriteGameRequest();
+  const candidates = [
+    "Morgan, I'd probably say [your favorite game].",
+    "I'd probably say [your favorite game] ZXCVBN.",
+    "As the other person, I'd probably say [your favorite game].",
+  ].map((text, index) => ({ id: `reply-${index}`, text, tone: 'direct' as const }));
+
+  candidates.forEach((candidate) => {
+    assert.deepEqual(getOwnershipCheckedReplies([candidate], unknownFavoriteRequest), []);
+  });
+});
+
+test('accepts the exact Danish placeholder for an unknown ME favorite', () => {
+  const danishRequest = favoriteGameRequest('Hvad er dit yndlingsspil?', undefined, 'Danish');
+  const candidate = {
+    id: 'reply-1',
+    text: 'Jeg ville nok sige [dit yndlingsspil] — hvad med dig?',
+    tone: 'direct' as const,
+  };
+
+  assert.equal(getReplyAnswerability(danishRequest).answerability, 'requires_user_knowledge');
+  assert.deepEqual(getOwnershipCheckedReplies([candidate], danishRequest), [candidate]);
+});
+
+test('uses narrowly defined descriptive slots for common unknown ME-fact questions', () => {
+  [
+    ['What do you do for work?', '[your job]'],
+    ['Where are you from?', '[your hometown]'],
+    ['What are you doing this weekend?', '[your plans]'],
+    ['What are you looking for?', "[what you're looking for]"],
+  ].forEach(([question, placeholder], index) => {
+    const questionRequest = favoriteGameRequest(question);
+    const answerability = getReplyAnswerability(questionRequest);
+    const candidate = {
+      id: `reply-${index}`,
+      text: `Probably ${placeholder} — what about you?`,
+      tone: 'direct' as const,
+    };
+
+    assert.equal(answerability.answerability, 'requires_user_knowledge');
+    assert.equal(answerability.placeholder, placeholder);
+    assert.deepEqual(getOwnershipCheckedReplies([candidate], questionRequest), [candidate]);
+  });
+});
+
+test('chooses the latest unknown ME fact in the supplied multi-question chat turn', () => {
+  const physicalCaseRequest = favoriteGameRequest(
+    'I had not heard of Dota 2 before. What’s your favorite game? What are you up to this weekend?',
+  );
+  const answerability = getReplyAnswerability(physicalCaseRequest);
+
+  assert.equal(answerability.answerability, 'requires_user_knowledge');
+  assert.equal(answerability.factKind, 'plans');
+  assert.equal(answerability.placeholder, '[your plans]');
+});
+
+test('rejects vague or mismatched placeholders and never enables an old THEM question after ME replies', () => {
+  const unknownFavoriteRequest = favoriteGameRequest();
+  const vagueCandidate = { id: 'reply-1', text: 'Probably [something].', tone: 'direct' as const };
+  const malformedCandidate = { id: 'reply-2', text: 'Probably [your favorite game.', tone: 'direct' as const };
+  const latestMeRequest = favoriteGameRequest();
+  latestMeRequest.parsedConversation!.messages.push({
+    boundingBox: { height: 20, width: 300, x: 180, y: 70 },
+    confidence: 0.98,
+    id: 'me-latest',
+    sender: 'me',
+    speaker: 'user',
+    text: 'Let me think about that.',
+    xPosition: 'right',
+  });
+  latestMeRequest.parsedConversation!.latestMessageSender = 'me';
+  latestMeRequest.parsedConversation!.shouldGenerateDirectReply = false;
+
+  assert.deepEqual(getOwnershipCheckedReplies([vagueCandidate], unknownFavoriteRequest), []);
+  assert.deepEqual(getOwnershipCheckedReplies([malformedCandidate], unknownFavoriteRequest), []);
+  assert.equal(getReplyAnswerability(latestMeRequest).answerability, 'not_applicable');
+});
+
+test('uses a contextual deterministic placeholder fallback only for unknown ME facts', () => {
+  assert.equal(
+    getTerminalFallbackReply(favoriteGameRequest()).text,
+    "I'd probably say [your favorite game] — what about you?",
+  );
+  assert.equal(getTerminalFallbackReply(request).text, 'Okay, tell me more 👀');
 });

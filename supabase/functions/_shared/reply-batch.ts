@@ -5,6 +5,7 @@ import {
 } from './language.ts';
 import { callOpenRouterStructured } from './openrouter.ts';
 import { withSafeReplyTranscript } from './prompt-budget.ts';
+import { getReplyAnswerability } from './reply-answerability.ts';
 import {
   buildReplyBatchPrompt,
   buildReplyEmergencyPrompt,
@@ -33,18 +34,30 @@ type ValidationResult = {
   acceptedReplyCount: number;
   advisoryCodes: string[];
   candidateReplyCount: number;
+  generatedReplyContainedPlaceholder: boolean;
   rejectionCodes: UnifiedRejectionCode[];
   rejectedReplyCount: number;
   replyBatch: ReplyBatch;
 };
 
 export type ReplyGenerationTelemetry = {
+  answerability: {
+    latestThemRequiresUnknownMeFact: boolean;
+    placeholderGenerationAllowed: boolean;
+  };
   finalOutcome: 'fallback' | 'success';
   generationId: string;
   initialGeneration: ReplyGenerationTiming;
   repairGeneration: ReplyGenerationTiming & { triggered: boolean };
   emergencyGeneration: ReplyGenerationTiming & { triggered: boolean };
+  returnedStage: 'emergency_generation' | 'primary_generation' | 'repair_generation' | 'terminal_fallback';
+  stageTimings: {
+    emergencyValidationMs: number;
+    primaryValidationMs: number;
+    repairValidationMs: number;
+  };
   terminalFallback: { reasonCodes: string[]; used: boolean };
+  totalDurationMs: number;
 };
 
 export type ReplyBatchGenerationResult = {
@@ -58,8 +71,11 @@ function logReplyGenerationStage({
   attemptCount = 0,
   candidateReplyCount = 0,
   durationMs = 0,
+  generatedReplyContainedPlaceholder = false,
   generationId,
+  latestThemRequiresUnknownMeFact = false,
   outcome,
+  placeholderGenerationAllowed = false,
   reasonCodes = [],
   rejectedReplyCount = 0,
   selectedTone,
@@ -70,8 +86,11 @@ function logReplyGenerationStage({
   attemptCount?: number;
   candidateReplyCount?: number;
   durationMs?: number;
+  generatedReplyContainedPlaceholder?: boolean;
   generationId: string;
+  latestThemRequiresUnknownMeFact?: boolean;
   outcome: 'failed' | 'rejected' | 'skipped' | 'succeeded' | 'used';
+  placeholderGenerationAllowed?: boolean;
   reasonCodes?: string[];
   rejectedReplyCount?: number;
   selectedTone: string;
@@ -84,8 +103,11 @@ function logReplyGenerationStage({
     candidateReplyCount,
     durationMs,
     event: 'reply_generation_stage',
+    generatedReplyContainedPlaceholder,
     generationId,
+    latestThemRequiresUnknownMeFact,
     outcome,
+    placeholderGenerationAllowed,
     reasonCodes,
     rejectedReplyCount,
     selectedTone,
@@ -112,7 +134,7 @@ function isSuggestedReply(value: unknown): value is SuggestedReply {
   return typeof reply.id === 'string' && typeof reply.text === 'string' && typeof reply.tone === 'string';
 }
 
-function hasStructuredReplyBatch(value: unknown) {
+function hasStructuredReplyBatch(value: unknown): value is ReplyBatch {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false;
   }
@@ -146,6 +168,7 @@ function validateReplyBatch(
       acceptedReplyCount: 0,
       advisoryCodes: [],
       candidateReplyCount,
+      generatedReplyContainedPlaceholder: false,
       rejectionCodes: ['structured_output_invalid'],
       rejectedReplyCount: candidateReplyCount,
       replyBatch: {} as ReplyBatch,
@@ -176,6 +199,7 @@ function validateReplyBatch(
     acceptedReplyCount: ownershipTrace.acceptedReplyCount,
     advisoryCodes: ownershipTrace.meFactDirectedAtThemDetected ? ['me_fact_directed_at_them'] : [],
     candidateReplyCount,
+    generatedReplyContainedPlaceholder: ownershipTrace.containedPlaceholder,
     rejectionCodes: [...rejectionCodes],
     rejectedReplyCount: ownershipTrace.rejectedReplyCount,
     replyBatch: rejectionCodes.size === 0 ? checkedReplyBatch : {} as ReplyBatch,
@@ -186,17 +210,10 @@ export async function generateReplyBatch(
   request: RepliesRequest,
   selectedTones: ReplyTone[],
 ): Promise<ReplyBatchGenerationResult> {
+  const pipelineStartedAt = Date.now();
   const generationId = crypto.randomUUID();
   const deadlineAt = Date.now() + TOTAL_REPLY_DEADLINE_MS;
   const selectedTone = selectedTones.length === 1 ? selectedTones[0] : 'multiple';
-  const telemetry: ReplyGenerationTelemetry = {
-    finalOutcome: 'fallback',
-    generationId,
-    initialGeneration: { attemptCount: 0, durationMs: 0 },
-    repairGeneration: { attemptCount: 0, durationMs: 0, triggered: false },
-    emergencyGeneration: { attemptCount: 0, durationMs: 0, triggered: false },
-    terminalFallback: { reasonCodes: [], used: false },
-  };
   const safeRequest = withSafeReplyTranscript(request);
   const normalizedVibeCheck = normalizeVibeCheckLanguage(safeRequest.vibeCheck, safeRequest.transcriptText);
   const normalizedRequest = {
@@ -205,6 +222,27 @@ export async function generateReplyBatch(
       ...normalizedVibeCheck,
       targetLanguage: resolveConversationLanguage(safeRequest.parsedConversation) ?? normalizedVibeCheck.targetLanguage,
     },
+  };
+  const answerability = getReplyAnswerability(normalizedRequest);
+  const diagnosticContext = {
+    latestThemRequiresUnknownMeFact: answerability.requiresUnknownMeFact,
+    placeholderGenerationAllowed: answerability.placeholderAllowed,
+  };
+  const telemetry: ReplyGenerationTelemetry = {
+    answerability: diagnosticContext,
+    finalOutcome: 'fallback',
+    generationId,
+    initialGeneration: { attemptCount: 0, durationMs: 0 },
+    repairGeneration: { attemptCount: 0, durationMs: 0, triggered: false },
+    emergencyGeneration: { attemptCount: 0, durationMs: 0, triggered: false },
+    returnedStage: 'terminal_fallback',
+    stageTimings: {
+      emergencyValidationMs: 0,
+      primaryValidationMs: 0,
+      repairValidationMs: 0,
+    },
+    terminalFallback: { reasonCodes: [], used: false },
+    totalDurationMs: 0,
   };
   const schema = createReplyBatchSchema(selectedTones);
   const hasRecoveryBudget = () => Date.now() + MIN_RECOVERY_STAGE_WINDOW_MS < deadlineAt;
@@ -221,13 +259,25 @@ export async function generateReplyBatch(
       [getTerminalFallbackReply({ ...normalizedRequest, selectedTone: tone })],
     ])) as ReplyBatch;
     telemetry.finalOutcome = 'fallback';
+    telemetry.returnedStage = 'terminal_fallback';
     telemetry.terminalFallback = { reasonCodes, used: true };
-    logReplyGenerationStage({ generationId, outcome: 'used', reasonCodes, selectedTone, stage: 'terminal_fallback' });
+    telemetry.totalDurationMs = Date.now() - pipelineStartedAt;
+    logReplyGenerationStage({
+      ...diagnosticContext,
+      durationMs: telemetry.totalDurationMs,
+      generatedReplyContainedPlaceholder: Object.values(replyBatch).flat().some((reply) => reply?.text.includes('[')),
+      generationId,
+      outcome: 'used',
+      reasonCodes,
+      selectedTone,
+      stage: 'terminal_fallback',
+    });
     return { replyBatch, telemetry };
   };
   const runEmergencyGeneration = async (reasonCodes: string[]) => {
     if (!hasRecoveryBudget()) {
       logReplyGenerationStage({
+        ...diagnosticContext,
         generationId,
         outcome: 'skipped',
         reasonCodes: ['latency_budget_exhausted'],
@@ -253,6 +303,7 @@ export async function generateReplyBatch(
     } catch {
       telemetry.emergencyGeneration.durationMs = Date.now() - emergencyStartedAt;
       logReplyGenerationStage({
+        ...diagnosticContext,
         attemptCount: telemetry.emergencyGeneration.attemptCount,
         durationMs: telemetry.emergencyGeneration.durationMs,
         generationId,
@@ -266,6 +317,7 @@ export async function generateReplyBatch(
 
     telemetry.emergencyGeneration.durationMs = Date.now() - emergencyStartedAt;
     logReplyGenerationStage({
+      ...diagnosticContext,
       attemptCount: telemetry.emergencyGeneration.attemptCount,
       durationMs: telemetry.emergencyGeneration.durationMs,
       generationId,
@@ -273,11 +325,16 @@ export async function generateReplyBatch(
       selectedTone,
       stage: 'emergency_generation',
     });
+    const emergencyValidationStartedAt = Date.now();
     const emergencyValidation = validateReplyBatch(emergencyResult, normalizedRequest, selectedTones);
+    telemetry.stageTimings.emergencyValidationMs = Date.now() - emergencyValidationStartedAt;
     logReplyGenerationStage({
+      ...diagnosticContext,
       acceptedReplyCount: emergencyValidation.acceptedReplyCount,
       advisoryCodes: emergencyValidation.advisoryCodes,
       candidateReplyCount: emergencyValidation.candidateReplyCount,
+      durationMs: telemetry.stageTimings.emergencyValidationMs,
+      generatedReplyContainedPlaceholder: emergencyValidation.generatedReplyContainedPlaceholder,
       generationId,
       outcome: emergencyValidation.rejectionCodes.length === 0 ? 'succeeded' : 'rejected',
       reasonCodes: emergencyValidation.rejectionCodes,
@@ -287,6 +344,8 @@ export async function generateReplyBatch(
     });
     if (emergencyValidation.rejectionCodes.length === 0) {
       telemetry.finalOutcome = 'success';
+      telemetry.returnedStage = 'emergency_generation';
+      telemetry.totalDurationMs = Date.now() - pipelineStartedAt;
       return { replyBatch: emergencyValidation.replyBatch, telemetry };
     }
 
@@ -307,6 +366,7 @@ export async function generateReplyBatch(
   } catch {
     telemetry.initialGeneration.durationMs = Date.now() - initialStartedAt;
     logReplyGenerationStage({
+      ...diagnosticContext,
       attemptCount: telemetry.initialGeneration.attemptCount,
       durationMs: telemetry.initialGeneration.durationMs,
       generationId,
@@ -320,6 +380,7 @@ export async function generateReplyBatch(
 
   telemetry.initialGeneration.durationMs = Date.now() - initialStartedAt;
   logReplyGenerationStage({
+    ...diagnosticContext,
     attemptCount: telemetry.initialGeneration.attemptCount,
     durationMs: telemetry.initialGeneration.durationMs,
     generationId,
@@ -327,11 +388,16 @@ export async function generateReplyBatch(
     selectedTone,
     stage: 'primary_generation',
   });
+  const initialValidationStartedAt = Date.now();
   const initialValidation = validateReplyBatch(initialResult, normalizedRequest, selectedTones);
+  telemetry.stageTimings.primaryValidationMs = Date.now() - initialValidationStartedAt;
   logReplyGenerationStage({
+    ...diagnosticContext,
     acceptedReplyCount: initialValidation.acceptedReplyCount,
     advisoryCodes: initialValidation.advisoryCodes,
     candidateReplyCount: initialValidation.candidateReplyCount,
+    durationMs: telemetry.stageTimings.primaryValidationMs,
+    generatedReplyContainedPlaceholder: initialValidation.generatedReplyContainedPlaceholder,
     generationId,
     outcome: initialValidation.rejectionCodes.length === 0 ? 'succeeded' : 'rejected',
     reasonCodes: initialValidation.rejectionCodes,
@@ -341,11 +407,14 @@ export async function generateReplyBatch(
   });
   if (initialValidation.rejectionCodes.length === 0) {
     telemetry.finalOutcome = 'success';
+    telemetry.returnedStage = 'primary_generation';
+    telemetry.totalDurationMs = Date.now() - pipelineStartedAt;
     return { replyBatch: initialValidation.replyBatch, telemetry };
   }
 
   if (!hasRecoveryBudget()) {
     logReplyGenerationStage({
+      ...diagnosticContext,
       generationId,
       outcome: 'skipped',
       reasonCodes: ['latency_budget_exhausted'],
@@ -375,6 +444,7 @@ export async function generateReplyBatch(
   } catch {
     telemetry.repairGeneration.durationMs = Date.now() - repairStartedAt;
     logReplyGenerationStage({
+      ...diagnosticContext,
       attemptCount: telemetry.repairGeneration.attemptCount,
       durationMs: telemetry.repairGeneration.durationMs,
       generationId,
@@ -388,6 +458,7 @@ export async function generateReplyBatch(
 
   telemetry.repairGeneration.durationMs = Date.now() - repairStartedAt;
   logReplyGenerationStage({
+    ...diagnosticContext,
     attemptCount: telemetry.repairGeneration.attemptCount,
     durationMs: telemetry.repairGeneration.durationMs,
     generationId,
@@ -395,11 +466,16 @@ export async function generateReplyBatch(
     selectedTone,
     stage: 'repair_generation',
   });
+  const repairValidationStartedAt = Date.now();
   const repairValidation = validateReplyBatch(repairResult, normalizedRequest, selectedTones);
+  telemetry.stageTimings.repairValidationMs = Date.now() - repairValidationStartedAt;
   logReplyGenerationStage({
+    ...diagnosticContext,
     acceptedReplyCount: repairValidation.acceptedReplyCount,
     advisoryCodes: repairValidation.advisoryCodes,
     candidateReplyCount: repairValidation.candidateReplyCount,
+    durationMs: telemetry.stageTimings.repairValidationMs,
+    generatedReplyContainedPlaceholder: repairValidation.generatedReplyContainedPlaceholder,
     generationId,
     outcome: repairValidation.rejectionCodes.length === 0 ? 'succeeded' : 'rejected',
     reasonCodes: repairValidation.rejectionCodes,
@@ -409,6 +485,8 @@ export async function generateReplyBatch(
   });
   if (repairValidation.rejectionCodes.length === 0) {
     telemetry.finalOutcome = 'success';
+    telemetry.returnedStage = 'repair_generation';
+    telemetry.totalDurationMs = Date.now() - pipelineStartedAt;
     return { replyBatch: repairValidation.replyBatch, telemetry };
   }
 

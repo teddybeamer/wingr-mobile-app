@@ -21,7 +21,6 @@ export function PaywallScreen(props: OnboardingScreenProps) {
           <Text style={styles.planName}>Weekly Plan</Text>
           <View style={styles.priceCopy}>
             <Text style={styles.price}>$4.99/week</Text>
-            <Text style={styles.trial}>3-day free trial</Text>
           </View>
         </Pressable>
 
@@ -111,14 +110,6 @@ const styles = StyleSheet.create({
   },
   selectedPlan: {
     borderColor: "#1970FD",
-  },
-  trial: {
-    color: "#D3D3D3",
-    fontFamily: "ClashGroteskRegular",
-    fontSize: 14,
-    fontWeight: "400",
-    lineHeight: 20,
-    textAlign: "right",
   },
   yearMeta: {
     color: "#C7C7C7",

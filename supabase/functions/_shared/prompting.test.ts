@@ -190,6 +190,43 @@ test('grounding repair keeps social inference available while protecting concret
   assert.match(repairPrompt, /playful assumptions, teasing, and clearly framed social interpretations/i);
 });
 
+test('primary, repair, and emergency prompts share the same unknown-ME placeholder state', () => {
+  const unknownFavoriteRequest: RepliesRequest = {
+    ...request,
+    transcriptText: 'ME: I played Dota 2.\nTHEM: What is your favorite game?',
+  };
+  const primaryPrompt = buildRepliesPrompt(unknownFavoriteRequest);
+  const repairPrompt = buildReplyGroundingRepairPrompt(
+    unknownFavoriteRequest,
+    [{ id: 'invalid', text: 'My favorite game is Valorant.', tone: 'playful' }],
+    ['playful'],
+    ['ownership_or_grounding'],
+  );
+  const emergencyPrompt = buildReplyEmergencyPrompt(
+    unknownFavoriteRequest,
+    ['playful'],
+    ['ownership_or_grounding'],
+  );
+
+  [primaryPrompt, repairPrompt, emergencyPrompt].forEach((prompt) => {
+    assert.match(prompt, /requires user knowledge|not established by the transcript/i);
+    assert.match(prompt, /\[your favorite game\]/i);
+    assert.match(prompt, /do not (?:guess|use any other)/i);
+  });
+  assert.match(repairPrompt, /instead of attempting another concrete value/i);
+});
+
+test('does not offer a placeholder when the requested ME fact is grounded', () => {
+  const groundedFavoriteRequest: RepliesRequest = {
+    ...request,
+    transcriptText: 'ME: My favorite game is Dota 2.\nTHEM: What is your favorite game?',
+  };
+  const prompt = buildRepliesPrompt(groundedFavoriteRequest);
+
+  assert.match(prompt, /Do not use bracketed placeholders/i);
+  assert.doesNotMatch(prompt, /exactly one editable slot/i);
+});
+
 test('vibe-check prompt defines the agreed interest rubric', () => {
   const request: VibeCheckRequest = {
     transcriptText: 'ME: Want to hang out?\nTHEM: That sounds fun 😊\nTHEM: See you soon 😉',

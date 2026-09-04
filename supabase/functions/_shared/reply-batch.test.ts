@@ -255,3 +255,81 @@ test('skips emergency generation when repair leaves too little total latency bud
     Date.now = originalDateNow;
   }
 });
+
+test('returns an unknown-ME placeholder from primary generation without recovery latency', async () => {
+  const unknownFavoriteRequest: RepliesRequest = {
+    ...request,
+    selectedTone: 'playful',
+    transcriptText: 'ME: I played Dota 2.\nTHEM: What is your favorite game?',
+    vibeCheck: { ...request.vibeCheck, bestTone: 'playful', targetLanguage: 'English' },
+  };
+  const placeholderReply = {
+    id: 'placeholder',
+    text: "I'd probably say [your favorite game] — have you tried Dota yet?",
+    tone: 'playful' as const,
+  };
+
+  await withOpenRouterMocks([
+    { replyBatch: { playful: [placeholderReply] } },
+  ], async (requests) => {
+    const result = await generateReplyBatch(unknownFavoriteRequest, ['playful']);
+
+    assert.equal(requests.length, 1);
+    assert.equal(result.replyBatch.playful?.[0]?.text, placeholderReply.text);
+    assert.equal(result.telemetry.answerability.latestThemRequiresUnknownMeFact, true);
+    assert.equal(result.telemetry.answerability.placeholderGenerationAllowed, true);
+    assert.equal(result.telemetry.returnedStage, 'primary_generation');
+    assert.equal(result.telemetry.repairGeneration.triggered, false);
+    assert.equal(result.telemetry.emergencyGeneration.triggered, false);
+  });
+});
+
+test('repairs an invented unknown ME favorite with the exact allowed placeholder', async () => {
+  const unknownFavoriteRequest: RepliesRequest = {
+    ...request,
+    selectedTone: 'playful',
+    transcriptText: 'ME: I played Dota 2.\nTHEM: What is your favorite game?',
+    vibeCheck: { ...request.vibeCheck, bestTone: 'playful', targetLanguage: 'English' },
+  };
+  const invalid = { id: 'invalid', text: 'My favorite game is Valorant.', tone: 'playful' as const };
+  const repaired = { id: 'repaired', text: '[your favorite game] for sure — what about you?', tone: 'playful' as const };
+
+  await withOpenRouterMocks([
+    { replyBatch: { playful: [invalid] } },
+    { replyBatch: { playful: [repaired] } },
+  ], async (requests) => {
+    const result = await generateReplyBatch(unknownFavoriteRequest, ['playful']);
+
+    assert.equal(requests.length, 2);
+    assert.match(String(requests[1]?.body), /\[your favorite game\]/i);
+    assert.equal(result.replyBatch.playful?.[0]?.text, repaired.text);
+    assert.equal(result.telemetry.returnedStage, 'repair_generation');
+  });
+});
+
+test('uses a deterministic contextual placeholder after repeated invalid unknown-ME answers', async () => {
+  const unknownFavoriteRequest: RepliesRequest = {
+    ...request,
+    selectedTone: 'playful',
+    transcriptText: 'ME: I played Dota 2.\nTHEM: What is your favorite game?',
+    vibeCheck: { ...request.vibeCheck, bestTone: 'playful', targetLanguage: 'English' },
+  };
+  const invalid = { id: 'invalid', text: 'My favorite game is Valorant.', tone: 'playful' as const };
+
+  await withOpenRouterMocks([
+    { replyBatch: { playful: [invalid] } },
+    { replyBatch: { playful: [invalid] } },
+    { replyBatch: { playful: [invalid] } },
+  ], async (requests) => {
+    const result = await generateReplyBatch(unknownFavoriteRequest, ['playful']);
+
+    assert.equal(requests.length, 3);
+    assert.equal(
+      result.replyBatch.playful?.[0]?.text,
+      "I'd probably say [your favorite game] — what about you?",
+    );
+    assert.equal(result.telemetry.finalOutcome, 'fallback');
+    assert.equal(result.telemetry.returnedStage, 'terminal_fallback');
+    assert.equal(result.telemetry.terminalFallback.used, true);
+  });
+});

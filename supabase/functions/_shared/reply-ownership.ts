@@ -1,4 +1,11 @@
 import { getContextNotes } from './context-notes.ts';
+import {
+  claimsUnknownMeFact,
+  getReplyAnswerability,
+  getReplyPlaceholders,
+  hasAllowedReplyPlaceholder,
+  hasInvalidReplyPlaceholder,
+} from './reply-answerability.ts';
 import { getSuspiciousOcrTokens } from './transcript-cleanup.ts';
 import type { ContextNotes, RepliesRequest, SuggestedReply } from './types.ts';
 
@@ -53,9 +60,13 @@ const DIRECT_ADDRESS_ALLOWLIST = new Set([
 export type ReplyOwnershipValidationTrace = {
   acceptedReplyCount: number;
   checkedReplyCount: number;
+  containedAllowedPlaceholder: boolean;
+  containedPlaceholder: boolean;
+  invalidPlaceholderDetected: boolean;
   meFactDirectedAtThemDetected: boolean;
   rejectionCodes: ReplyOwnershipRejectionCode[];
   rejectedReplyCount: number;
+  unsupportedUnknownMeFactClaimDetected: boolean;
 };
 
 export type ReplyOwnershipRejectionCode =
@@ -314,9 +325,18 @@ function getReplyOwnershipIssues(replyText: string, request: RepliesRequest) {
   const notes = normalizeNotes(request);
   const issues: string[] = [];
   const suspiciousReplyTokens = getSuspiciousOcrTokens(replyText);
+  const answerability = getReplyAnswerability(request);
 
   if (suspiciousReplyTokens.length > 0) {
     issues.push('Reply includes random OCR-looking or model-noise tokens.');
+  }
+
+  if (hasInvalidReplyPlaceholder(replyText, answerability)) {
+    issues.push('Reply includes a placeholder that is not allowed for the latest question.');
+  }
+
+  if (claimsUnknownMeFact(replyText, answerability)) {
+    issues.push('Reply asserts a concrete answer to an unknown user fact.');
   }
 
   if (hasUnsupportedPetClaim(replyText, notes, request.transcriptText)) {
@@ -365,16 +385,57 @@ export function getReplyOwnershipValidationTrace(
 ): ReplyOwnershipValidationTrace {
   const issueLists = replies.map((reply) => getReplyOwnershipIssues(reply.text, request));
   const acceptedReplyCount = issueLists.filter((issues) => issues.length === 0).length;
+  const answerability = getReplyAnswerability(request);
 
   return {
     acceptedReplyCount,
     checkedReplyCount: replies.length,
+    containedAllowedPlaceholder: replies.some((reply) =>
+      hasAllowedReplyPlaceholder(reply.text, answerability)
+    ),
+    containedPlaceholder: replies.some((reply) =>
+      getReplyPlaceholders(reply.text).length > 0
+    ),
+    invalidPlaceholderDetected: replies.some((reply) =>
+      hasInvalidReplyPlaceholder(reply.text, answerability)
+    ),
     meFactDirectedAtThemDetected: replies.some((reply) =>
       asksOtherPersonAboutMeOnlyFact(reply.text, request),
     ),
     rejectionCodes: getReplyOwnershipRejectionCodes(replies, request),
     rejectedReplyCount: replies.length - acceptedReplyCount,
+    unsupportedUnknownMeFactClaimDetected: replies.some((reply) =>
+      claimsUnknownMeFact(reply.text, answerability)
+    ),
   };
+}
+
+function getPlaceholderFallbackText(request: RepliesRequest) {
+  const answerability = getReplyAnswerability(request);
+
+  if (!answerability.placeholderAllowed || !answerability.placeholder || !answerability.factKind) {
+    return undefined;
+  }
+
+  const language = getFallbackLanguage(request.vibeCheck.targetLanguage);
+  const suffix = language === 'danish' ? '— hvad med dig?' : '— what about you?';
+  const prefixes: Record<typeof answerability.factKind, string> = language === 'danish'
+    ? {
+      favorite: 'Jeg ville nok sige',
+      hometown: 'Jeg er fra',
+      job: 'Jeg arbejder som',
+      looking_for: 'Jeg leder efter',
+      plans: 'Mine planer er',
+    }
+    : {
+      favorite: "I'd probably say",
+      hometown: "I'm from",
+      job: 'I work as',
+      looking_for: "I'm looking for",
+      plans: 'My plans are',
+    };
+
+  return `${prefixes[answerability.factKind]} ${answerability.placeholder} ${suffix}`;
 }
 
 export function getTerminalFallbackReply(request: RepliesRequest): SuggestedReply {
@@ -391,7 +452,7 @@ export function getTerminalFallbackReply(request: RepliesRequest): SuggestedRepl
 
   return {
     id: 'terminal-safe-fallback',
-    text: fallbackByLanguage[language] ?? fallbackByLanguage.english,
+    text: getPlaceholderFallbackText(request) ?? fallbackByLanguage[language] ?? fallbackByLanguage.english,
     tone: request.selectedTone,
   };
 }
