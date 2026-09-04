@@ -13,6 +13,7 @@ import type {
   StructuredConversationMessage,
 } from "../types/wingr";
 import {
+  getRecoveredBottomComposerObstructionDiagnostics,
   getVisualBubbleRecoveryCommitDiagnostics,
   inspectVisualBubbleAttribution,
   inspectVisualBubbleRecovery,
@@ -1341,6 +1342,7 @@ export async function extractChatTextFromImage(
     throw new Error("No screenshot selected.");
   }
 
+  const pipelineStartedAt = getMonotonicTimeMs();
   const traceId = correlationId
     ? `${correlationId}.ocr`
     : nextOcrTraceId();
@@ -1350,10 +1352,17 @@ export async function extractChatTextFromImage(
   });
   const trace: ContentFreeDiagnosticTrace = (stage, metadata = {}) => {
     try {
+      const timedMetadata = {
+        ...metadata,
+        elapsedMs: getDiagnosticDurationMs(pipelineStartedAt),
+      };
       if (diagnosticDependencies.trace) {
-        diagnosticDependencies.trace(stage, { ...metadata, runId: traceId });
+        diagnosticDependencies.trace(stage, {
+          ...timedMetadata,
+          runId: traceId,
+        });
       } else {
-        defaultTrace(stage, metadata);
+        defaultTrace(stage, timedMetadata);
       }
     } catch {
       // Diagnostics must never alter OCR or attribution behavior.
@@ -1364,7 +1373,6 @@ export async function extractChatTextFromImage(
     inspectVisualBubbleAttribution;
   const inspectRecovery =
     diagnosticDependencies.inspectRecovery ?? inspectVisualBubbleRecovery;
-  const pipelineStartedAt = getMonotonicTimeMs();
   let recognizedText: RecognizedText;
   let nativeOcrStage = "module-import";
   let activeNativeStage:
@@ -1642,11 +1650,46 @@ export async function extractChatTextFromImage(
         const recoveredCandidate = recoveredAttempt.croppedCandidateDiagnostics;
         recoveredCroppedCandidateDiagnostics = recoveredCandidate;
         recoveredVisualAttemptOutcome = recoveredAttempt.outcome;
+        const bottomComposerOcrLineIndexes = new Set(
+          initialReconstruction.diagnostics.lines
+            .filter((line) => line.reason === "bottom-composer")
+            .map((line) => line.ocrIndex),
+        );
+        const recoveredBottomComposerObstruction =
+          getRecoveredBottomComposerObstructionDiagnostics({
+            bottomComposerFragments:
+              initialReconstruction.recoveryFragments
+                .filter((fragment) =>
+                  fragment.ocrLineIndexes.some((ocrLineIndex) =>
+                    bottomComposerOcrLineIndexes.has(ocrLineIndex),
+                  ),
+                )
+                .map((fragment) => ({
+                  id: fragment.message.id,
+                  ocrLineIndexes: fragment.ocrLineIndexes,
+                })),
+            candidateEvidenceReady: Boolean(
+              recoveredCandidate?.candidateEvidenceReady,
+            ),
+            candidateId: recoveredCandidate?.candidateId ?? null,
+            candidateIsChronologicallyLast: Boolean(
+              recoveredCandidate?.candidateIsChronologicallyLast,
+            ),
+            lowerViewport: Boolean(recoveredCandidate?.lowerViewport),
+            proposalChanged,
+            recoveredVisualAttributionAccepted: Boolean(
+              recoveredAttempt.attribution &&
+                recoveredAttempt.outcome === "accepted",
+            ),
+            recoveryDiagnostics: recoveryProposal.diagnostics,
+          });
         const recoveredObstruction = recoveredCandidate?.edgeCoverageDetected
           ? "edge-coverage"
           : recoveredCandidate?.composerOverlayDetected
             ? "composer-overlay"
-            : null;
+            : recoveredBottomComposerObstruction.detected
+              ? "recovered-bottom-composer-fragment"
+              : null;
         const recoveryQualifies = shouldCommitVisualBubbleRecovery({
           chronologicallyLast: Boolean(
             recoveredCandidate?.candidateIsChronologicallyLast,
@@ -1666,10 +1709,28 @@ export async function extractChatTextFromImage(
           });
         trace("visual.recovery.commit-decision", {
           ...recoveryCommitDiagnostics,
+          candidateFinalBounds: recoveredCandidate?.finalBounds ?? null,
+          lowerViewportThreshold:
+            recoveredCandidate?.obstructionMetrics.lowerViewportThreshold ??
+            0.78,
+          obstructionMetrics:
+            recoveredCandidate?.obstructionMetrics ?? null,
+          obstructionPredicates:
+            recoveredCandidate?.obstructionPredicates ?? null,
+          obstructionRejectionReasons:
+            recoveredCandidate?.obstructionRejectionReasons ?? [],
           recoveredCandidateEvidenceReady: Boolean(
             recoveredCandidate?.candidateEvidenceReady,
           ),
+          recoveredBottomComposerObstruction,
           recoveredVisualAttemptOutcome,
+          proposalChangeCounts: {
+            excludedFragmentCount:
+              recoveryProposal.diagnostics.excludedFragmentIds.length,
+            mergeCount: recoveryProposal.diagnostics.mergePairs.length,
+            recoveredOcrLineCount:
+              recoveryProposal.diagnostics.recoveredOcrLineIndexes.length,
+          },
         });
         trace("visual.recovery.attempt-snapshots", {
           initialCandidate: initialCroppedCandidateDiagnostics ?? null,

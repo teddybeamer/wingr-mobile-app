@@ -25,6 +25,16 @@ function isForbiddenDiagnosticKey(key: string) {
   );
 }
 
+function isExplicitlySafeDiagnosticField(key: string, value: unknown) {
+  const normalized = key.replace(/[_-]/g, "").toLowerCase();
+
+  return (
+    normalized === "contextdraw" &&
+    (value === undefined ||
+      (typeof value === "number" && Number.isFinite(value)))
+  );
+}
+
 export function getMonotonicTimeMs() {
   return typeof globalThis.performance?.now === "function"
     ? globalThis.performance.now()
@@ -43,7 +53,8 @@ export function isContentFreeDiagnosticPayload(value: unknown): boolean {
   if (value && typeof value === "object") {
     return Object.entries(value).every(
       ([key, nestedValue]) =>
-        !isForbiddenDiagnosticKey(key) &&
+        (!isForbiddenDiagnosticKey(key) ||
+          isExplicitlySafeDiagnosticField(key, nestedValue)) &&
         isContentFreeDiagnosticPayload(nestedValue),
     );
   }

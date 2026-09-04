@@ -10,6 +10,43 @@ export type { VisualBubbleTrace } from "../modules/visual-bubble-attribution/src
 
 type RgbColor = { blue: number; green: number; red: number };
 
+export type VisualBubbleObstructionRejectionReason =
+  | "candidate-evidence-unavailable"
+  | "invalid-horizontal-extents"
+  | "lower-not-different-from-candidate"
+  | "lower-not-different-from-page"
+  | "lower-probe-count-not-three"
+  | "lower-probes-not-uniform"
+  | "normal-attribution-accepted"
+  | "no-edge-coverage";
+
+export type VisualBubbleObstructionMetrics = {
+  candidateLeftRatio: number | null;
+  candidateRightRatio: number | null;
+  edgeCoverageThreshold: number;
+  lowerProbeCount: number;
+  lowerProbeCoverage: number[];
+  lowerProbeToMeanDistances: number[];
+  lowerProbeUniformityThreshold: number;
+  lowerToCandidateDistance: number | null;
+  lowerToCandidateThreshold: number;
+  lowerToPageDistance: number | null;
+  lowerToPageThreshold: number;
+  lowerViewportThreshold: number;
+};
+
+export type VisualBubbleObstructionPredicates = {
+  candidateAvailable: boolean;
+  composerDiffersFromCandidate: boolean;
+  composerDiffersFromPage: boolean;
+  composerOverlayDetected: boolean;
+  edgeCoverageDetected: boolean;
+  horizontalExtentsValid: boolean;
+  lowerProbeCountReady: boolean;
+  lowerProbesUniform: boolean;
+  normalVisualAttributionRejected: boolean;
+};
+
 export type VisualBubbleEvidence = {
   avatarVariance: number;
   backgroundVariance: number;
@@ -47,6 +84,9 @@ export type VisualBubbleAttributionAttempt = {
     lowerViewport: boolean;
     normalVisualAttributionRejected: boolean;
     obstruction: "edge-coverage" | "composer-overlay" | null;
+    obstructionMetrics: VisualBubbleObstructionMetrics;
+    obstructionPredicates: VisualBubbleObstructionPredicates;
+    obstructionRejectionReasons: VisualBubbleObstructionRejectionReason[];
     prototype: null | {
       candidateToMeDistance: number | null;
       candidateToThemDistance: number | null;
@@ -158,11 +198,29 @@ type NormalizedVisualBounds = {
   normalizedTop: number | null;
 };
 
+export type VisualBubbleRecoveryObstruction =
+  | "composer-overlay"
+  | "edge-coverage"
+  | "recovered-bottom-composer-fragment";
+
 export type VisualBubbleRecoveryCommitDiagnostics = {
   chronologicallyLast: boolean;
   committed: boolean;
+  decision: "committed" | "rejected";
   lowerViewport: boolean;
-  obstruction: "edge-coverage" | "composer-overlay" | null;
+  obstruction: VisualBubbleRecoveryObstruction | null;
+  predicates: {
+    chronologicallyLast: boolean;
+    lowerViewport: boolean;
+    obstructionPresent: boolean;
+    proposalChanged: boolean;
+  };
+  primaryRejectionReason:
+    | "candidate-not-chronologically-last"
+    | "candidate-not-lower-viewport"
+    | "no-obstruction"
+    | "proposal-unchanged"
+    | null;
   proposalChanged: boolean;
   rejectionReasons: Array<
     | "candidate-not-chronologically-last"
@@ -177,6 +235,70 @@ export type VisualBubbleRecoveryProposal = {
   messages: DetectedMessage[];
 };
 
+export type RecoveredBottomComposerFragment = {
+  id: string;
+  ocrLineIndexes: number[];
+};
+
+export function getRecoveredBottomComposerObstructionDiagnostics({
+  bottomComposerFragments,
+  candidateEvidenceReady,
+  candidateId,
+  candidateIsChronologicallyLast,
+  lowerViewport,
+  proposalChanged,
+  recoveredVisualAttributionAccepted,
+  recoveryDiagnostics,
+}: {
+  bottomComposerFragments: RecoveredBottomComposerFragment[];
+  candidateEvidenceReady: boolean;
+  candidateId: string | null;
+  candidateIsChronologicallyLast: boolean;
+  lowerViewport: boolean;
+  proposalChanged: boolean;
+  recoveredVisualAttributionAccepted: boolean;
+  recoveryDiagnostics: VisualBubbleRecoveryDiagnostics;
+}) {
+  const recoveredOcrLineIndexes = new Set(
+    recoveryDiagnostics.recoveredOcrLineIndexes,
+  );
+  const recoveredBottomComposerFragments = bottomComposerFragments.filter(
+    (fragment) =>
+      fragment.ocrLineIndexes.some((ocrLineIndex) =>
+        recoveredOcrLineIndexes.has(ocrLineIndex),
+      ),
+  );
+  const mergedIntoFinalCandidate = recoveredBottomComposerFragments.filter(
+    (fragment) =>
+      candidateId !== null &&
+      recoveryDiagnostics.mergePairs.some(
+        (pair) =>
+          pair.firstId === candidateId && pair.secondId === fragment.id,
+      ),
+  );
+  const predicates = {
+    bottomComposerFragmentMergedIntoFinalCandidate:
+      mergedIntoFinalCandidate.length > 0,
+    bottomComposerFragmentRecovered:
+      recoveredBottomComposerFragments.length > 0,
+    candidateEvidenceReady,
+    candidateIsChronologicallyLast,
+    lowerViewport,
+    proposalChanged,
+    recoveredVisualAttributionAccepted,
+    recoveryEntered: recoveryDiagnostics.entered,
+  };
+  const detected = Object.values(predicates).every(Boolean);
+
+  return {
+    detected,
+    mergedBottomComposerFragmentCount: mergedIntoFinalCandidate.length,
+    predicates,
+    recoveredBottomComposerFragmentCount:
+      recoveredBottomComposerFragments.length,
+  };
+}
+
 export function getVisualBubbleRecoveryCommitDiagnostics({
   chronologicallyLast,
   lowerViewport,
@@ -185,7 +307,7 @@ export function getVisualBubbleRecoveryCommitDiagnostics({
 }: {
   chronologicallyLast: boolean;
   lowerViewport: boolean;
-  obstruction: "edge-coverage" | "composer-overlay" | null;
+  obstruction: VisualBubbleRecoveryObstruction | null;
   proposalChanged: boolean;
 }): VisualBubbleRecoveryCommitDiagnostics {
   const rejectionReasons: VisualBubbleRecoveryCommitDiagnostics["rejectionReasons"] = [];
@@ -196,13 +318,23 @@ export function getVisualBubbleRecoveryCommitDiagnostics({
   if (!lowerViewport) rejectionReasons.push("candidate-not-lower-viewport");
   if (!obstruction) rejectionReasons.push("no-obstruction");
 
+  const committed = Boolean(
+    proposalChanged && chronologicallyLast && lowerViewport && obstruction,
+  );
+
   return {
     chronologicallyLast,
-    committed: Boolean(
-      proposalChanged && chronologicallyLast && lowerViewport && obstruction,
-    ),
+    committed,
+    decision: committed ? "committed" : "rejected",
     lowerViewport,
     obstruction,
+    predicates: {
+      chronologicallyLast,
+      lowerViewport,
+      obstructionPresent: Boolean(obstruction),
+      proposalChanged,
+    },
+    primaryRejectionReason: rejectionReasons[0] ?? null,
     proposalChanged,
     rejectionReasons,
   };
@@ -216,7 +348,7 @@ export function shouldCommitVisualBubbleRecovery({
 }: {
   chronologicallyLast: boolean;
   lowerViewport: boolean;
-  obstruction: "edge-coverage" | "composer-overlay" | null;
+  obstruction: VisualBubbleRecoveryObstruction | null;
   proposalChanged: boolean;
 }) {
   return getVisualBubbleRecoveryCommitDiagnostics({
@@ -922,6 +1054,11 @@ function deriveEvidence(messages: DetectedMessage[], samples: ImageColorSample[]
 
 const CROPPED_PROTOTYPE_MAX_DISTANCE = 32;
 const CROPPED_PROTOTYPE_MIN_MARGIN = 16;
+const CROPPED_EDGE_COVERAGE_THRESHOLD = 0.98;
+const CROPPED_LOWER_VIEWPORT_THRESHOLD = 0.78;
+const CROPPED_LOWER_PROBE_UNIFORMITY_THRESHOLD = 12;
+const CROPPED_LOWER_TO_CANDIDATE_THRESHOLD = 24;
+const CROPPED_LOWER_TO_PAGE_THRESHOLD = 14;
 
 function messageForEvidence(evidence: VisualBubbleEvidence): DetectedMessage {
   return {
@@ -1013,7 +1150,7 @@ export function resolveCroppedBottomBubbleFromEvidence({
   };
 }
 
-export function getCroppedBottomObstruction({
+export function getCroppedBottomObstructionDiagnostics({
   candidate,
   lowerSamples,
   normalVisualAttributionRejected,
@@ -1023,27 +1160,136 @@ export function getCroppedBottomObstruction({
   lowerSamples: ImageColorSample[];
   normalVisualAttributionRejected: boolean;
   pageColor: RgbColor;
-}): "edge-coverage" | "composer-overlay" | null {
-  if (
-    !normalVisualAttributionRejected ||
-    !candidate ||
-    lowerSamples.length !== 3 ||
-    candidate.rightExtent <= 0 ||
-    candidate.leftExtent < 0
-  ) {
-    return null;
+}): {
+  metrics: VisualBubbleObstructionMetrics;
+  obstruction: "edge-coverage" | "composer-overlay" | null;
+  predicates: VisualBubbleObstructionPredicates;
+  rejectionReasons: VisualBubbleObstructionRejectionReason[];
+} {
+  const lowerColor = averageColor(lowerSamples.map(asColor));
+  const edgeCoverageDetected = lowerSamples.some(
+    (sample) => sample.coverage < CROPPED_EDGE_COVERAGE_THRESHOLD,
+  );
+  const lowerProbeToMeanDistances = lowerSamples.map((sample) =>
+    colorDistance(asColor(sample), lowerColor),
+  );
+  const lowerToCandidateDistance = candidate && lowerSamples.length > 0
+    ? colorDistance(lowerColor, candidate.bubbleColor)
+    : null;
+  const lowerToPageDistance = lowerSamples.length > 0
+    ? colorDistance(lowerColor, pageColor)
+    : null;
+  const lowerProbeCountReady = lowerSamples.length === 3;
+  const lowerProbesUniform =
+    lowerProbeCountReady &&
+    lowerProbeToMeanDistances.every(
+      (distance) => distance <= CROPPED_LOWER_PROBE_UNIFORMITY_THRESHOLD,
+    );
+  const composerDiffersFromCandidate = Boolean(
+    lowerToCandidateDistance !== null &&
+      lowerToCandidateDistance >= CROPPED_LOWER_TO_CANDIDATE_THRESHOLD,
+  );
+  const composerDiffersFromPage = Boolean(
+    lowerToPageDistance !== null &&
+      lowerToPageDistance >= CROPPED_LOWER_TO_PAGE_THRESHOLD,
+  );
+  const composerOverlayDetected = Boolean(
+    candidate &&
+      lowerProbeCountReady &&
+      lowerProbesUniform &&
+      composerDiffersFromCandidate &&
+      composerDiffersFromPage,
+  );
+  const horizontalExtentsValid = Boolean(
+    candidate && candidate.rightExtent > 0 && candidate.leftExtent >= 0,
+  );
+  const obstruction =
+    normalVisualAttributionRejected &&
+    candidate &&
+    lowerProbeCountReady &&
+    horizontalExtentsValid
+      ? edgeCoverageDetected
+        ? "edge-coverage"
+        : composerOverlayDetected
+          ? "composer-overlay"
+          : null
+      : null;
+  const rejectionReasons: VisualBubbleObstructionRejectionReason[] = [];
+  if (!normalVisualAttributionRejected) {
+    rejectionReasons.push("normal-attribution-accepted");
+  }
+  if (!candidate) {
+    rejectionReasons.push("candidate-evidence-unavailable");
+  }
+  if (!lowerProbeCountReady) {
+    rejectionReasons.push("lower-probe-count-not-three");
+  }
+  if (!horizontalExtentsValid) {
+    rejectionReasons.push("invalid-horizontal-extents");
+  }
+  if (!edgeCoverageDetected && !composerOverlayDetected) {
+    rejectionReasons.push("no-edge-coverage");
+    if (!lowerProbesUniform) {
+      rejectionReasons.push("lower-probes-not-uniform");
+    }
+    if (!composerDiffersFromCandidate) {
+      rejectionReasons.push("lower-not-different-from-candidate");
+    }
+    if (!composerDiffersFromPage) {
+      rejectionReasons.push("lower-not-different-from-page");
+    }
   }
 
-  const lowerColor = averageColor(lowerSamples.map(asColor));
-  const edgeCoverage = lowerSamples.some((sample) => sample.coverage < 0.98);
-  const composerOverlay =
-    lowerSamples.every(
-      (sample) => colorDistance(asColor(sample), lowerColor) <= 12,
-    ) &&
-    colorDistance(lowerColor, candidate.bubbleColor) >= 24 &&
-    colorDistance(lowerColor, pageColor) >= 14;
+  return {
+    metrics: {
+      candidateLeftRatio: candidate
+        ? Number(candidate.leftExtent.toFixed(3))
+        : null,
+      candidateRightRatio: candidate
+        ? Number(candidate.rightExtent.toFixed(3))
+        : null,
+      edgeCoverageThreshold: CROPPED_EDGE_COVERAGE_THRESHOLD,
+      lowerProbeCount: lowerSamples.length,
+      lowerProbeCoverage: lowerSamples.map((sample) =>
+        Number(sample.coverage.toFixed(3)),
+      ),
+      lowerProbeToMeanDistances: lowerProbeToMeanDistances.map((distance) =>
+        Number(distance.toFixed(3)),
+      ),
+      lowerProbeUniformityThreshold:
+        CROPPED_LOWER_PROBE_UNIFORMITY_THRESHOLD,
+      lowerToCandidateDistance:
+        lowerToCandidateDistance === null
+          ? null
+          : Number(lowerToCandidateDistance.toFixed(3)),
+      lowerToCandidateThreshold: CROPPED_LOWER_TO_CANDIDATE_THRESHOLD,
+      lowerToPageDistance:
+        lowerToPageDistance === null
+          ? null
+          : Number(lowerToPageDistance.toFixed(3)),
+      lowerToPageThreshold: CROPPED_LOWER_TO_PAGE_THRESHOLD,
+      lowerViewportThreshold: CROPPED_LOWER_VIEWPORT_THRESHOLD,
+    },
+    obstruction,
+    predicates: {
+      candidateAvailable: Boolean(candidate),
+      composerDiffersFromCandidate,
+      composerDiffersFromPage,
+      composerOverlayDetected,
+      edgeCoverageDetected,
+      horizontalExtentsValid,
+      lowerProbeCountReady,
+      lowerProbesUniform,
+      normalVisualAttributionRejected,
+    },
+    rejectionReasons,
+  };
+}
 
-  return edgeCoverage ? "edge-coverage" : composerOverlay ? "composer-overlay" : null;
+export function getCroppedBottomObstruction(
+  input: Parameters<typeof getCroppedBottomObstructionDiagnostics>[0],
+): "edge-coverage" | "composer-overlay" | null {
+  return getCroppedBottomObstructionDiagnostics(input).obstruction;
 }
 
 function getCroppedBottomFallback({
@@ -1070,7 +1316,8 @@ function getCroppedBottomFallback({
     !candidateMessage ||
     !candidate ||
     lowerSamples.length !== 3 ||
-    candidateMessage.boundingBox.y + candidateMessage.boundingBox.height < height * 0.78
+    candidateMessage.boundingBox.y + candidateMessage.boundingBox.height <
+      height * CROPPED_LOWER_VIEWPORT_THRESHOLD
   ) {
     return null;
   }
@@ -1121,23 +1368,17 @@ function getCroppedCandidateDiagnostics({
     : [];
   const normalVisualAttributionRejected = !attribution;
   const lowerViewport = Boolean(
-    candidateMessage && candidateMessage.boundingBox.y + candidateMessage.boundingBox.height >= height * 0.78,
+    candidateMessage &&
+      candidateMessage.boundingBox.y + candidateMessage.boundingBox.height >=
+        height * CROPPED_LOWER_VIEWPORT_THRESHOLD,
   );
-  const lowerColor = averageColor(lowerSamples.map(asColor));
-  const edgeCoverageDetected = lowerSamples.some((sample) => sample.coverage < 0.98);
-  const composerOverlayDetected = Boolean(
-    candidate &&
-      lowerSamples.length === 3 &&
-      lowerSamples.every((sample) => colorDistance(asColor(sample), lowerColor) <= 12) &&
-      colorDistance(lowerColor, candidate.bubbleColor) >= 24 &&
-      colorDistance(lowerColor, pageColor) >= 14,
-  );
-  const obstruction = getCroppedBottomObstruction({
+  const obstructionDiagnostics = getCroppedBottomObstructionDiagnostics({
     candidate,
     lowerSamples,
     normalVisualAttributionRejected,
     pageColor,
   });
+  const { obstruction } = obstructionDiagnostics;
   const croppedCandidate = Boolean(
     candidateMessage &&
       candidate &&
@@ -1175,15 +1416,16 @@ function getCroppedCandidateDiagnostics({
       separationMargin >= CROPPED_PROTOTYPE_MIN_MARGIN &&
       confidence >= 0.68,
   );
-
   return {
     candidateId: candidateMessage?.id ?? null,
     candidateIndex: candidateMessage ? candidateIndex : null,
     candidateIsChronologicallyLast: Boolean(candidateMessage),
     candidateEvidenceReady: Boolean(candidate),
-    composerOverlayDetected,
+    composerOverlayDetected:
+      obstructionDiagnostics.predicates.composerOverlayDetected,
     croppedCandidate,
-    edgeCoverageDetected,
+    edgeCoverageDetected:
+      obstructionDiagnostics.predicates.edgeCoverageDetected,
     finalBounds: candidateMessage ? {
       normalizedBottom: Number(((candidateMessage.boundingBox.y + candidateMessage.boundingBox.height) / height).toFixed(3)),
       normalizedTop: Number((candidateMessage.boundingBox.y / height).toFixed(3)),
@@ -1192,6 +1434,9 @@ function getCroppedCandidateDiagnostics({
     lowerViewport,
     normalVisualAttributionRejected,
     obstruction,
+    obstructionMetrics: obstructionDiagnostics.metrics,
+    obstructionPredicates: obstructionDiagnostics.predicates,
+    obstructionRejectionReasons: obstructionDiagnostics.rejectionReasons,
     prototype: {
       candidateToMeDistance: meDistance === null ? null : Number(meDistance.toFixed(3)),
       candidateToThemDistance: themDistance === null ? null : Number(themDistance.toFixed(3)),

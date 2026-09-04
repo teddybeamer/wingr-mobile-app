@@ -525,11 +525,13 @@ export async function refineVibeCheck({
   transcriptText,
 }: RefineVibeCheckParams): Promise<VibeCheck> {
   const startedAt = monotonicNow();
+  const backendGateStartedAt = monotonicNow();
   const backendConfigured = hasWingrBackend();
 
   logAiDiagnostic('backend gate', {
     backendConfigured,
     correlationId: diagnostics?.correlationId,
+    durationMs: elapsedMilliseconds(backendGateStartedAt),
     operation: 'vibe-check',
     requestId: diagnostics?.requestId,
   });
@@ -628,11 +630,13 @@ export async function generateReplies({
   diagnostics?: WingrDiagnosticsContext;
 }): Promise<ReplyBatch> {
   const startedAt = monotonicNow();
+  const backendGateStartedAt = monotonicNow();
   const backendConfigured = hasWingrBackend();
 
   logAiDiagnostic('backend gate', {
     backendConfigured,
     correlationId: diagnostics?.correlationId,
+    durationMs: elapsedMilliseconds(backendGateStartedAt),
     operation: 'reply-generation',
     requestId: diagnostics?.requestId,
   });

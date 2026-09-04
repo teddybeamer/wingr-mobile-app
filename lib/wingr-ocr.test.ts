@@ -11,6 +11,8 @@ import {
 } from "./wingr-ocr";
 import {
   getCroppedBottomObstruction,
+  getCroppedBottomObstructionDiagnostics,
+  getRecoveredBottomComposerObstructionDiagnostics,
   isVisuallyContinuousBridge,
   reconstructVisualBubblesFromSamples,
   resolveCroppedBottomBubbleFromEvidence,
@@ -62,6 +64,18 @@ test("allows numeric OCR diagnostics while rejecting content-bearing fields", ()
   );
   assert.equal(
     isContentFreeDiagnosticPayload({ screenshotUri: "file:///private/image.png" }),
+    false,
+  );
+  assert.equal(
+    isContentFreeDiagnosticPayload({ timingsMs: { contextDraw: 42.5 } }),
+    true,
+  );
+  assert.equal(
+    isContentFreeDiagnosticPayload({ contextDraw: "private content" }),
+    false,
+  );
+  assert.equal(
+    isContentFreeDiagnosticPayload({ extraContext: "private content" }),
     false,
   );
 });
@@ -535,7 +549,7 @@ test("resolves the supplied cropped-bottom ME bubble from local visual prototype
 
 test("does not treat a fully visible lower message as cropped", () => {
   const candidate = visualEvidence("message-5", { blue: 30, green: 0, red: 50 }, 0.9);
-  const result = getCroppedBottomObstruction({
+  const input = {
     candidate,
     lowerSamples: [
       sampledColor("lower-1", { blue: 30, green: 0, red: 50 }),
@@ -544,9 +558,32 @@ test("does not treat a fully visible lower message as cropped", () => {
     ],
     normalVisualAttributionRejected: true,
     pageColor: { blue: 245, green: 245, red: 245 },
-  });
+  };
+  const result = getCroppedBottomObstruction(input);
+  const diagnostics = getCroppedBottomObstructionDiagnostics(input);
 
   assert.equal(result, null);
+  assert.equal(diagnostics.obstruction, result);
+  assert.deepEqual(diagnostics.metrics.lowerProbeCoverage, [1, 1, 1]);
+  assert.deepEqual(diagnostics.metrics.lowerProbeToMeanDistances, [0, 0, 0]);
+  assert.equal(diagnostics.metrics.lowerToCandidateDistance, 0);
+  assert.equal(diagnostics.metrics.lowerToPageDistance, 379.835);
+  assert.deepEqual(diagnostics.predicates, {
+    candidateAvailable: true,
+    composerDiffersFromCandidate: false,
+    composerDiffersFromPage: true,
+    composerOverlayDetected: false,
+    edgeCoverageDetected: false,
+    horizontalExtentsValid: true,
+    lowerProbeCountReady: true,
+    lowerProbesUniform: true,
+    normalVisualAttributionRejected: true,
+  });
+  assert.deepEqual(diagnostics.rejectionReasons, [
+    "no-edge-coverage",
+    "lower-not-different-from-candidate",
+  ]);
+  assert.equal(isContentFreeDiagnosticPayload(diagnostics), true);
 });
 
 test("requires confirmation when an obstructed cropped bubble cannot uniquely match a prototype", () => {
@@ -659,6 +696,36 @@ function rejectedCroppedCandidate(
     lowerViewport: true,
     normalVisualAttributionRejected: true,
     obstruction: null,
+    obstructionMetrics: {
+      candidateLeftRatio: 0.2,
+      candidateRightRatio: 0.9,
+      edgeCoverageThreshold: 0.98,
+      lowerProbeCount: 3,
+      lowerProbeCoverage: [1, 1, 1],
+      lowerProbeToMeanDistances: [2, 1, 1],
+      lowerProbeUniformityThreshold: 12,
+      lowerToCandidateDistance: 8,
+      lowerToCandidateThreshold: 24,
+      lowerToPageDistance: 5,
+      lowerToPageThreshold: 14,
+      lowerViewportThreshold: 0.78,
+    },
+    obstructionPredicates: {
+      candidateAvailable: true,
+      composerDiffersFromCandidate: false,
+      composerDiffersFromPage: false,
+      composerOverlayDetected: false,
+      edgeCoverageDetected: false,
+      horizontalExtentsValid: true,
+      lowerProbeCountReady: true,
+      lowerProbesUniform: true,
+      normalVisualAttributionRejected: true,
+    },
+    obstructionRejectionReasons: [
+      "no-edge-coverage",
+      "lower-not-different-from-candidate",
+      "lower-not-different-from-page",
+    ],
     prototype: {
       candidateToMeDistance: null,
       candidateToThemDistance: null,
@@ -802,7 +869,7 @@ test("reconstructs the physical 25-line OCR failure as five visual bubbles", () 
   assert.equal(parsedConversation.shouldGenerateDirectReply, false);
 });
 
-test("retains both candidate traces when a five-bubble recovery fails the obstruction commit gate", async () => {
+test("commits the recovered five-bubble candidate for the cropped-bottom fixture", async () => {
   const sourceLines = physicalFailureOcrLines();
   const fragments = reconstructVisualRecoveryFragmentsFromOcrLines(sourceLines);
   const outgoing = { blue: 30, green: 0, red: 50 };
@@ -834,12 +901,38 @@ test("retains both candidate traces when a five-bubble recovery fails the obstru
     0.868,
     7,
   );
-  const recoveredCandidate = rejectedCroppedCandidate(
-    "message-7",
-    0.742,
-    0.894,
-    4,
+  const recoveredCandidate: NonNullable<
+    VisualBubbleAttributionAttempt["croppedCandidateDiagnostics"]
+  > = {
+    ...rejectedCroppedCandidate("message-7", 0.742, 0.894, 4),
+    normalVisualAttributionRejected: false,
+    obstructionPredicates: {
+      ...rejectedCroppedCandidate("message-7", 0.742, 0.894, 4)
+        .obstructionPredicates,
+      normalVisualAttributionRejected: false,
+    },
+    obstructionRejectionReasons: [
+      "normal-attribution-accepted",
+      "no-edge-coverage",
+      "lower-not-different-from-candidate",
+      "lower-not-different-from-page",
+    ],
+  };
+  const recoveredAttribution = resolveVisualBubbleAttributionFromEvidence(
+    recoveryProposal.messages,
+    recoveryProposal.messages.map((message) => {
+      const isOutgoing = ["message-2", "message-5", "message-7"].includes(
+        message.id,
+      );
+      return visualEvidence(
+        message.id,
+        isOutgoing ? outgoing : incoming,
+        isOutgoing ? 0.92 : 0.76,
+        isOutgoing ? 8 : 700,
+      );
+    }),
   );
+  assert.ok(recoveredAttribution);
   const events: Array<{
     metadata: Record<string, unknown>;
     stage: string;
@@ -849,17 +942,27 @@ test("retains both candidate traces when a five-bubble recovery fails the obstru
     "file:///diagnostic-fixture.png",
     "analysis-test",
     {
-      inspectAttribution: async ({ stagePrefix }) => ({
-        attribution: null,
-        continuityDiagnostics: [],
-        croppedCandidateDiagnostics:
-          stagePrefix === "recovered"
-            ? recoveredCandidate
-            : initialCandidate,
-        croppedFallback: null,
-        evidenceDiagnostics: [],
-        outcome: "low-confidence-or-incomplete-bubble-evidence" as const,
-      }),
+      inspectAttribution: async ({ stagePrefix }) => {
+        if (stagePrefix === "recovered") {
+          return {
+            attribution: recoveredAttribution,
+            continuityDiagnostics: [],
+            croppedCandidateDiagnostics: recoveredCandidate,
+            croppedFallback: null,
+            evidenceDiagnostics: [],
+            outcome: "accepted" as const,
+          };
+        }
+
+        return {
+          attribution: null,
+          continuityDiagnostics: [],
+          croppedCandidateDiagnostics: initialCandidate,
+          croppedFallback: null,
+          evidenceDiagnostics: [],
+          outcome: "low-confidence-or-incomplete-bubble-evidence" as const,
+        };
+      },
       inspectRecovery: async () => recoveryProposal,
       recognizeText: async () => recognizedTextFixture(sourceLines),
       trace: (stage, metadata = {}) => {
@@ -869,24 +972,82 @@ test("retains both candidate traces when a five-bubble recovery fails the obstru
   );
 
   assert.equal(recoveryProposal.messages.length, 5);
-  assert.equal(result.detectedMessages.length, 8);
+  assert.equal(result.detectedMessages.length, 5);
   assert.deepEqual(
     result.detectedMessages.map((message) => message.sender),
-    ["me", "me", "me", "them", "me", "me", "me", "me"],
+    ["me", "them", "me", "them", "me"],
   );
   assert.equal(result.parsedConversation.speakerAttributionResolved, true);
 
   const commitEvent = events.find(
     (event) => event.stage === "visual.recovery.commit-decision",
   );
-  assert.deepEqual(commitEvent?.metadata.rejectionReasons, ["no-obstruction"]);
-  assert.equal(commitEvent?.metadata.committed, false);
+  assert.deepEqual(commitEvent?.metadata.rejectionReasons, []);
+  assert.equal(commitEvent?.metadata.committed, true);
+  assert.equal(commitEvent?.metadata.decision, "committed");
+  assert.equal(
+    commitEvent?.metadata.obstruction,
+    "recovered-bottom-composer-fragment",
+  );
+  assert.equal(commitEvent?.metadata.primaryRejectionReason, null);
+  assert.deepEqual(commitEvent?.metadata.predicates, {
+    chronologicallyLast: true,
+    lowerViewport: true,
+    obstructionPresent: true,
+    proposalChanged: true,
+  });
+  assert.deepEqual(commitEvent?.metadata.recoveredBottomComposerObstruction, {
+    detected: true,
+    mergedBottomComposerFragmentCount: 1,
+    predicates: {
+      bottomComposerFragmentMergedIntoFinalCandidate: true,
+      bottomComposerFragmentRecovered: true,
+      candidateEvidenceReady: true,
+      candidateIsChronologicallyLast: true,
+      lowerViewport: true,
+      proposalChanged: true,
+      recoveredVisualAttributionAccepted: true,
+      recoveryEntered: true,
+    },
+    recoveredBottomComposerFragmentCount: 1,
+  });
+  assert.deepEqual(
+    commitEvent?.metadata.obstructionMetrics,
+    recoveredCandidate.obstructionMetrics,
+  );
+  assert.deepEqual(
+    commitEvent?.metadata.obstructionPredicates,
+    recoveredCandidate.obstructionPredicates,
+  );
+  assert.deepEqual(commitEvent?.metadata.proposalChangeCounts, {
+    excludedFragmentCount: 3,
+    mergeCount: 2,
+    recoveredOcrLineCount: 1,
+  });
 
   const snapshotEvent = events.find(
     (event) => event.stage === "visual.recovery.attempt-snapshots",
   );
   assert.deepEqual(snapshotEvent?.metadata.initialCandidate, initialCandidate);
   assert.deepEqual(snapshotEvent?.metadata.recoveredCandidate, recoveredCandidate);
+  assert.equal(
+    events.every((event) => typeof event.metadata.elapsedMs === "number"),
+    true,
+  );
+  const elapsedTimes = events.map((event) => event.metadata.elapsedMs as number);
+  assert.deepEqual(elapsedTimes, [...elapsedTimes].sort((first, second) => first - second));
+  for (const stage of [
+    "mlkit.recognition.complete",
+    "ocr.filtering.complete",
+    "ocr.grouping.complete",
+    "visual.normal.complete",
+    "visual.recovery.complete",
+    "visual.recovered.complete",
+    "ocr.final-assembly.complete",
+    "pipeline.complete",
+  ]) {
+    assert.equal(events.some((event) => event.stage === stage), true, stage);
+  }
   assert.equal(
     events.every((event) =>
       isContentFreeDiagnosticPayload({
@@ -944,4 +1105,130 @@ test("does not commit visual recovery for a fully visible lower bubble", () => {
     }),
     true,
   );
+  assert.equal(
+    shouldCommitVisualBubbleRecovery({
+      chronologicallyLast: true,
+      lowerViewport: true,
+      obstruction: "edge-coverage",
+      proposalChanged: true,
+    }),
+    true,
+  );
+});
+
+function recoveredComposerObstruction(
+  overrides: Partial<
+    Parameters<typeof getRecoveredBottomComposerObstructionDiagnostics>[0]
+  > = {},
+) {
+  return getRecoveredBottomComposerObstructionDiagnostics({
+    bottomComposerFragments: [
+      { id: "recovery-line-23", ocrLineIndexes: [23] },
+    ],
+    candidateEvidenceReady: true,
+    candidateId: "message-7",
+    candidateIsChronologicallyLast: true,
+    lowerViewport: true,
+    proposalChanged: true,
+    recoveredVisualAttributionAccepted: true,
+    recoveryDiagnostics: {
+      committed: false,
+      entered: true,
+      excludedFragmentIds: [],
+      mergePairs: [
+        { firstId: "message-7", secondId: "recovery-line-23" },
+      ],
+      reconstructedCount: 5,
+      recoveredOcrLineIndexes: [23],
+    },
+    ...overrides,
+  });
+}
+
+test("does not infer recovery obstruction from nearby composer UI", () => {
+  const result = recoveredComposerObstruction({
+    recoveryDiagnostics: {
+      committed: false,
+      entered: false,
+      excludedFragmentIds: ["recovery-line-23"],
+      mergePairs: [],
+      reconstructedCount: 5,
+      recoveredOcrLineIndexes: [],
+    },
+  });
+
+  assert.equal(result.detected, false);
+  assert.equal(result.predicates.recoveryEntered, false);
+  assert.equal(result.predicates.bottomComposerFragmentRecovered, false);
+  assert.equal(
+    result.predicates.bottomComposerFragmentMergedIntoFinalCandidate,
+    false,
+  );
+});
+
+test("does not infer obstruction when the recovered composer fragment was not merged", () => {
+  const result = recoveredComposerObstruction({
+    recoveryDiagnostics: {
+      committed: false,
+      entered: true,
+      excludedFragmentIds: ["recovery-line-23"],
+      mergePairs: [],
+      reconstructedCount: 5,
+      recoveredOcrLineIndexes: [23],
+    },
+  });
+
+  assert.equal(result.detected, false);
+  assert.equal(result.predicates.bottomComposerFragmentRecovered, true);
+  assert.equal(
+    result.predicates.bottomComposerFragmentMergedIntoFinalCandidate,
+    false,
+  );
+});
+
+test("does not infer obstruction outside the final lower-viewport candidate", () => {
+  const mergedIntoAnotherCandidate = recoveredComposerObstruction({
+    recoveryDiagnostics: {
+      committed: false,
+      entered: true,
+      excludedFragmentIds: [],
+      mergePairs: [
+        { firstId: "message-6", secondId: "recovery-line-23" },
+      ],
+      reconstructedCount: 5,
+      recoveredOcrLineIndexes: [23],
+    },
+  });
+  const finalCandidateOutsideLowerViewport = recoveredComposerObstruction({
+    lowerViewport: false,
+  });
+
+  assert.equal(mergedIntoAnotherCandidate.detected, false);
+  assert.equal(
+    mergedIntoAnotherCandidate.predicates
+      .bottomComposerFragmentMergedIntoFinalCandidate,
+    false,
+  );
+  assert.equal(finalCandidateOutsideLowerViewport.detected, false);
+  assert.equal(finalCandidateOutsideLowerViewport.predicates.lowerViewport, false);
+});
+
+test("requires changed, final, evidence-ready, accepted recovery", () => {
+  const missingRequirements: Array<
+    Partial<
+      Parameters<typeof getRecoveredBottomComposerObstructionDiagnostics>[0]
+    >
+  > = [
+    { proposalChanged: false },
+    { candidateIsChronologicallyLast: false },
+    { candidateEvidenceReady: false },
+    { recoveredVisualAttributionAccepted: false },
+  ];
+
+  for (const missingRequirement of missingRequirements) {
+    assert.equal(
+      recoveredComposerObstruction(missingRequirement).detected,
+      false,
+    );
+  }
 });

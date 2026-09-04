@@ -290,6 +290,7 @@ export function useConversationFlow() {
         );
       }
 
+      const backendGateStartedAt = monotonicNow();
       const backendContract = getConversationBackendContract(
         ocr.parsedConversation,
       );
@@ -303,6 +304,7 @@ export function useConversationFlow() {
         confirmationDecision: requiresSpeakerConfirmation
           ? "required"
           : "not-required",
+        durationMs: elapsedMilliseconds(backendGateStartedAt),
       });
 
       if (requiresSpeakerConfirmation) {
