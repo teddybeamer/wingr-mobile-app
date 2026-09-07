@@ -6,6 +6,11 @@ import {
   hasAllowedReplyPlaceholder,
   hasInvalidReplyPlaceholder,
 } from './reply-answerability.ts';
+import {
+  buildReplyFactLedger,
+  validateReplyAgainstFactLedger,
+  type ReplyFactLedger,
+} from './reply-fact-ledger.ts';
 import { getSuspiciousOcrTokens } from './transcript-cleanup.ts';
 import type { ContextNotes, RepliesRequest, SuggestedReply } from './types.ts';
 
@@ -80,8 +85,11 @@ export type ReplyOwnershipRejectionCode =
 function getReplyOwnershipRejectionCodes(
   replies: SuggestedReply[],
   request: RepliesRequest,
+  ledger: ReplyFactLedger,
 ): ReplyOwnershipRejectionCode[] {
-  const issues = replies.flatMap((reply) => getReplyOwnershipIssues(reply.text, request));
+  const issues = replies.flatMap((reply) =>
+    getReplyOwnershipIssues(reply.text, request, ledger)
+  );
 
   return [...new Set(issues)];
 }
@@ -321,7 +329,11 @@ function hasUnsupportedKeywordOwnership(
   });
 }
 
-function getReplyOwnershipIssues(replyText: string, request: RepliesRequest) {
+function getReplyOwnershipIssues(
+  replyText: string,
+  request: RepliesRequest,
+  ledger: ReplyFactLedger,
+) {
   const notes = normalizeNotes(request);
   const issues = new Set<ReplyOwnershipRejectionCode>();
   const suspiciousReplyTokens = getSuspiciousOcrTokens(replyText);
@@ -336,6 +348,16 @@ function getReplyOwnershipIssues(replyText: string, request: RepliesRequest) {
   }
 
   if (claimsUnknownMeFact(replyText, answerability)) {
+    issues.add('unsupported_me_fact');
+  }
+
+  const ledgerValidation = validateReplyAgainstFactLedger(replyText, ledger);
+
+  if (ledgerValidation.factOwnerReversalDetected) {
+    issues.add('fact_owner_reversal');
+  }
+
+  if (ledgerValidation.unsupportedMeFactDetected) {
     issues.add('unsupported_me_fact');
   }
 
@@ -383,7 +405,10 @@ export function getReplyOwnershipValidationTrace(
   replies: SuggestedReply[],
   request: RepliesRequest,
 ): ReplyOwnershipValidationTrace {
-  const issueLists = replies.map((reply) => getReplyOwnershipIssues(reply.text, request));
+  const ledger = buildReplyFactLedger(request);
+  const issueLists = replies.map((reply) =>
+    getReplyOwnershipIssues(reply.text, request, ledger)
+  );
   const acceptedReplyCount = issueLists.filter((issues) => issues.length === 0).length;
   const answerability = getReplyAnswerability(request);
 
@@ -402,7 +427,7 @@ export function getReplyOwnershipValidationTrace(
     meFactDirectedAtThemDetected: replies.some((reply) =>
       asksOtherPersonAboutMeOnlyFact(reply.text, request),
     ),
-    rejectionCodes: getReplyOwnershipRejectionCodes(replies, request),
+    rejectionCodes: getReplyOwnershipRejectionCodes(replies, request, ledger),
     rejectedReplyCount: replies.length - acceptedReplyCount,
     unsupportedUnknownMeFactClaimDetected: replies.some((reply) =>
       claimsUnknownMeFact(reply.text, answerability)
@@ -461,7 +486,9 @@ export function getOwnershipCheckedReplies(
   replies: SuggestedReply[],
   request: RepliesRequest,
 ) {
+  const ledger = buildReplyFactLedger(request);
+
   return replies.filter(
-    (reply) => getReplyOwnershipIssues(reply.text, request).length === 0,
+    (reply) => getReplyOwnershipIssues(reply.text, request, ledger).length === 0,
   ).slice(0, 1);
 }

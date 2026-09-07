@@ -6,6 +6,7 @@ import {
   getTerminalFallbackReply,
 } from './reply-ownership.ts';
 import { getReplyAnswerability } from './reply-answerability.ts';
+import { buildReplyFactLedger } from './reply-fact-ledger.ts';
 import type { RepliesRequest } from './types.ts';
 
 const request: RepliesRequest = {
@@ -41,6 +42,47 @@ function favoriteGameRequest(
       boundingBox: { height: 20, width: 300, x: 10, y: 40 },
       confidence: 0.98,
       id: 'them-1',
+      sender: 'them' as const,
+      speaker: 'other' as const,
+      text: themText,
+      xPosition: 'left' as const,
+    },
+  ];
+
+  return {
+    ...request,
+    parsedConversation: {
+      latestMessageSender: 'them',
+      messages,
+      shouldGenerateDirectReply: true,
+      speakerAttributionConfidence: 0.98,
+    },
+    transcriptText: messages.map((message) =>
+      `${message.sender === 'me' ? 'ME' : 'THEM'}: ${message.text}`
+    ).join('\n'),
+    vibeCheck: { ...request.vibeCheck, targetLanguage },
+  };
+}
+
+function structuredFactRequest(
+  meText: string,
+  themText: string,
+  targetLanguage = 'English',
+): RepliesRequest {
+  const messages = [
+    {
+      boundingBox: { height: 20, width: 300, x: 180, y: 10 },
+      confidence: 0.98,
+      id: 'me-fact',
+      sender: 'me' as const,
+      speaker: 'user' as const,
+      text: meText,
+      xPosition: 'right' as const,
+    },
+    {
+      boundingBox: { height: 20, width: 300, x: 10, y: 40 },
+      confidence: 0.97,
+      id: 'them-fact',
       sender: 'them' as const,
       speaker: 'other' as const,
       text: themText,
@@ -178,6 +220,167 @@ test('keeps a THEM-only fact available as a safe question hook', () => {
   );
 
   assert.equal(replies[0]?.text, 'How is your roommate visit going?');
+});
+
+test('builds a provenance-bearing ledger and permits a grounded ME fact', () => {
+  const factRequest = structuredFactRequest(
+    'I played Dota 2 last night.',
+    'I usually play Valorant.',
+  );
+  const ledger = buildReplyFactLedger(factRequest);
+  const meFact = ledger.facts.find((fact) => fact.owner === 'me');
+  const candidate = { id: 'ledger-me', text: 'I played Dota 2 last night.', tone: 'direct' as const };
+
+  assert.equal(meFact?.normalizedValue, 'played dota 2 last night');
+  assert.equal(meFact?.confidence, 0.95);
+  assert.deepEqual(meFact?.provenance, {
+    messageId: 'me-fact',
+    messageIndex: 0,
+    source: 'structured_message',
+  });
+  assert.deepEqual(getOwnershipCheckedReplies([candidate], factRequest), [candidate]);
+});
+
+test('adds explicit context facts with ownership provenance', () => {
+  const factRequest: RepliesRequest = {
+    ...request,
+    contextNotes: {
+      replyInstruction: [],
+      situationNotes: [],
+      themFacts: ['They work at a hospital.'],
+      userFacts: ['I work at a bakery downtown.'],
+    },
+  };
+  const ledger = buildReplyFactLedger(factRequest);
+  const userFact = ledger.facts.find((fact) => fact.owner === 'me');
+  const candidate = {
+    id: 'context-grounded',
+    text: 'I work at a bakery downtown.',
+    tone: 'direct' as const,
+  };
+
+  assert.deepEqual(userFact?.provenance, { factIndex: 0, source: 'user_fact' });
+  assert.deepEqual(getOwnershipCheckedReplies([candidate], factRequest), [candidate]);
+});
+
+test('rejects a high-confidence structured THEM fact transferred to ME', () => {
+  const factRequest = structuredFactRequest(
+    'That sounds like a nice evening.',
+    'I am having dinner with friends tonight.',
+  );
+  const candidate = {
+    id: 'ledger-reversal',
+    text: 'I am having dinner with friends tonight.',
+    tone: 'direct' as const,
+  };
+
+  assert.deepEqual(
+    getReplyOwnershipValidationTrace([candidate], factRequest).rejectionCodes,
+    ['fact_owner_reversal'],
+  );
+  assert.deepEqual(getOwnershipCheckedReplies([candidate], factRequest), []);
+});
+
+test('rejects a clear unsupported concrete ME fact absent from the ledger', () => {
+  const factRequest = structuredFactRequest(
+    'That sounds interesting.',
+    'What are you focused on lately?',
+  );
+  const candidate = {
+    id: 'ledger-unsupported',
+    text: 'I am training for a marathon this spring.',
+    tone: 'direct' as const,
+  };
+
+  assert.deepEqual(
+    getReplyOwnershipValidationTrace([candidate], factRequest).rejectionCodes,
+    ['unsupported_me_fact'],
+  );
+  assert.deepEqual(getOwnershipCheckedReplies([candidate], factRequest), []);
+});
+
+test('does not block shared vocabulary without a clear fact reversal', () => {
+  const factRequest = structuredFactRequest(
+    'I had lunch with friends yesterday.',
+    'I am having dinner with friends tonight.',
+  );
+  const candidate = {
+    id: 'ledger-shared',
+    text: 'I love catching up with friends too.',
+    tone: 'playful' as const,
+  };
+
+  assert.deepEqual(getOwnershipCheckedReplies([candidate], factRequest), [candidate]);
+});
+
+test('keeps harmless inference and questions about THEM non-blocking', () => {
+  const factRequest = structuredFactRequest(
+    'I play Dota 2 after work.',
+    'I usually play Valorant.',
+  );
+  const inference = {
+    id: 'ledger-inference',
+    text: 'I’m choosing to believe that was a compliment.',
+    tone: 'playful' as const,
+  };
+  const question = {
+    id: 'ledger-question',
+    text: 'Do you play Dota 2 after work too?',
+    tone: 'direct' as const,
+  };
+  const reaction = {
+    id: 'ledger-reaction',
+    text: 'I appreciate you saying that.',
+    tone: 'direct' as const,
+  };
+
+  assert.deepEqual(getOwnershipCheckedReplies([inference], factRequest), [inference]);
+  assert.deepEqual(getOwnershipCheckedReplies([question], factRequest), [question]);
+  assert.deepEqual(getOwnershipCheckedReplies([reaction], factRequest), [reaction]);
+});
+
+test('does not hard-block a claim based on low-confidence ownership evidence', () => {
+  const factRequest = structuredFactRequest(
+    'That sounds good.',
+    'I am having dinner with friends tonight.',
+  );
+  factRequest.parsedConversation!.messages[1].confidence = 0.6;
+  const candidate = {
+    id: 'ledger-low-confidence',
+    text: 'I am having dinner with friends tonight.',
+    tone: 'direct' as const,
+  };
+
+  assert.deepEqual(getOwnershipCheckedReplies([candidate], factRequest), [candidate]);
+});
+
+test('applies the conservative fact ledger to equivalent Danish claims', () => {
+  const factRequest = structuredFactRequest(
+    'Jeg spiller Dota 2.',
+    'Jeg spiser middag med venner i aften.',
+    'Danish',
+  );
+  const grounded = { id: 'da-grounded', text: 'Jeg spiller Dota 2.', tone: 'direct' as const };
+  const reversed = {
+    id: 'da-reversed',
+    text: 'Jeg spiser middag med venner i aften.',
+    tone: 'direct' as const,
+  };
+  const unsupported = {
+    id: 'da-unsupported',
+    text: 'Jeg træner til et maraton næste måned.',
+    tone: 'direct' as const,
+  };
+
+  assert.deepEqual(getOwnershipCheckedReplies([grounded], factRequest), [grounded]);
+  assert.deepEqual(
+    getReplyOwnershipValidationTrace([reversed], factRequest).rejectionCodes,
+    ['fact_owner_reversal'],
+  );
+  assert.deepEqual(
+    getReplyOwnershipValidationTrace([unsupported], factRequest).rejectionCodes,
+    ['unsupported_me_fact'],
+  );
 });
 
 test('accepts an exact descriptive placeholder for an unknown ME favorite', () => {
