@@ -89,7 +89,8 @@ const TONE_SHEET_ANIMATION = {
   sheetOpenDuration: 280,
 } as const;
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
+const AnimatedTouchableOpacity =
+  Animated.createAnimatedComponent(TouchableOpacity);
 const ReanimatedPressable = Reanimated.createAnimatedComponent(Pressable);
 
 const VIBE_CHECK_LAYOUT_TRANSITION = LinearTransition.duration(220).easing(
@@ -310,72 +311,6 @@ export function getToneLabel(tone: ReplyTone | RecommendedReplyTone) {
   );
 }
 
-function getConversationEnergyCopy(vibeCheck: VibeCheck) {
-  const rawEnergy = vibeCheck.conversationEnergy?.trim() ?? "";
-  const lowerEnergy = rawEnergy.toLowerCase();
-  const debugTerms = ["detected", "speaker", "ocr", "confidence", "parsed"];
-  const looksLikeInternalOutput = debugTerms.some((term) =>
-    lowerEnergy.includes(term),
-  );
-  const hasSituationLanguage =
-    rawEnergy.length >= 55 &&
-    /\b(they|their|chat|conversation|reply|message|interest|momentum|move|room)\b/i.test(
-      rawEnergy,
-    );
-
-  if (hasSituationLanguage && !looksLikeInternalOutput) {
-    return rawEnergy;
-  }
-
-  if (
-    lowerEnergy.includes("dry") ||
-    lowerEnergy.includes("short") ||
-    lowerEnergy.includes("low")
-  ) {
-    return "They're keeping it short, but there's still room to play.";
-  }
-
-  if (lowerEnergy.includes("playful") || lowerEnergy.includes("light")) {
-    return "The conversation is light and playful, but it needs a more confident next move.";
-  }
-
-  if (lowerEnergy.includes("high") || lowerEnergy.includes("warm")) {
-    return "There is good energy here, so keep momentum with a clear next move.";
-  }
-
-  if (vibeCheck.interestLevel === "Unclear") {
-    return "There is some signal here, but the next reply should make the vibe easier to read.";
-  }
-
-  return (
-    rawEnergy ||
-    "There's some interest here, but the chat needs a sharper reply."
-  );
-}
-
-function getInlineConversationEnergyLabel(vibeCheck: VibeCheck) {
-  const rawEnergy = vibeCheck.conversationEnergy?.trim() ?? "";
-  const lowerEnergy = rawEnergy.toLowerCase();
-
-  if (
-    lowerEnergy.includes("dry") ||
-    lowerEnergy.includes("short") ||
-    lowerEnergy.includes("low")
-  ) {
-    return "Dry but recoverable";
-  }
-
-  if (lowerEnergy.includes("playful") || lowerEnergy.includes("light")) {
-    return "Light and playful";
-  }
-
-  if (lowerEnergy.includes("high") || lowerEnergy.includes("warm")) {
-    return "Warm and flowing";
-  }
-
-  return rawEnergy || "Needs a clearer next move";
-}
-
 export function ScreenshotPickerContent({
   errorMessage,
   onPickScreenshot,
@@ -496,7 +431,7 @@ export function VibeCheckCard({
       <VibeMetric
         icon={Bolt}
         label="Conversation energy"
-        value={getConversationEnergyCopy(vibeCheck)}
+        value={vibeCheck.conversationEnergy}
         variant="energy"
       />
       <VibeMetric
@@ -649,7 +584,7 @@ function InlineExpandableVibeCheckCard({
                 <InlineVibeMetric
                   icon={Bolt}
                   label="Conversation energy"
-                  value={getInlineConversationEnergyLabel(vibeCheck)}
+                  value={vibeCheck.conversationEnergy}
                   variant="energy"
                 />
                 <InlineVibeMetric
@@ -935,7 +870,7 @@ export function RepliesContent({
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
         () => {},
       );
-      posthog.capture('reply_copied', { tone: reply.tone });
+      posthog.capture("reply_copied", { tone: reply.tone });
     }
   };
 

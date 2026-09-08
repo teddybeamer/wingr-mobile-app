@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Alert } from "react-native";
 import { posthog } from "../lib/posthog";
 import { useConversationFlow } from "../hooks/useConversationFlow";
@@ -44,12 +44,10 @@ const screenMap: Record<
 export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const conversation = useConversationFlow();
   const [analysisFailureCount, setAnalysisFailureCount] = useState(0);
-  const generatedReplyForScreenshotUriRef = useRef<string | null>(null);
   const completeOnboarding = useCallback(() => {
     conversation.reset();
     setAnalysisFailureCount(0);
-    generatedReplyForScreenshotUriRef.current = null;
-    posthog.capture('onboarding_completed');
+    posthog.capture("onboarding_completed");
     onComplete();
   }, [conversation, onComplete]);
   const {
@@ -83,7 +81,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
   const analyzeScreenshotForOnboarding = useCallback(
     async (screenshotUri?: string) => {
-      const result = await conversation.analyzeScreenshot(screenshotUri);
+      const result = await conversation.analyzeOnboardingScreenshot(screenshotUri);
 
       if (result === "error") {
         setAnalysisFailureCount((count) => count + 1);
@@ -96,37 +94,12 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     [conversation],
   );
 
-  useEffect(() => {
-    const screenshotUri = conversation.selectedScreenshotUri?.trim();
-
-    if (
-      !isVibeStep ||
-      !screenshotUri ||
-      conversation.analysisStatus !== "ready" ||
-      conversation.repliesStatus !== "idle" ||
-      conversation.generatedReplies.length > 0 ||
-      generatedReplyForScreenshotUriRef.current === screenshotUri
-    ) {
-      return;
-    }
-
-    generatedReplyForScreenshotUriRef.current = screenshotUri;
-    void conversation.generateRepliesForSelectedTone();
-  }, [
-    conversation.analysisStatus,
-    conversation.generatedReplies.length,
-    conversation.generateRepliesForSelectedTone,
-    conversation.repliesStatus,
-    conversation.selectedScreenshotUri,
-    isVibeStep,
-  ]);
-
   const handlePrimaryAction = async () => {
     if (!stepCanContinue || ctaLoading) {
       return;
     }
 
-    posthog.capture('onboarding_step_advanced', {
+    posthog.capture("onboarding_step_advanced", {
       step_id: currentStep.id,
       step_index: currentIndex,
       total_steps: totalSteps,
@@ -148,14 +121,14 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
   const handleScreenshotSelected = async (screenshotUri: string) => {
     setAnalysisFailureCount(0);
-    generatedReplyForScreenshotUriRef.current = null;
     goNext(true);
     const result = await analyzeScreenshotForOnboarding(screenshotUri);
 
     if (result === "error") {
       Alert.alert(
         "Could not read screenshot",
-        conversation.error?.message ?? "Try another screenshot or upload again.",
+        conversation.error?.message ??
+          "Try another screenshot or upload again.",
       );
       goBack();
     }
@@ -167,7 +140,6 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
   const analyzeReplacementScreenshot = async (screenshotUri: string) => {
     setAnalysisFailureCount(0);
-    generatedReplyForScreenshotUriRef.current = null;
     await analyzeScreenshotForOnboarding(screenshotUri);
   };
 

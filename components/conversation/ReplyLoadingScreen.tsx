@@ -4,7 +4,12 @@ import { StyleSheet, Text, View } from "react-native";
 const REPLY_LOADING_MESSAGES = [
   "Reading the vibe...",
   "Okay, we see it...",
+  "Finding your opening...",
+  "Working our magic...",
   "Cooking your reply...",
+  "Almost there…",
+  "Trust the process...",
+  "Yep. This is the one...",
 ] as const;
 
 export function ReplyLoadingScreen() {

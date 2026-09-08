@@ -27,7 +27,7 @@ export function RepliesScreen(props: OnboardingScreenProps) {
         <InlineErrorCard
           message={conversation.error.message}
           onPrimaryAction={() => {
-            void conversation.generateRepliesForSelectedTone();
+            void conversation.refreshReplies();
           }}
           primaryLabel="Retry"
         />

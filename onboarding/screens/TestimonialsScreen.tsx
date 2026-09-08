@@ -1,5 +1,9 @@
 import { Image, StyleSheet, Text, View } from "react-native";
-import Animated, { Easing, FadeInLeft, FadeInRight } from "react-native-reanimated";
+import Animated, {
+  Easing,
+  FadeInLeft,
+  FadeInRight,
+} from "react-native-reanimated";
 import { OnboardingScreenScaffold } from "./OnboardingScreenScaffold";
 import type { OnboardingScreenProps } from "../types/onboarding";
 
@@ -33,11 +37,20 @@ export function TestimonialsScreen(props: OnboardingScreenProps) {
         <View style={styles.cards}>
           {testimonials.map((testimonial, index) => (
             <Animated.View
-              entering={index === 0 ? FIRST_TESTIMONIAL_ENTRANCE : SECOND_TESTIMONIAL_ENTRANCE}
+              entering={
+                index === 0
+                  ? FIRST_TESTIMONIAL_ENTRANCE
+                  : SECOND_TESTIMONIAL_ENTRANCE
+              }
               key={testimonial.author}
               style={styles.cardEntrance}
             >
-              <View style={[styles.cardRotation, { transform: [{ rotate: testimonial.rotation }] }]}>
+              <View
+                style={[
+                  styles.cardRotation,
+                  { transform: [{ rotate: testimonial.rotation }] },
+                ]}
+              >
                 <View style={styles.card}>
                   <Text style={styles.quote}>{testimonial.quote}</Text>
                   <Text style={styles.author}>{testimonial.author}</Text>
@@ -47,10 +60,15 @@ export function TestimonialsScreen(props: OnboardingScreenProps) {
           ))}
         </View>
 
-        <Animated.View entering={SOCIAL_PROOF_ENTRANCE} style={styles.socialProof}>
+        <Animated.View
+          entering={SOCIAL_PROOF_ENTRANCE}
+          style={styles.socialProof}
+        >
           <View accessibilityLabel="Five stars" style={styles.stars}>
             {Array.from({ length: 5 }).map((_, index) => (
-              <Text key={index} style={styles.star}>★</Text>
+              <Text key={index} style={styles.star}>
+                ★
+              </Text>
             ))}
           </View>
           <Text style={styles.socialProofText}>
@@ -58,7 +76,6 @@ export function TestimonialsScreen(props: OnboardingScreenProps) {
           </Text>
           <Image
             accessible={false}
-            pointerEvents="none"
             source={require("../../assets/images/underline.png")}
             style={styles.underline}
           />

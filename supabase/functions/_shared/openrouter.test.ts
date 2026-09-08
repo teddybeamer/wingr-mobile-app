@@ -1,119 +1,232 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { callOpenRouterStructured } from './openrouter.ts';
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  analyzeWithGemini,
+  buildOpenRouterRequest,
+  GEMINI_MODEL,
+} from "./openrouter.ts";
+import { ConversationError } from "./conversation.ts";
+import { input, result } from "./test-fixtures.ts";
 
-const originalFetch = globalThis.fetch;
-const originalDeno = (globalThis as typeof globalThis & { Deno?: unknown }).Deno;
-const originalDateNow = Date.now;
-
-const schema = {
-  additionalProperties: false,
-  properties: { reply: { type: 'string' } },
-  required: ['reply'],
-  type: 'object' as const,
-};
-
-test('retries a DeepInfra-only reply request with privacy-preserving latency routing', async () => {
-  const requests: RequestInit[] = [];
-  let requestCount = 0;
-
-  (globalThis as typeof globalThis & { Deno: { env: { get: (name: string) => string | undefined } } }).Deno = {
-    env: { get: (name) => name === 'OPENROUTER_API_KEY' ? 'test-key' : undefined },
-  };
-  globalThis.fetch = async (_input, init) => {
-    requests.push(init ?? {});
-    requestCount += 1;
-
-    if (requestCount === 1) {
-      return new Response(null, { status: 503 });
-    }
-
-    return new Response(JSON.stringify({
-      choices: [{ message: { content: JSON.stringify({ reply: 'ok' }) } }],
-      openrouter_metadata: {
-        endpoints: { available: [{ provider: 'DeepInfra', selected: true }] },
+function completion(
+  content: unknown = JSON.stringify(result),
+  finish_reason = "stop",
+) {
+  return Response.json({ choices: [{ finish_reason, message: { content } }] });
+}
+test("one multimodal request uses Gemini with medium reasoning, standard Vertex only and mandatory privacy", async () => {
+  let calls = 0;
+  const value = await analyzeWithGemini(
+    {
+      ...input,
+      selectedTone: "casualSmallTalk",
+      extraContext: "Jeg vil holde det afslappet.",
+      previousWingrSuggestions: [
+        "Det lyder hyggeligt — hvordan går din søndag?",
+        "Så må du fortælle mere om det på en kaffe.",
+      ],
+    },
+    "secret",
+    {
+      fetchImpl: async (url, init) => {
+        calls++;
+        assert.equal(url, "https://openrouter.ai/api/v1/chat/completions");
+        assert.equal(
+          new Headers(init?.headers).get("authorization"),
+          "Bearer secret",
+        );
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.model, GEMINI_MODEL);
+        assert.equal(body.model, "google/gemini-3.8-flash");
+        assert.deepEqual(body.reasoning, { effort: "medium" });
+        assert.equal(body.service_tier, "default");
+        assert.deepEqual(body.provider, {
+          only: ["google-vertex/global"],
+          zdr: true,
+          data_collection: "deny",
+          allow_fallbacks: false,
+          require_parameters: true,
+        });
+        assert.equal(body.response_format.type, "json_schema");
+        assert.equal(body.response_format.json_schema.strict, true);
+        assert.deepEqual(body.messages[1].content[1], {
+          type: "image_url",
+          image_url: { url: input.screenshot },
+        });
+        assert.deepEqual(JSON.parse(body.messages[1].content[0].text), {
+          selectedTone: "casualSmallTalk",
+          extraContext: "Jeg vil holde det afslappet.",
+          previousWingrSuggestions: [
+            "Det lyder hyggeligt — hvordan går din søndag?",
+            "Så må du fortælle mere om det på en kaffe.",
+          ],
+        });
+        assert.equal(body.models, undefined);
+        assert.equal(body.plugins, undefined);
+        return completion();
       },
-    }), { status: 200 });
-  };
-
-  try {
-    const result = await callOpenRouterStructured<{ reply: string }>({
-      prompt: 'test prompt',
-      schema,
-      schemaName: 'reply',
-    });
-
-    assert.deepEqual(result, { reply: 'ok' });
-    assert.equal(requests.length, 2);
-
-    const primary = JSON.parse(String(requests[0]?.body));
-    const fallback = JSON.parse(String(requests[1]?.body));
-
-    assert.deepEqual(primary.provider, {
-      allow_fallbacks: false,
-      data_collection: 'deny',
-      only: ['deepinfra'],
-      zdr: true,
-    });
-    assert.deepEqual(fallback.provider, {
-      data_collection: 'deny',
-      sort: 'latency',
-      zdr: true,
-    });
-    assert.equal(
-      (requests[1]?.headers as Record<string, string>)['x-openrouter-metadata'],
-      'enabled',
+    },
+  );
+  assert.equal(calls, 1);
+  assert.deepEqual(value, result);
+});
+test("prompt separates previous Wingr suggestions from screenshot context and asks for variation", () => {
+  const prompt = buildOpenRouterRequest(input).messages[0].content as string;
+  for (const term of [
+    "ME",
+    "THEM",
+    "partially cropped",
+    "haha",
+    "Instagram",
+    "Tinder",
+    "Hinge",
+    "dark mode",
+    "composer placeholders",
+    "Danish",
+    "English",
+    "selectedTone",
+    "Never invent personal facts",
+    "previous replies generated by Wingr",
+    "never screenshot messages, ME/THEM facts or user context",
+    "should avoid repeating or lightly paraphrasing",
+    "meaningfully different angle",
+  ])
+    assert.ok(prompt.includes(term), term);
+  const initialContent = buildOpenRouterRequest(input).messages[1]
+    .content as Array<{ type: string; text?: string }>;
+  const initialPayload = JSON.parse(initialContent[0].text!);
+  assert.equal(initialPayload.previousWingrSuggestions, undefined);
+});
+test("malformed, refused, truncated and schema-invalid completions terminate without retries", async () => {
+  for (const response of [
+    completion("not JSON"),
+    completion("```json {} ```"),
+    completion(JSON.stringify(result), "length"),
+    completion(
+      JSON.stringify({
+        ...result,
+        messages: [{ speaker: "unknown", text: "Hi" }],
+      }),
+    ),
+    completion(null),
+    Response.json({ choices: [] }),
+    new Response("not JSON"),
+  ]) {
+    let calls = 0;
+    await assert.rejects(
+      analyzeWithGemini(input, "key", {
+        fetchImpl: async () => {
+          calls++;
+          return response;
+        },
+      }),
+      (error: unknown) =>
+        error instanceof ConversationError && error.kind === "invalid_output",
     );
-  } finally {
-    globalThis.fetch = originalFetch;
-    (globalThis as typeof globalThis & { Deno?: unknown }).Deno = originalDeno;
+    assert.equal(calls, 1);
+  }
+});
+test("provider HTTP and network errors are safe terminal errors and never retry", async () => {
+  for (const mode of ["http", "network", "envelope"]) {
+    let calls = 0;
+    await assert.rejects(
+      analyzeWithGemini(input, "key", {
+        fetchImpl: async () => {
+          calls++;
+          if (mode === "network") throw new Error("PRIVATE CONVERSATION");
+          return mode === "http"
+            ? new Response("PRIVATE CONVERSATION", { status: 503 })
+            : Response.json({ error: { message: "PRIVATE CONVERSATION" } });
+        },
+      }),
+      (error: unknown) =>
+        error instanceof ConversationError &&
+        error.kind === "provider" &&
+        !error.message.includes("PRIVATE"),
+    );
+    assert.equal(calls, 1);
+  }
+});
+test("timeout covers fetch and stalled response body and aborts with one attempt", async () => {
+  for (const phase of ["fetch", "body"]) {
+    let calls = 0;
+    await assert.rejects(
+      analyzeWithGemini(input, "key", {
+        timeoutMs: 5,
+        fetchImpl: async (_url, init) => {
+          calls++;
+          const stalled = () =>
+            new Promise<never>((_resolve, reject) =>
+              init?.signal?.addEventListener(
+                "abort",
+                () => reject(new DOMException("Aborted", "AbortError")),
+                { once: true },
+              ),
+            );
+          if (phase === "fetch") return stalled();
+          const response = new Response();
+          response.json = stalled;
+          return response;
+        },
+      }),
+      (error: unknown) =>
+        error instanceof ConversationError && error.kind === "timeout",
+    );
+    assert.equal(calls, 1);
   }
 });
 
-test('does not retry another provider after a successful response has invalid JSON content', async () => {
-  let requestCount = 0;
-  (globalThis as typeof globalThis & { Deno: { env: { get: (name: string) => string | undefined } } }).Deno = {
-    env: { get: (name) => name === 'OPENROUTER_API_KEY' ? 'test-key' : undefined },
-  };
-  globalThis.fetch = async () => {
-    requestCount += 1;
-    return new Response(JSON.stringify({ choices: [{ message: { content: 'not-json' } }] }), { status: 200 });
-  };
-
-  try {
-    await assert.rejects(() => callOpenRouterStructured({ prompt: 'test prompt', schema, schemaName: 'reply' }));
-    assert.equal(requestCount, 1);
-  } finally {
-    globalThis.fetch = originalFetch;
-    (globalThis as typeof globalThis & { Deno?: unknown }).Deno = originalDeno;
+test("provider status survives both HTTP failures and HTTP-200 error envelopes", async () => {
+  for (const status of [400, 401, 402, 403, 404, 429, 503]) {
+    for (const envelope of [false, true]) {
+      await assert.rejects(
+        analyzeWithGemini(input, "key", {
+          fetchImpl: async () =>
+            envelope
+              ? Response.json({
+                  error: {
+                    code: status,
+                    message: "PRIVATE CHAT",
+                    metadata: { raw: "PRIVATE CHAT" },
+                  },
+                })
+              : new Response("PRIVATE CHAT", { status }),
+        }),
+        (failure: unknown) => {
+          assert.ok(failure instanceof ConversationError);
+          assert.equal(failure.kind, "provider");
+          assert.equal(failure.providerStatus, status);
+          assert.ok(!failure.message.includes("PRIVATE"));
+          return true;
+        },
+      );
+    }
   }
 });
 
-test('skips latency-sorted provider fallback when the total deadline has insufficient time left', async () => {
-  let now = 0;
-  let requestCount = 0;
-  Date.now = () => now;
-  (globalThis as typeof globalThis & { Deno: { env: { get: (name: string) => string | undefined } } }).Deno = {
-    env: { get: (name) => name === 'OPENROUTER_API_KEY' ? 'test-key' : undefined },
-  };
-  globalThis.fetch = async () => {
-    requestCount += 1;
-    now = 10_000;
-    return new Response(null, { status: 503 });
-  };
-
-  try {
-    await assert.rejects(() => callOpenRouterStructured({
-      deadlineAt: 11_000,
-      minLatencyFallbackWindowMs: 2_000,
-      prompt: 'test prompt',
-      schema,
-      schemaName: 'reply',
-    }));
-    assert.equal(requestCount, 1);
-  } finally {
-    Date.now = originalDateNow;
-    globalThis.fetch = originalFetch;
-    (globalThis as typeof globalThis & { Deno?: unknown }).Deno = originalDeno;
+test("configuration errors expose fixed explanations without leaking upstream text", async () => {
+  const cases = [
+    ["google/example is not a valid model ID", "model_unavailable"],
+    ["The user field is required", "user_required"],
+    ["Invalid response schema", "schema_rejected"],
+    ["Invalid image data", "image_rejected"],
+    ["No endpoints found that match your data policy", "routing_unavailable"],
+  ];
+  for (const [message, reason] of cases) {
+    await assert.rejects(
+      analyzeWithGemini(input, "key", {
+        fetchImpl: async () =>
+          Response.json(
+            { error: { message: `${message}. PRIVATE CHAT` } },
+            { status: 400 },
+          ),
+      }),
+      (failure: unknown) => {
+        assert.ok(failure instanceof ConversationError);
+        assert.equal(failure.providerReason, reason);
+        assert.ok(!failure.message.includes("PRIVATE"));
+        return true;
+      },
+    );
   }
 });

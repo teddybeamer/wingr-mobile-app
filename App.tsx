@@ -55,7 +55,6 @@ import {
   View,
 } from "react-native";
 import type {
-  ReplyBatch,
   ReplyTone,
   RecommendedReplyTone,
   SuggestedReply,
@@ -249,13 +248,7 @@ const REPLIES_BACKGROUND_BLUR_CANVAS = {
     REPLIES_BACKGROUND_BLUR.ellipse.height / 2,
 } as const;
 
-type Screen =
-  | "onboarding"
-  | "landing"
-  | "upload"
-  | "analyzing"
-  | "speakerConfirmation"
-  | "replies";
+type Screen = "onboarding" | "landing" | "upload" | "analyzing" | "replies";
 type MetricVariant = "interest" | "energy" | "risk" | "move";
 
 type BootErrorBoundaryProps = {
@@ -310,83 +303,6 @@ function getToneLabel(tone: ReplyTone | RecommendedReplyTone) {
   return (
     TONE_OPTIONS.find((option) => option.value === tone)?.label ?? "Playful"
   );
-}
-
-function getUnusedReplies(
-  replyBatch: ReplyBatch,
-  tone: ReplyTone,
-  shownReplyIds: string[],
-) {
-  const shownIds = new Set(shownReplyIds);
-
-  return (replyBatch[tone] ?? []).filter((reply) => !shownIds.has(reply.id));
-}
-
-function getVisibleRepliesForTone(
-  replyBatch: ReplyBatch,
-  tone: ReplyTone,
-  shownReplyIds: string[],
-) {
-  return getUnusedReplies(replyBatch, tone, shownReplyIds).slice(0, 2);
-}
-
-function mergeReplyBatch(currentBatch: ReplyBatch, nextBatch: ReplyBatch) {
-  return {
-    ...currentBatch,
-    ...nextBatch,
-  };
-}
-
-function appendShownReplyIds(
-  currentShownReplyIds: string[],
-  replies: SuggestedReply[],
-) {
-  return [
-    ...currentShownReplyIds,
-    ...replies
-      .map((reply) => reply.id)
-      .filter((replyId) => !currentShownReplyIds.includes(replyId)),
-  ];
-}
-
-function getConversationEnergyCopy(vibeCheck: VibeCheck) {
-  const rawEnergy = vibeCheck.conversationEnergy.trim();
-  const lowerEnergy = rawEnergy.toLowerCase();
-  const debugTerms = ["detected", "speaker", "ocr", "confidence", "parsed"];
-  const looksLikeInternalOutput = debugTerms.some((term) =>
-    lowerEnergy.includes(term),
-  );
-  const hasSituationLanguage =
-    rawEnergy.length >= 55 &&
-    /\b(they|their|chat|conversation|reply|message|interest|momentum|move|room)\b/i.test(
-      rawEnergy,
-    );
-
-  if (hasSituationLanguage && !looksLikeInternalOutput) {
-    return rawEnergy;
-  }
-
-  if (
-    lowerEnergy.includes("dry") ||
-    lowerEnergy.includes("short") ||
-    lowerEnergy.includes("low")
-  ) {
-    return "They're keeping it short, but there's still room to play.";
-  }
-
-  if (lowerEnergy.includes("playful") || lowerEnergy.includes("light")) {
-    return "The conversation is light and playful, but it needs a more confident next move.";
-  }
-
-  if (lowerEnergy.includes("high") || lowerEnergy.includes("warm")) {
-    return "There is good energy here, so keep momentum with a clear next move.";
-  }
-
-  if (vibeCheck.interestLevel === "Unclear") {
-    return "There is some signal here, but the next reply should make the vibe easier to read.";
-  }
-
-  return "There's some interest here, but the chat needs a sharper reply to keep momentum.";
 }
 
 const METRIC_VARIANTS: Record<
@@ -453,18 +369,11 @@ export default function App() {
   const [uploadRevealToken, setUploadRevealToken] = useState<number | null>(
     null,
   );
-  const initialReplyGenerationIdRef = useRef(0);
-  const initialReplyGenerationStartedIdRef = useRef<number | null>(null);
-  const [queuedInitialReplyGenerationId, setQueuedInitialReplyGenerationId] =
-    useState<number | null>(null);
   const conversation = useConversationFlow();
   const {
-    confirmSpeakerSide,
     error,
     generatedReplies,
-    generateRepliesForSelectedTone,
     lastGeneratedReplyId,
-    pendingSpeakerOcr,
     pickScreenshot,
     refreshReplies,
     repliesStatus,
@@ -508,48 +417,6 @@ export default function App() {
     console.log("[Wingr boot] Fonts loaded state changed", fontsLoaded);
   }, [fontsLoaded]);
 
-  const cancelQueuedInitialReplyGeneration = () => {
-    initialReplyGenerationIdRef.current += 1;
-    initialReplyGenerationStartedIdRef.current = null;
-    setQueuedInitialReplyGenerationId(null);
-  };
-
-  const queueInitialReplyGeneration = () => {
-    const generationId = initialReplyGenerationIdRef.current + 1;
-
-    initialReplyGenerationIdRef.current = generationId;
-    initialReplyGenerationStartedIdRef.current = null;
-    setQueuedInitialReplyGenerationId(generationId);
-    setScreen("replies");
-  };
-
-  useEffect(() => {
-    if (
-      queuedInitialReplyGenerationId === null ||
-      screen !== "replies" ||
-      !vibeCheck ||
-      initialReplyGenerationStartedIdRef.current ===
-        queuedInitialReplyGenerationId
-    ) {
-      return;
-    }
-
-    const generationId = queuedInitialReplyGenerationId;
-
-    initialReplyGenerationStartedIdRef.current = generationId;
-    void generateRepliesForSelectedTone().finally(() => {
-      if (initialReplyGenerationIdRef.current === generationId) {
-        initialReplyGenerationStartedIdRef.current = null;
-        setQueuedInitialReplyGenerationId(null);
-      }
-    });
-  }, [
-    generateRepliesForSelectedTone,
-    queuedInitialReplyGenerationId,
-    screen,
-    vibeCheck,
-  ]);
-
   if (showDebugBootScreen) {
     return (
       <View style={styles.debugBootScreen}>
@@ -570,34 +437,6 @@ export default function App() {
       </View>
     );
   }
-
-  const handleConfirmSpeakerSide = async (userSide: "left" | "right") => {
-    cancelQueuedInitialReplyGeneration();
-
-    if (!pendingSpeakerOcr) {
-      setScreen("upload");
-      return;
-    }
-
-    setScreen("analyzing");
-    const succeeded = await confirmSpeakerSide(userSide);
-
-    if (succeeded) {
-      queueInitialReplyGeneration();
-    } else {
-      Alert.alert(
-        "Could not read screenshot",
-        "Try another screenshot or upload again.",
-      );
-      setScreen("upload");
-    }
-  };
-
-  const handleCancelSpeakerConfirmation = () => {
-    cancelQueuedInitialReplyGeneration();
-    conversation.cancelSpeakerConfirmation();
-    setScreen("upload");
-  };
 
   const handlePickScreenshotForUpload = async () => {
     const screenshotUri = await pickScreenshot();
@@ -625,8 +464,6 @@ export default function App() {
   };
 
   const handleCheckSelectedScreenshot = async () => {
-    cancelQueuedInitialReplyGeneration();
-
     if (__DEV__) {
       console.info("[Wingr flow] check vibe pressed", {
         hasScreenshot: Boolean(selectedScreenshotUri?.trim()),
@@ -642,16 +479,12 @@ export default function App() {
     setScreen("analyzing");
     const result = await conversation.analyzeScreenshot();
 
-    if (result === "needsConfirmation") {
-      setScreen("speakerConfirmation");
-    } else if (result === "ready") {
-      queueInitialReplyGeneration();
+    if (result === "cancelled") return;
+    if (result === "ready") {
+      setScreen("replies");
     } else {
-      Alert.alert(
-        "Could not read screenshot",
-        conversation.error?.message ??
-          "Try another screenshot or upload again.",
-      );
+      // The upload screen renders the current error. Reading conversation.error
+      // here would use the stale render from before the awaited request.
       setScreen("upload");
     }
   };
@@ -665,80 +498,65 @@ export default function App() {
   };
 
   return (
-    <PostHogProvider client={posthog} autocapture={{ captureTouches: true, propsToCapture: ["testID"] }}>
-    <BootErrorBoundary>
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="light" />
-        {screen === "onboarding" ? (
-          <OnboardingFlow onComplete={handleEnterLanding} />
-        ) : null}
+    <PostHogProvider
+      client={posthog}
+      autocapture={{ captureTouches: true, propsToCapture: ["testID"] }}
+    >
+      <BootErrorBoundary>
+        <SafeAreaView style={styles.safeArea}>
+          <StatusBar style="light" />
+          {screen === "onboarding" ? (
+            <OnboardingFlow onComplete={handleEnterLanding} />
+          ) : null}
 
-        {screen === "landing" ? (
-          <LandingScreen
-            onContinue={handlePickScreenshotForUpload}
-            onRevealStarted={(revealToken) => {
-              setLandingRevealToken((currentToken) =>
-                currentToken === revealToken ? null : currentToken,
-              );
-            }}
-            revealToken={landingRevealToken}
-          />
-        ) : null}
+          {screen === "landing" ? (
+            <LandingScreen
+              onContinue={handlePickScreenshotForUpload}
+              onRevealStarted={(revealToken) => {
+                setLandingRevealToken((currentToken) =>
+                  currentToken === revealToken ? null : currentToken,
+                );
+              }}
+              revealToken={landingRevealToken}
+            />
+          ) : null}
 
-        {screen === "upload" ? (
-          <UploadScreenshotScreen
-            errorMessage={
-              error?.kind === "ocr" || error?.kind === "vibe"
-                ? error.message
-                : null
-            }
-            onBack={() => setScreen("landing")}
-            onChangeScreenshot={handlePickScreenshotForUpload}
-            onCheckVibe={handleCheckSelectedScreenshot}
-            onRevealStarted={(revealToken) => {
-              setUploadRevealToken((currentToken) =>
-                currentToken === revealToken ? null : currentToken,
-              );
-            }}
-            revealToken={uploadRevealToken}
-            selectedScreenshotUri={selectedScreenshotUri}
-          />
-        ) : null}
+          {screen === "upload" ? (
+            <UploadScreenshotScreen
+              errorMessage={error?.kind === "analysis" ? error.message : null}
+              onBack={() => setScreen("landing")}
+              onChangeScreenshot={handlePickScreenshotForUpload}
+              onCheckVibe={handleCheckSelectedScreenshot}
+              onRevealStarted={(revealToken) => {
+                setUploadRevealToken((currentToken) =>
+                  currentToken === revealToken ? null : currentToken,
+                );
+              }}
+              revealToken={uploadRevealToken}
+              selectedScreenshotUri={selectedScreenshotUri}
+            />
+          ) : null}
 
-        {screen === "analyzing" ? (
-          <ReplyLoadingScreen />
-        ) : null}
+          {screen === "analyzing" ? <ReplyLoadingScreen /> : null}
 
-        {screen === "speakerConfirmation" ? (
-          <SpeakerConfirmationScreen
-            onBack={handleCancelSpeakerConfirmation}
-            onConfirm={handleConfirmSpeakerSide}
-            selectedScreenshotUri={selectedScreenshotUri}
-          />
-        ) : null}
-
-        {screen === "replies" && vibeCheck ? (
-          <RepliesScreen
-            isGeneratingReplies={
-              repliesStatus === "generating" ||
-              queuedInitialReplyGenerationId !== null
-            }
-            lastGeneratedReplyId={lastGeneratedReplyId}
-            onBack={() => {
-              cancelQueuedInitialReplyGeneration();
-              setScreen("upload");
-            }}
-            onRefreshReplies={handleRefreshReplies}
-            onToneChange={handleToneChange}
-            replies={generatedReplies}
-            replyError={error?.kind === "replies" ? error.message : null}
-            selectedScreenshotUri={selectedScreenshotUri}
-            vibeCheck={vibeCheck}
-            selectedTone={selectedTone}
-          />
-        ) : null}
-      </SafeAreaView>
-    </BootErrorBoundary>
+          {screen === "replies" && vibeCheck ? (
+            <RepliesScreen
+              isGeneratingReplies={repliesStatus === "generating"}
+              lastGeneratedReplyId={lastGeneratedReplyId}
+              onBack={() => {
+                setScreen("upload");
+              }}
+              onRefreshReplies={handleRefreshReplies}
+              onToneChange={handleToneChange}
+              replies={generatedReplies}
+              replyError={error?.kind === "replies" ? error.message : null}
+              selectedScreenshotUri={selectedScreenshotUri}
+              vibeCheck={vibeCheck}
+              selectedTone={selectedTone}
+            />
+          ) : null}
+        </SafeAreaView>
+      </BootErrorBoundary>
     </PostHogProvider>
   );
 }
@@ -781,7 +599,10 @@ function LandingScreen({
   const layout = getLandingCardLayout(cardWidth);
 
   useLayoutEffect(() => {
-    if (revealToken === null || preparedRevealTokenRef.current === revealToken) {
+    if (
+      revealToken === null ||
+      preparedRevealTokenRef.current === revealToken
+    ) {
       return;
     }
 
@@ -1247,8 +1068,10 @@ function UploadScreenshotScreen({
     height: 487,
     width: maxCardWidth,
   });
-  const [changeScreenshotButtonSize, setChangeScreenshotButtonSize] =
-    useState({ height: 0, width: 0 });
+  const [changeScreenshotButtonSize, setChangeScreenshotButtonSize] = useState({
+    height: 0,
+    width: 0,
+  });
   const [previewSize, setPreviewSize] = useState({ height: 0, width: 0 });
   const [screenshotAspectRatio, setScreenshotAspectRatio] = useState<
     number | null
@@ -1292,7 +1115,10 @@ function UploadScreenshotScreen({
   }, [selectedScreenshotUri]);
 
   useLayoutEffect(() => {
-    if (revealToken === null || preparedRevealTokenRef.current === revealToken) {
+    if (
+      revealToken === null ||
+      preparedRevealTokenRef.current === revealToken
+    ) {
       return;
     }
 
@@ -1402,9 +1228,7 @@ function UploadScreenshotScreen({
       <View className="flex-row items-center justify-between">
         <BackButton onPress={onBack} />
 
-        <Text style={styles.repliesHeaderTitle}>
-          Upload Screenshot
-        </Text>
+        <Text style={styles.repliesHeaderTitle}>Upload Screenshot</Text>
 
         <View className="h-9 w-9" />
       </View>
@@ -1563,9 +1387,7 @@ function UploadScreenshotScreen({
                 >
                   <LandingButtonSurface width={layout.contentWidth} />
                   <View style={styles.landingButtonContent}>
-                    <Text style={styles.landingButtonText}>
-                      Check the vibe
-                    </Text>
+                    <Text style={styles.landingButtonText}>Check the vibe</Text>
                     <ArrowRight color="#FFFFFF" size={20} />
                   </View>
                 </Pressable>
@@ -1578,76 +1400,6 @@ function UploadScreenshotScreen({
             {errorMessage}
           </Text>
         ) : null}
-      </View>
-    </View>
-  );
-}
-
-function SpeakerConfirmationScreen({
-  onBack,
-  onConfirm,
-  selectedScreenshotUri,
-}: {
-  onBack: () => void;
-  onConfirm: (userSide: "left" | "right") => void;
-  selectedScreenshotUri: string | null;
-}) {
-  return (
-    <View style={[styles.screen, styles.speakerConfirmationScreen]}>
-      <View style={styles.vibeHeader}>
-        <BackButton accessibilityLabel="Go back to upload" onPress={onBack} />
-        <Text style={styles.repliesHeaderTitle}>Quick check</Text>
-        <View style={styles.backButton} />
-      </View>
-
-      <View style={styles.speakerConfirmationBody}>
-        {selectedScreenshotUri ? (
-          <Image
-            accessibilityIgnoresInvertColors
-            resizeMode="cover"
-            source={{ uri: selectedScreenshotUri }}
-            style={styles.speakerConfirmationImage}
-          />
-        ) : null}
-
-        <View style={styles.speakerConfirmationCard}>
-          <Text style={styles.speakerConfirmationTitle}>
-            Just checking — which side is you?
-          </Text>
-          <Text style={styles.speakerConfirmationText}>
-            Wingr needs this once so it does not write replies to your own
-            message.
-          </Text>
-
-          <View style={styles.speakerConfirmationButtons}>
-            <TouchableOpacity
-              activeOpacity={0.88}
-              accessibilityRole="button"
-              accessibilityLabel="Right side is me"
-              onPress={() => onConfirm("right")}
-              style={styles.speakerConfirmationButton}
-            >
-              <Text style={styles.speakerConfirmationButtonText}>
-                Right side
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.88}
-              accessibilityRole="button"
-              accessibilityLabel="Left side is me"
-              onPress={() => onConfirm("left")}
-              style={[
-                styles.speakerConfirmationButton,
-                styles.speakerConfirmationSecondaryButton,
-              ]}
-            >
-              <Text style={styles.speakerConfirmationButtonText}>
-                Left side
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
       </View>
     </View>
   );
@@ -2517,68 +2269,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.42)",
     flex: 1,
     justifyContent: "center",
-  },
-  speakerConfirmationScreen: {
-    paddingHorizontal: 16,
-  },
-  speakerConfirmationBody: {
-    alignItems: "center",
-    gap: 18,
-    paddingTop: 28,
-  },
-  speakerConfirmationImage: {
-    backgroundColor: "#24242A",
-    borderRadius: 20,
-    height: 300,
-    opacity: 0.72,
-    width: 210,
-  },
-  speakerConfirmationCard: {
-    backgroundColor: COLORS.panelRaised,
-    borderColor: "#2B2B2F",
-    borderRadius: 12,
-    borderWidth: 1,
-    gap: 12,
-    padding: 16,
-    width: "100%",
-  },
-  speakerConfirmationTitle: {
-    color: COLORS.white,
-    fontFamily: FONTS.display,
-    fontSize: 24,
-    fontWeight: "700",
-    lineHeight: 30,
-    textAlign: "center",
-  },
-  speakerConfirmationText: {
-    color: COLORS.muted,
-    fontFamily: FONTS.bodyRegular,
-    fontSize: 15,
-    lineHeight: 20,
-    textAlign: "center",
-  },
-  speakerConfirmationButtons: {
-    flexDirection: "row",
-    gap: 12,
-    paddingTop: 4,
-  },
-  speakerConfirmationButton: {
-    alignItems: "center",
-    backgroundColor: COLORS.blue,
-    borderRadius: 999,
-    flex: 1,
-    height: 48,
-    justifyContent: "center",
-  },
-  speakerConfirmationSecondaryButton: {
-    backgroundColor: "#454545",
-  },
-  speakerConfirmationButtonText: {
-    color: COLORS.white,
-    fontFamily: FONTS.body,
-    fontSize: 16,
-    fontWeight: "600",
-    lineHeight: 20,
   },
   vibeHeader: {
     alignItems: "center",

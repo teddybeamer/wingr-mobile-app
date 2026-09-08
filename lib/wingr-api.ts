@@ -1,180 +1,96 @@
-declare const process:
-  | {
-      env?: Record<string, string | undefined>;
-    }
-  | undefined;
+import {
+  ConversationError,
+  CONVERSATION_ERROR_KINDS,
+  type ConversationErrorKind,
+} from "../supabase/functions/_shared/conversation";
+import {
+  getSupabaseRequestAuthentication,
+  type SupabaseRequestAuthentication,
+} from "./supabase-auth";
 
-const WINGR_API_BASE_URL =
-  typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_WINGR_API_BASE_URL ?? '' : '';
+const BACKEND_TIMEOUT_MS = 35_000;
 
-export type WingrBackendDiagnostics = {
-  correlationId?: string;
-  operation?: 'reply-generation' | 'vibe-check';
-  requestId?: number;
-};
-
-let backendRequestSequence = 0;
-
-function isDevelopmentBuild() {
-  return typeof __DEV__ !== 'undefined' && __DEV__;
-}
-
-function monotonicNow() {
-  return typeof performance !== 'undefined' && typeof performance.now === 'function'
-    ? performance.now()
-    : Date.now();
-}
-
-function elapsedMilliseconds(startedAt: number) {
-  return Math.round(monotonicNow() - startedAt);
-}
-
-function logBackendDiagnostic(stage: string, metadata: Record<string, unknown>) {
-  if (isDevelopmentBuild()) {
-    console.info(`[Wingr backend] ${stage}`, metadata);
-  }
-}
-
-function startPendingBackendDiagnostics(
-  startedAt: number,
-  metadata: Record<string, unknown>,
-) {
-  if (!isDevelopmentBuild()) {
-    return () => {};
-  }
-
-  const timers = [5_000, 15_000].map((pendingThresholdMs) =>
-    setTimeout(() => {
-      logBackendDiagnostic('stage still pending', {
-        ...metadata,
-        durationMs: elapsedMilliseconds(startedAt),
-        pendingThresholdMs,
-        stage: 'backend-request',
-      });
-    }, pendingThresholdMs),
-  );
-
-  return () => {
-    timers.forEach((timer) => clearTimeout(timer));
-  };
-}
-
-function getBackendUrl(path: string) {
-  const baseUrl = WINGR_API_BASE_URL.trim().replace(/\/$/, '');
-
-  if (!baseUrl) {
-    return null;
-  }
-
-  return `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
-}
-
-async function getBackendError(response: Response) {
-  const responseText = await response.text();
-
-  try {
-    const payload = JSON.parse(responseText) as { error?: unknown };
-
-    if (typeof payload.error === 'string' && payload.error.trim()) {
-      return payload.error.trim();
-    }
-  } catch {
-    // Fall back to the status-only error below for non-JSON responses.
-  }
-
-  return `Wingr backend request failed with ${response.status}.`;
-}
-
-function logBackendResponse(
-  path: string,
-  response: Response,
-  metadata?: Record<string, unknown>,
-) {
-  if (isDevelopmentBuild()) {
-    console.info('[Wingr flow] backend response', {
-      ok: response.ok,
-      path,
-      status: response.status,
-      ...metadata,
-    });
-  }
-}
-
-export function hasWingrBackend() {
-  return getBackendUrl('/') !== null;
-}
-
-export async function postJsonToWingrBackend<TResponse>(
+export async function postJsonToWingrBackend<T>(
   path: string,
   body: unknown,
-  diagnostics?: WingrBackendDiagnostics,
-): Promise<TResponse> {
-  const url = getBackendUrl(path);
-
-  if (!url) {
-    throw new Error('Wingr backend URL is not configured.');
-  }
-
-  backendRequestSequence += 1;
-  const backendRequestId = backendRequestSequence;
-  const startedAt = monotonicNow();
-  const diagnosticMetadata = {
-    backendRequestId,
-    correlationId: diagnostics?.correlationId,
-    operation: diagnostics?.operation,
-    path,
-    requestId: diagnostics?.requestId,
-  };
-  let responseStatus: number | undefined;
-  const stopPendingDiagnostics = startPendingBackendDiagnostics(
-    startedAt,
-    diagnosticMetadata,
+  signal?: AbortSignal,
+  getAuthentication: () => Promise<SupabaseRequestAuthentication> =
+    getSupabaseRequestAuthentication,
+): Promise<T> {
+  // Expo inlines direct EXPO_PUBLIC env accesses in the app bundle.
+  const baseUrl = process.env.EXPO_PUBLIC_WINGR_API_BASE_URL?.trim().replace(
+    /\/$/,
+    "",
   );
-
-  logBackendDiagnostic('request started', diagnosticMetadata);
-
+  if (!baseUrl) throw new Error("Wingr backend URL is not configured.");
+  let authentication: SupabaseRequestAuthentication;
   try {
-    const response = await fetch(url, {
-      body: JSON.stringify(body),
+    authentication = await getAuthentication();
+  } catch {
+    throw new Error("Wingr could not start a secure identity session.");
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
+  const timer = setTimeout(abort, BACKEND_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method: "POST",
       headers: {
-        'content-type': 'application/json',
+        apikey: authentication.publishableKey,
+        authorization: `Bearer ${authentication.accessToken}`,
+        "content-type": "application/json",
       },
-      method: 'POST',
+      body: JSON.stringify(body),
+      signal: controller.signal,
     });
-
-    responseStatus = response.status;
-    logBackendResponse(path, response, {
-      backendRequestId,
-      correlationId: diagnostics?.correlationId,
-      durationMs: elapsedMilliseconds(startedAt),
-      operation: diagnostics?.operation,
-      requestId: diagnostics?.requestId,
-    });
-
     if (!response.ok) {
-      throw new Error(await getBackendError(response));
+      // Reconstruct only known errors. Never display arbitrary backend/provider text.
+      let failure: {
+        code?: unknown;
+        providerStatus?: unknown;
+        providerReason?: unknown;
+      } | null = null;
+      try {
+        failure = await response.json();
+      } catch {
+        /* A gateway may return HTML. */
+      }
+      if (
+        CONVERSATION_ERROR_KINDS.includes(
+          failure?.code as ConversationErrorKind,
+        )
+      ) {
+        throw new ConversationError(
+          failure!.code as ConversationErrorKind,
+          failure?.providerStatus,
+          failure?.providerReason,
+        );
+      }
+      const kind =
+        response.status === 400
+          ? "invalid_request"
+          : response.status === 422
+            ? "unusable_screenshot"
+            : response.status === 504
+              ? "timeout"
+              : "provider";
+      throw new ConversationError(kind);
     }
-
-    const responseBody = (await response.json()) as TResponse;
-
-    logBackendDiagnostic('request completed', {
-      ...diagnosticMetadata,
-      durationMs: elapsedMilliseconds(startedAt),
-      status: response.status,
-    });
-
-    return responseBody;
+    try {
+      return (await response.json()) as T;
+    } catch {
+      throw new ConversationError("invalid_output");
+    }
   } catch (error) {
-    logBackendDiagnostic('request failed', {
-      ...diagnosticMetadata,
-      durationMs: elapsedMilliseconds(startedAt),
-      errorType: error instanceof Error ? error.name : 'unknown',
-      phase: responseStatus === undefined ? 'fetch' : 'response',
-      status: responseStatus,
-    });
-
-    throw error;
+    if (controller.signal.aborted)
+      throw new Error("Wingr took too long to respond. Please try again.");
+    throw error instanceof ConversationError
+      ? error
+      : new ConversationError("provider");
   } finally {
-    stopPendingDiagnostics();
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
   }
 }

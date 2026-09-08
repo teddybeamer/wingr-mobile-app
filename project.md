@@ -130,7 +130,7 @@ Vibe check
 Their interest: Medium  
 Conversation energy: Dry but recoverable  
 Best move: Playful nudge  
-Risk: Don’t over-invest  
+Risk: Don’t over-invest
 
 Summary:  
 This feels a little dry, but still recoverable. Keep it playful and low-pressure instead of trying too hard.
@@ -259,9 +259,11 @@ The app should not be built as disconnected screens with hardcoded content. It s
 Use a clean structure like this:
 
 app/
+
 - index.tsx
 
 components/
+
 - UploadCard.tsx
 - VibeCheckCard.tsx
 - ReplyCard.tsx
@@ -269,12 +271,15 @@ components/
 - LoadingState.tsx
 
 lib/
+
 - wingr-ai.ts
 
 types/
+
 - wingr.ts
 
 utils/
+
 - clipboard.ts
 
 The exact file structure can be adjusted to fit the existing project, but keep the logic separated.
@@ -285,45 +290,11 @@ Do not hardcode all app logic inside one large UI file.
 
 ## AI Service Layer
 
-Create a file called:
-
-lib/wingr-ai.ts
-
-This file should export async functions:
-
-analyzeScreenshot(screenshotUri)
-
-generateReplies(params)
-
-For now, these functions can return realistic mock responses.
-
-Important: even if the responses are mocked, the functions must be async and shaped like real service functions. This makes it easy to replace them later with OpenRouter, OpenAI, DeepSeek, Claude, or another model provider.
-
-### analyzeScreenshot should return
-
-A structured vibeCheck object with:
-
-- interestLevel
-- conversationEnergy
-- bestMove
-- risk
-- summary
-
-### generateReplies should accept
-
-- vibeCheck
-- selectedTone
-- screenshotUri
-
-### generateReplies should return
-
-Exactly 2 reply objects.
-
-Each reply should include:
-
-- id
-- tone
-- text
+`lib/wingr-ai.ts` sends the original screenshot, selected tone and optional context
+through `POST /ai-conversation` to one Gemini 3.8 Flash call via OpenRouter.
+The response supplies ordered ME/THEM messages, the five UI vibe fields and one reply.
+Explicit refreshes reuse that endpoint. See [the backend guide](supabase/README.md)
+for the contract, privacy settings, validation and evaluation instructions.
 
 ---
 
@@ -336,41 +307,41 @@ types/wingr.ts
 Suggested types:
 
 type WingrFlowStatus =
-  | "upload"
-  | "analyzing"
-  | "vibeCheck"
-  | "generatingReplies"
-  | "replies";
+| "upload"
+| "analyzing"
+| "vibeCheck"
+| "generatingReplies"
+| "replies";
 
 type ReplyTone =
-  | "recommended"
-  | "playful"
-  | "flirty"
-  | "softer"
-  | "direct"
-  | "casual";
+| "recommended"
+| "playful"
+| "flirty"
+| "softer"
+| "direct"
+| "casual";
 
 type VibeCheck = {
-  interestLevel: "Low" | "Medium" | "High" | "Unclear";
-  conversationEnergy: string;
-  bestMove: string;
-  risk: string;
-  summary: string;
+interestLevel: "Low" | "Medium" | "High" | "Unclear";
+conversationEnergy: string;
+bestMove: string;
+risk: string;
+summary: string;
 };
 
 type SuggestedReply = {
-  id: string;
-  tone: ReplyTone | string;
-  text: string;
+id: string;
+tone: ReplyTone | string;
+text: string;
 };
 
 type WingrFlowState = {
-  status: WingrFlowStatus;
-  screenshotUri: string | null;
-  vibeCheck: VibeCheck | null;
-  replies: SuggestedReply[];
-  selectedTone: ReplyTone;
-  error: string | null;
+status: WingrFlowStatus;
+screenshotUri: string | null;
+vibeCheck: VibeCheck | null;
+replies: SuggestedReply[];
+selectedTone: ReplyTone;
+error: string | null;
 };
 
 ---
