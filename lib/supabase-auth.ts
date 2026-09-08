@@ -1,4 +1,4 @@
-import { createClient, type SupportedStorage } from "@supabase/supabase-js";
+import { createClient, isAuthApiError, type SupportedStorage } from "@supabase/supabase-js";
 
 type SupabaseConfiguration = {
   publishableKey: string;
@@ -11,7 +11,6 @@ export type SupabaseRequestAuthentication = {
 };
 
 const SESSION_EXPIRY_BUFFER_MS = 30_000;
-let authenticationPromise: Promise<SupabaseRequestAuthentication> | null = null;
 let clientConfiguration: SupabaseConfiguration | null = null;
 let supabaseClient: ReturnType<typeof createClient> | null = null;
 
@@ -66,39 +65,74 @@ function getSupabaseClient() {
         detectSessionInUrl: false,
         persistSession: true,
         storage: secureStorage,
+        storageKey: sessionStorageKey(configuration.url),
       },
     });
   }
   return { configuration, client: supabaseClient };
 }
 
-async function createOrRefreshSession() {
-  const { client, configuration } = getSupabaseClient();
-  const { data: sessionData, error: sessionError } = await client.auth.getSession();
-  if (sessionError) throw sessionError;
-  let session = sessionData.session;
-  if (
-    session?.expires_at &&
-    session.expires_at * 1000 <= Date.now() + SESSION_EXPIRY_BUFFER_MS
-  ) {
-    const { data, error } = await client.auth.refreshSession();
-    if (error) throw error;
-    session = data.session;
-  }
-  if (!session) {
-    const { data, error } = await client.auth.signInAnonymously();
-    if (error) throw error;
-    session = data.session;
-  }
-  if (!session?.access_token)
-    throw new Error("Wingr could not start a secure identity session.");
-  return { accessToken: session.access_token, publishableKey: configuration.publishableKey };
+function sessionStorageKey(url: string) {
+  return `sb-${new URL(url).hostname.split(".")[0]}-auth-token`;
 }
 
-export function getSupabaseRequestAuthentication() {
-  if (!authenticationPromise)
-    authenticationPromise = createOrRefreshSession().finally(() => {
-      authenticationPromise = null;
-    });
-  return authenticationPromise;
+function isInvalidRefreshToken(error: unknown) {
+  return isAuthApiError(error) &&
+    (error.status === 400 || error.status === 401) &&
+    (error.code === "refresh_token_not_found" ||
+      error.code === "refresh_token_already_used" ||
+      (!error.code && /^Invalid Refresh Token: (Refresh Token Not Found|Refresh Token Already Used|Refresh Token is missing|Invalid Refresh Token)$/i.test(error.message)));
 }
+
+// The shared promise includes recovery, so simultaneous requests share one identity.
+export function createRequestAuthentication(
+  getClient: typeof getSupabaseClient,
+  clearSession: () => Promise<void>,
+) {
+  let pending: Promise<SupabaseRequestAuthentication> | null = null;
+  async function initialize() {
+    let { client, configuration } = getClient();
+    let session;
+    try {
+      const { data: sessionData, error: sessionError } = await client.auth.getSession();
+      if (sessionError) throw sessionError;
+      session = sessionData.session;
+      if (
+        session?.expires_at &&
+        session.expires_at * 1000 <= Date.now() + SESSION_EXPIRY_BUFFER_MS
+      ) {
+        const { data, error } = await client.auth.refreshSession();
+        if (error) throw error;
+        session = data.session;
+      }
+    } catch (error) {
+      if (!isInvalidRefreshToken(error)) throw error;
+      await clearSession();
+      ({ client, configuration } = getClient());
+      session = null;
+    }
+    if (!session) {
+      const { data, error } = await client.auth.signInAnonymously();
+      if (error) throw error;
+      session = data.session;
+    }
+    if (!session?.access_token)
+      throw new Error("Wingr could not start a secure identity session.");
+    return { accessToken: session.access_token, publishableKey: configuration.publishableKey };
+  }
+  return () => {
+    if (!pending) pending = initialize().finally(() => { pending = null; });
+    return pending;
+  };
+}
+
+export const getSupabaseRequestAuthentication = createRequestAuthentication(
+  getSupabaseClient,
+  async () => {
+    const key = sessionStorageKey(getSupabaseConfiguration().url);
+    await secureStorage.removeItem(key);
+    await secureStorage.removeItem(`${key}-user`);
+    await secureStorage.removeItem(`${key}-code-verifier`);
+    supabaseClient = null;
+  },
+);

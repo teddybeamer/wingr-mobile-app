@@ -65,6 +65,12 @@ export async function analyzeScreenshot({
     ...(isOnboardingGeneration ? { isOnboardingGeneration: true } : {}),
     ...(previousWingrSuggestions?.length ? { previousWingrSuggestions } : {}),
   });
+  if (typeof __DEV__ !== "undefined" && __DEV__) {
+    console.info("[Wingr flow] backend request constructed", {
+      isOnboardingGeneration: Boolean(isOnboardingGeneration),
+      requestId,
+    });
+  }
   const result = await postJsonToWingrBackend<unknown>(
     "/ai-conversation",
     body,

@@ -2,6 +2,10 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Alert } from "react-native";
 import { posthog } from "../lib/posthog";
+import {
+  hasDisplayedOnboardingReply,
+  markOnboardingReplyDisplayed,
+} from "../lib/onboarding-progress";
 import { useConversationFlow } from "../hooks/useConversationFlow";
 import { ChangeScreen } from "./screens/ChangeScreen";
 import { PaywallScreen } from "./screens/PaywallScreen";
@@ -42,6 +46,38 @@ const screenMap: Record<
 };
 
 export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
+  const [hasRestoredReplyProgress, setHasRestoredReplyProgress] = useState<
+    boolean | null
+  >(null);
+
+  useEffect(() => {
+    let mounted = true;
+    void hasDisplayedOnboardingReply()
+      .then((hasDisplayedReply) => {
+        if (mounted) setHasRestoredReplyProgress(hasDisplayedReply);
+      })
+      .catch(() => {
+        if (mounted) setHasRestoredReplyProgress(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  if (hasRestoredReplyProgress === null) return null;
+
+  return (
+    <OnboardingFlowContent
+      initialStepId={hasRestoredReplyProgress ? "testimonials" : undefined}
+      onComplete={onComplete}
+    />
+  );
+}
+
+function OnboardingFlowContent({
+  initialStepId,
+  onComplete,
+}: OnboardingFlowProps & { initialStepId?: OnboardingStepId }) {
   const conversation = useConversationFlow();
   const [analysisFailureCount, setAnalysisFailureCount] = useState(0);
   const completeOnboarding = useCallback(() => {
@@ -62,7 +98,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     selectChoice,
     skip,
     totalSteps,
-  } = useOnboardingFlow(completeOnboarding);
+  } = useOnboardingFlow(completeOnboarding, initialStepId);
   const ScreenComponent = screenMap[currentStep.id];
   const isUploadStep = currentStep.id === "uploadScreenshot";
   const isVibeStep = currentStep.id === "vibecheck";
@@ -83,10 +119,15 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     async (screenshotUri?: string) => {
       const result = await conversation.analyzeOnboardingScreenshot(screenshotUri);
 
-      if (result === "error") {
+      if (typeof result === "object" && result.status === "error") {
         setAnalysisFailureCount((count) => count + 1);
       } else if (result === "ready") {
         setAnalysisFailureCount(0);
+        try {
+          await markOnboardingReplyDisplayed();
+        } catch {
+          // The reply remains usable even if local resume progress cannot be saved.
+        }
       }
 
       return result;
@@ -124,11 +165,10 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     goNext(true);
     const result = await analyzeScreenshotForOnboarding(screenshotUri);
 
-    if (result === "error") {
+    if (typeof result === "object" && result.status === "error") {
       Alert.alert(
         "Could not read screenshot",
-        conversation.error?.message ??
-          "Try another screenshot or upload again.",
+        result.error.message,
       );
       goBack();
     }

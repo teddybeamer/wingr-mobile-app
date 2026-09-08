@@ -115,9 +115,10 @@ export function useConversationFlow() {
     isOnboardingGeneration = false,
   ) => {
     if (!uri) {
-      setError({ kind: "analysis", message: "Choose a screenshot first." });
+      const error: ConversationFlowError = { kind: "analysis", message: "Choose a screenshot first." };
+      setError(error);
       setAnalysisStatus("error");
-      return "error" as const;
+      return { status: "error" as const, error };
     }
     // Ignore double taps; replacing a screenshot/reset still cancels this request.
     if (controllerRef.current) return "cancelled" as const;
@@ -173,20 +174,28 @@ export function useConversationFlow() {
       return "ready" as const;
     } catch (failure) {
       if (id !== requestIdRef.current) return "cancelled" as const;
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.info("[Wingr flow] screenshot analysis failed", {
+          errorName: failure instanceof Error ? failure.name : "unknown",
+          isOnboardingGeneration,
+          requestId: id,
+        });
+      }
       if (!append) setAnalysisStatus("error");
       setRepliesStatus(append ? "error" : "idle");
-      setError({
+      const error: ConversationFlowError = {
         kind: append ? "replies" : "analysis",
         message:
           failure instanceof Error
             ? failure.message
             : "Wingr could not analyze that screenshot. Please try again.",
-      });
+      };
+      setError(error);
       posthog.capture(
         append ? "reply_generation_failed" : "screenshot_analysis_failed",
         { duration_ms: Date.now() - startedAt },
       );
-      return "error" as const;
+      return { status: "error" as const, error };
     } finally {
       if (id === requestIdRef.current) controllerRef.current = null;
     }

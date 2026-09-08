@@ -35,6 +35,9 @@ export async function postJsonToWingrBackend<T>(
   if (signal?.aborted) abort();
   const timer = setTimeout(abort, BACKEND_TIMEOUT_MS);
   try {
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.info("[Wingr flow] backend fetch dispatched", { path });
+    }
     const response = await fetch(`${baseUrl}${path}`, {
       method: "POST",
       headers: {
@@ -45,6 +48,12 @@ export async function postJsonToWingrBackend<T>(
       body: JSON.stringify(body),
       signal: controller.signal,
     });
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.info("[Wingr flow] backend response received", {
+        path,
+        status: response.status,
+      });
+    }
     if (!response.ok) {
       // Reconstruct only known errors. Never display arbitrary backend/provider text.
       let failure: {
