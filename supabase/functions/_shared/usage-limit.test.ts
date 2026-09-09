@@ -10,14 +10,14 @@ test("usage limiter calls the atomic RPC with the caller JWT", async () => {
     publishableKey: "publishable-key",
     fetchImpl: async (url, init) => {
       calls++;
-      assert.equal(url, "https://wingr.supabase.co/rest/v1/rpc/claim_ai_generation_attempt");
+      assert.equal(url, "https://wingr.supabase.co/rest/v1/rpc/claim_ai_generation_attempt_with_availability");
       assert.deepEqual(new Headers(init?.headers), new Headers({
         apikey: "publishable-key",
         authorization: "Bearer user-token",
         "content-type": "application/json",
       }));
-      assert.equal(init?.body, "{}");
-      return Response.json(true);
+      assert.equal(init?.body, '{"is_onboarding":false}');
+      return Response.json({ status: "allowed", retryAt: null });
     },
   });
   await limiter.claim("Bearer user-token");
@@ -28,12 +28,12 @@ test("usage limiter exposes a typed limit error without calling Gemini", async (
   const limiter = createSupabaseUsageLimiter({
     supabaseUrl: "https://wingr.supabase.co",
     publishableKey: "publishable-key",
-    fetchImpl: async () => Response.json(false),
+    fetchImpl: async () => Response.json({ status: "usage_limit", retryAt: "2026-10-09T14:34:00+00:00" }),
   });
   await assert.rejects(
     limiter.claim("Bearer user-token"),
     (error: unknown) =>
-      error instanceof ConversationError && error.kind === "usage_limit",
+      error instanceof ConversationError && error.kind === "usage_limit" && error.retryAt === "2026-10-09T14:34:00.000Z",
   );
 });
 
@@ -46,12 +46,13 @@ test("onboarding claims use their own atomic RPC and preserve typed rejections",
     const limiter = createSupabaseUsageLimiter({
       supabaseUrl: "https://wingr.supabase.co",
       publishableKey: "publishable-key",
-      fetchImpl: async (url) => {
+      fetchImpl: async (url, init) => {
         assert.equal(
           url,
-          "https://wingr.supabase.co/rest/v1/rpc/claim_onboarding_ai_generation_attempt",
+          "https://wingr.supabase.co/rest/v1/rpc/claim_ai_generation_attempt_with_availability",
         );
-        return Response.json(response);
+        assert.equal(init?.body, '{"is_onboarding":true}');
+        return Response.json({ status: response, retryAt: null });
       },
     });
     if (!kind) await limiter.claimOnboarding("Bearer user-token");

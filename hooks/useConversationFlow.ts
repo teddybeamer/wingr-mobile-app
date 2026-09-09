@@ -5,6 +5,10 @@ import {
   selectPreviousWingrSuggestions,
 } from "../lib/wingr-ai";
 import { posthog } from "../lib/posthog";
+import {
+  ConversationError,
+  type ConversationErrorKind,
+} from "../supabase/functions/_shared/conversation";
 import type {
   ConversationMessage,
   ReplyTone,
@@ -15,6 +19,8 @@ import type {
 export type ConversationFlowError = {
   kind: "permission" | "analysis" | "replies";
   message: string;
+  code?: ConversationErrorKind;
+  retryAt?: string;
 };
 export type AnalysisStatus = "idle" | "analyzing" | "ready" | "error";
 export type RepliesStatus = "idle" | "generating" | "ready" | "error";
@@ -185,6 +191,8 @@ export function useConversationFlow() {
       setRepliesStatus(append ? "error" : "idle");
       const error: ConversationFlowError = {
         kind: append ? "replies" : "analysis",
+        code: failure instanceof ConversationError ? failure.kind : undefined,
+        retryAt: failure instanceof ConversationError ? failure.retryAt : undefined,
         message:
           failure instanceof Error
             ? failure.message

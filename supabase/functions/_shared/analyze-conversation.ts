@@ -77,6 +77,6 @@ export async function handleConversationRequest(
     };
     // Closed enum and numeric status only: never log a failure object or provider body.
     console.warn("[Wingr AI] request failed", diagnostics);
-    return json({ error: safeError.message, ...diagnostics }, { status });
+    return json({ error: safeError.message, ...diagnostics, retryAt: safeError.retryAt }, { status });
   }
 }

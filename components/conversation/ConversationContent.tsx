@@ -2,6 +2,7 @@ import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { BlurView } from "expo-blur";
 import { posthog } from "../../lib/posthog";
+import { BottomSheet } from "../BottomSheet";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import Reanimated, {
   Easing as ReanimatedEasing,
@@ -40,7 +41,6 @@ import {
   Easing,
   Image,
   type LayoutChangeEvent,
-  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -81,12 +81,6 @@ const STICKY_ACTION_BUTTON = {
   newReplyWidth: 166,
   radius: 24,
   toneWidth: 140,
-} as const;
-const TONE_SHEET_ANIMATION = {
-  backdropCloseDuration: 140,
-  backdropOpenDuration: 180,
-  sheetCloseDuration: 220,
-  sheetOpenDuration: 280,
 } as const;
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const AnimatedTouchableOpacity =
@@ -364,12 +358,14 @@ export function ScreenshotPickerContent({
 }
 
 export function InlineErrorCard({
+  title = "Something went wrong",
   message,
   onPrimaryAction,
   onSecondaryAction,
   primaryLabel = "Try again",
   secondaryLabel,
 }: {
+  title?: string;
   message: string;
   onPrimaryAction: () => void;
   onSecondaryAction?: () => void;
@@ -378,7 +374,7 @@ export function InlineErrorCard({
 }) {
   return (
     <View style={styles.inlineError}>
-      <Text style={styles.inlineErrorTitle}>Something went wrong</Text>
+      <Text style={styles.inlineErrorTitle}>{title}</Text>
       <Text style={styles.inlineErrorMessage}>{message}</Text>
       <View style={styles.inlineErrorActions}>
         <TouchableOpacity
@@ -1896,139 +1892,44 @@ function ToneBottomSheet({
   selectedTone: ReplyTone;
   visible: boolean;
 }) {
-  const { height: windowHeight } = useWindowDimensions();
-  const [isPresented, setIsPresented] = useState(visible);
-  const isPresentedRef = useRef(visible);
-  const sheetTravelDistanceRef = useRef(windowHeight);
-  const backdropOpacity = useRef(new Animated.Value(0)).current;
-  const sheetTranslateY = useRef(new Animated.Value(windowHeight)).current;
-
-  useEffect(() => {
-    sheetTravelDistanceRef.current = windowHeight;
-  }, [windowHeight]);
-
-  useEffect(() => {
-    let animation: Animated.CompositeAnimation | null = null;
-    let animationFrame: number | null = null;
-    const sheetTravelDistance = sheetTravelDistanceRef.current;
-
-    if (visible) {
-      if (!isPresentedRef.current) {
-        isPresentedRef.current = true;
-        backdropOpacity.setValue(0);
-        sheetTranslateY.setValue(sheetTravelDistance);
-        setIsPresented(true);
-      }
-
-      animationFrame = requestAnimationFrame(() => {
-        animation = Animated.parallel([
-          Animated.timing(backdropOpacity, {
-            duration: TONE_SHEET_ANIMATION.backdropOpenDuration,
-            easing: Easing.out(Easing.quad),
-            toValue: 1,
-            useNativeDriver: true,
-          }),
-          Animated.timing(sheetTranslateY, {
-            duration: TONE_SHEET_ANIMATION.sheetOpenDuration,
-            easing: Easing.out(Easing.cubic),
-            toValue: 0,
-            useNativeDriver: true,
-          }),
-        ]);
-        animation.start();
-      });
-    } else if (isPresentedRef.current) {
-      animation = Animated.parallel([
-        Animated.timing(backdropOpacity, {
-          duration: TONE_SHEET_ANIMATION.backdropCloseDuration,
-          easing: Easing.in(Easing.quad),
-          toValue: 0,
-          useNativeDriver: true,
-        }),
-        Animated.timing(sheetTranslateY, {
-          duration: TONE_SHEET_ANIMATION.sheetCloseDuration,
-          easing: Easing.in(Easing.cubic),
-          toValue: sheetTravelDistance,
-          useNativeDriver: true,
-        }),
-      ]);
-      animation.start(({ finished }) => {
-        if (finished) {
-          isPresentedRef.current = false;
-          setIsPresented(false);
-        }
-      });
-    }
-
-    return () => {
-      if (animationFrame !== null) {
-        cancelAnimationFrame(animationFrame);
-      }
-      animation?.stop();
-    };
-  }, [backdropOpacity, sheetTranslateY, visible]);
-
   return (
-    <Modal
-      animationType="none"
-      onRequestClose={onClose}
-      transparent
-      visible={isPresented}
-    >
-      <Animated.View
-        pointerEvents={visible ? "auto" : "none"}
-        style={[styles.sheetBackdrop, { opacity: backdropOpacity }]}
-      >
-        <Pressable onPress={onClose} style={styles.sheetBackdropPressTarget}>
-          <Animated.View
-            style={[
-              styles.sheetPanelAnimation,
-              { transform: [{ translateY: sheetTranslateY }] },
-            ]}
-          >
-            <Pressable style={styles.sheetPanel}>
-              <View style={styles.sheetHandle} />
-              <Text style={styles.sheetTitle}>Choose tone</Text>
-              <View style={styles.toneOptions}>
-                {TONE_OPTIONS.map((option) => {
-                  const selected = option.value === selectedTone;
+    <BottomSheet title="Choose tone" visible={visible} onClose={onClose}>
+      <View style={styles.toneOptions}>
+        {TONE_OPTIONS.map((option) => {
+          const selected = option.value === selectedTone;
 
-                  return (
-                    <TouchableOpacity
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      key={option.value}
-                      onPress={() => onSelect(option.value)}
-                      style={[
-                        styles.toneOption,
-                        selected && styles.toneOptionSelected,
-                      ]}
-                    >
-                      <View style={styles.toneOptionLeft}>
-                        <Text style={styles.toneOptionEmoji}>
-                          {option.emoji}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.toneOptionText,
-                            selected && styles.toneOptionTextSelected,
-                          ]}
-                        >
-                          {option.label}
-                        </Text>
-                      </View>
-                      {selected ? (
-                        <CheckCircle color={COLORS.blue} size={21} />
-                      ) : null}
-                    </TouchableOpacity>
-                  );
-                })}
+          return (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              key={option.value}
+              onPress={() => onSelect(option.value)}
+              style={[
+                styles.toneOption,
+                selected && styles.toneOptionSelected,
+              ]}
+            >
+              <View style={styles.toneOptionLeft}>
+                <Text style={styles.toneOptionEmoji}>
+                  {option.emoji}
+                </Text>
+                <Text
+                  style={[
+                    styles.toneOptionText,
+                    selected && styles.toneOptionTextSelected,
+                  ]}
+                >
+                  {option.label}
+                </Text>
               </View>
-            </Pressable>
-          </Animated.View>
-        </Pressable>
-      </Animated.View>
-    </Modal>
+              {selected ? (
+                <CheckCircle color={COLORS.blue} size={21} />
+              ) : null}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </BottomSheet>
   );
 }
 
@@ -2745,40 +2646,6 @@ const styles = StyleSheet.create({
     fontSize: 23,
     fontWeight: "700",
     lineHeight: 30,
-  },
-  sheetBackdrop: {
-    backgroundColor: "rgba(0, 0, 0, 0.58)",
-    flex: 1,
-  },
-  sheetBackdropPressTarget: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  sheetHandle: {
-    alignSelf: "center",
-    backgroundColor: "#4A4A50",
-    borderRadius: 999,
-    height: 5,
-    width: 48,
-  },
-  sheetPanel: {
-    backgroundColor: "#111113",
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
-    gap: 18,
-    paddingBottom: 34,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-  },
-  sheetPanelAnimation: {
-    width: "100%",
-  },
-  sheetTitle: {
-    color: "#FFFFFF",
-    fontFamily: "ClashDisplay",
-    fontSize: 24,
-    fontWeight: "700",
-    textAlign: "center",
   },
   stickyNewRepliesButton: {
     alignItems: "center",

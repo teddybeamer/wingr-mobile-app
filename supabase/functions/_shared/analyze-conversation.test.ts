@@ -189,7 +189,7 @@ test("the usage limit rejects before Gemini, including concurrent requests", asy
   const usageLimiter = {
     claim: async () => {
       await Promise.resolve();
-      if (used >= 500) throw new ConversationError("usage_limit");
+      if (used >= 500) throw new ConversationError("usage_limit", undefined, undefined, "2026-10-09T14:34:00Z");
       used++;
     },
     claimOnboarding: async () => {},
@@ -212,7 +212,8 @@ test("the usage limit rejects before Gemini, including concurrent requests", asy
   assert.equal(second.status, 429);
   assert.deepEqual(await second.json(), {
     code: "usage_limit",
-    error: "You've reached 500 reply generations in the last 30 days. Try again when an earlier attempt expires.",
+    error: "You’ve reached your reply limit. Please check back later.",
+    retryAt: "2026-10-09T14:34:00.000Z",
   });
   assert.equal(calls, 1);
 

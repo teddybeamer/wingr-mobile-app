@@ -60,6 +60,7 @@ export async function postJsonToWingrBackend<T>(
         code?: unknown;
         providerStatus?: unknown;
         providerReason?: unknown;
+        retryAt?: unknown;
       } | null = null;
       try {
         failure = await response.json();
@@ -75,6 +76,7 @@ export async function postJsonToWingrBackend<T>(
           failure!.code as ConversationErrorKind,
           failure?.providerStatus,
           failure?.providerReason,
+          failure?.retryAt,
         );
       }
       const kind =

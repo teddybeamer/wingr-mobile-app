@@ -16,14 +16,14 @@ export function createSupabaseUsageLimiter({
 }): UsageLimiter {
   const claim = async (
     authorization: string | null,
-    rpc: string,
-  ): Promise<unknown> => {
+    isOnboarding: boolean,
+  ): Promise<void> => {
     if (!authorization?.startsWith("Bearer ") || !publishableKey || !supabaseUrl)
       throw new ConversationError("provider");
     let response: Response;
     try {
       response = await fetchImpl(
-        `${supabaseUrl.replace(/\/$/, "")}/rest/v1/rpc/${rpc}`,
+        `${supabaseUrl.replace(/\/$/, "")}/rest/v1/rpc/claim_ai_generation_attempt_with_availability`,
         {
           method: "POST",
           headers: {
@@ -31,34 +31,31 @@ export function createSupabaseUsageLimiter({
             authorization,
             "content-type": "application/json",
           },
-          body: "{}",
+          body: JSON.stringify({ is_onboarding: isOnboarding }),
         },
       );
     } catch {
       throw new ConversationError("provider");
     }
     if (!response.ok) throw new ConversationError("provider");
+    let result;
     try {
-      return await response.json();
+      result = await response.json();
     } catch {
       throw new ConversationError("provider");
     }
+    if (result?.status === "usage_limit")
+      throw new ConversationError("usage_limit", undefined, undefined, result.retryAt);
+    if (isOnboarding && result?.status === "onboarding_reply_used")
+      throw new ConversationError("onboarding_reply_used");
+    if (result?.status !== "allowed") throw new ConversationError("provider");
   };
   return {
     async claim(authorization) {
-      const allowed = await claim(authorization, "claim_ai_generation_attempt");
-      if (allowed === false) throw new ConversationError("usage_limit");
-      if (allowed !== true) throw new ConversationError("provider");
+      await claim(authorization, false);
     },
     async claimOnboarding(authorization) {
-      const result = await claim(
-        authorization,
-        "claim_onboarding_ai_generation_attempt",
-      );
-      if (result === "onboarding_reply_used")
-        throw new ConversationError("onboarding_reply_used");
-      if (result === "usage_limit") throw new ConversationError("usage_limit");
-      if (result !== "allowed") throw new ConversationError("provider");
+      await claim(authorization, true);
     },
   };
 }

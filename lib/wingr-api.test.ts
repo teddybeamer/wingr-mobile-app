@@ -2,10 +2,29 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { postJsonToWingrBackend } from "./wingr-api";
 import { input, result } from "../supabase/functions/_shared/test-fixtures";
+import { ConversationError } from "../supabase/functions/_shared/conversation";
 
 const authentication = async () => ({
   accessToken: "user-token",
   publishableKey: "publishable-key",
+});
+
+test("app preserves only validated availability timestamps on usage-limit errors", async (t) => {
+  const previous = process.env.EXPO_PUBLIC_WINGR_API_BASE_URL;
+  process.env.EXPO_PUBLIC_WINGR_API_BASE_URL = "https://wingr.example";
+  t.after(() => { if (previous === undefined) delete process.env.EXPO_PUBLIC_WINGR_API_BASE_URL; else process.env.EXPO_PUBLIC_WINGR_API_BASE_URL = previous; });
+  const values = ["2026-10-09T16:34:00+02:00", undefined, "PRIVATE", "2026-02-30T12:00:00Z"];
+  const mock = t.mock.method(globalThis, "fetch", async () => Response.json({ code: "usage_limit", retryAt: values.shift(), error: "PRIVATE" }, { status: 429 }));
+  for (const expected of ["2026-10-09T14:34:00.000Z", undefined, undefined, undefined]) {
+    await assert.rejects(postJsonToWingrBackend("/ai-conversation", input, undefined, authentication), (failure: unknown) => {
+      assert.ok(failure instanceof ConversationError);
+      assert.equal(failure.kind, "usage_limit");
+      assert.equal(failure.retryAt, expected);
+      assert.ok(!failure.message.includes("PRIVATE"));
+      return true;
+    });
+  }
+  assert.equal(mock.mock.callCount(), 4);
 });
 
 test("app posts the image and selected tone to the sole endpoint once", async (t) => {

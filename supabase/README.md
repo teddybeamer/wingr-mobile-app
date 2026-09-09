@@ -78,6 +78,8 @@ Never disable privacy controls to troubleshoot a failed request.
 
 Every authenticated anonymous user can dispatch 500 AI generation attempts in a rolling 30-day window. The count uses `attempted_at > now() - interval '30 days'`, so an event exactly 30 days old no longer counts. An attempt is permanently recorded immediately before OpenRouter is called; successful replies and unusable model results both count. Rejections before provider dispatch do not. The endpoint returns HTTP 429 with `code: "usage_limit"` before calling Gemini once the cap is reached. The same cap applies to Weekly and Monthly subscribers.
 
+The endpoint uses `claim_ai_generation_attempt_with_availability(is_onboarding)` to wrap the original claim RPCs in the same locked transaction. A blocked response includes `retryAt`, an ISO timestamp computed as the 500th newest active attempt plus 30 days (also correct above the cap). The app shows “Reply limit reached” with this time in the phone's timezone, rounded up to a minute, and a “Got it” button that dismisses the notice without requesting a reply. Missing or invalid timestamps use a generic limit message. Deploy the availability migration before the updated edge function, then update/reload the app; the original RPCs remain compatible with older functions.
+
 The onboarding screenshot flow is separately limited to one provider dispatch per anonymous user. Its atomic claim permanently records both the one-time onboarding marker and one normal generation attempt before OpenRouter is called. Repeating it returns HTTP 409 with `code: "onboarding_reply_used"` and never reaches Gemini.
 
 The provider schema omits string length bounds and the large message-array bound, and uses Gemini's supported

@@ -65,11 +65,30 @@ export const PROVIDER_ERROR_REASONS = {
 } as const;
 export type ProviderErrorReason = keyof typeof PROVIDER_ERROR_REASONS;
 
+export function parseRetryAt(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const match =
+    /^([1-9]\d{3})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,6})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
+  if (
+    !match ||
+    Number(match[3]) >
+      new Date(Date.UTC(Number(match[1]), Number(match[2]), 0)).getUTCDate()
+  )
+    return undefined;
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) return undefined;
+  // PostgreSQL timestamps can have microseconds. Round upward, never earlier.
+  const fraction = /\.(\d+)(?:Z|[+-])/.exec(value)?.[1];
+  const extraMillisecond = fraction && /[1-9]/.test(fraction.slice(3)) ? 1 : 0;
+  return new Date(milliseconds + extraMillisecond).toISOString();
+}
+
 export class ConversationError extends Error {
   constructor(
     public readonly kind: ConversationErrorKind,
     providerStatus?: unknown,
     providerReason?: unknown,
+    retryAt?: unknown,
   ) {
     super(
       kind === "provider" && validProviderStatus(providerStatus)
@@ -89,11 +108,12 @@ export class ConversationError extends Error {
             timeout:
               "Wingr took too long to analyze that screenshot. Please try again.",
             usage_limit:
-              "You've reached 500 reply generations in the last 30 days. Try again when an earlier attempt expires.",
+              "You’ve reached your reply limit. Please check back later.",
             onboarding_reply_used:
               "You've already used your free onboarding reply.",
           }[kind],
     );
+    if (kind === "usage_limit") this.retryAt = parseRetryAt(retryAt);
     if (kind === "provider" && validProviderStatus(providerStatus))
       this.providerStatus = providerStatus;
     if (
@@ -105,6 +125,7 @@ export class ConversationError extends Error {
   }
   readonly providerStatus?: number;
   readonly providerReason?: ProviderErrorReason;
+  readonly retryAt?: string;
 }
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;

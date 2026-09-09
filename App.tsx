@@ -5,6 +5,10 @@ import { posthog } from "./lib/posthog";
 import { StatusBar } from "expo-status-bar";
 import { BlurView } from "expo-blur";
 import { useFonts } from "expo-font";
+import {
+  SafeAreaProvider,
+  initialWindowMetrics,
+} from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import {
@@ -28,6 +32,7 @@ import {
   ShieldWarning,
   StarsMinimalistic,
 } from "@solar-icons/react-native/Linear";
+import { MenuDots } from "@solar-icons/react-native/Bold";
 import type { Icon as SolarIcon } from "@solar-icons/react-native/lib/index";
 import Svg, {
   Defs,
@@ -63,7 +68,12 @@ import type {
 } from "./types/wingr";
 import { OnboardingFlow } from "./onboarding/OnboardingFlow";
 import { BackButton } from "./components/BackButton";
-import { useConversationFlow } from "./hooks/useConversationFlow";
+import { HomeMoreSheet } from "./components/HomeMoreSheet";
+import {
+  useConversationFlow,
+  type ConversationFlowError,
+} from "./hooks/useConversationFlow";
+import { getReplyErrorPresentation } from "./lib/reply-limit";
 import {
   InlineErrorCard,
   ReplyActionBar,
@@ -357,6 +367,14 @@ const METRIC_VARIANTS: Record<
 };
 
 export default function App() {
+  return (
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      <WingrApp />
+    </SafeAreaProvider>
+  );
+}
+
+function WingrApp() {
   const [screen, setScreen] = useState<Screen>("onboarding");
   const [showDebugBootScreen, setShowDebugBootScreen] =
     useState(DEBUG_BOOT_PROBE);
@@ -523,7 +541,11 @@ export default function App() {
 
           {screen === "upload" ? (
             <UploadScreenshotScreen
-              errorMessage={error?.kind === "analysis" ? error.message : null}
+              errorMessage={
+                error?.kind === "analysis"
+                  ? getReplyErrorPresentation(error).message
+                  : null
+              }
               onBack={() => setScreen("landing")}
               onChangeScreenshot={handlePickScreenshotForUpload}
               onCheckVibe={handleCheckSelectedScreenshot}
@@ -549,7 +571,8 @@ export default function App() {
               onRefreshReplies={handleRefreshReplies}
               onToneChange={handleToneChange}
               replies={generatedReplies}
-              replyError={error?.kind === "replies" ? error.message : null}
+              replyError={error?.kind === "replies" ? error : null}
+              onDismissReplyError={conversation.clearError}
               selectedScreenshotUri={selectedScreenshotUri}
               vibeCheck={vibeCheck}
               selectedTone={selectedTone}
@@ -570,6 +593,7 @@ function LandingScreen({
   onRevealStarted: (revealToken: number) => void;
   revealToken: number | null;
 }) {
+  const [isMoreVisible, setIsMoreVisible] = useState(false);
   const { height: viewportHeight, width: viewportWidth } =
     useWindowDimensions();
   const contentHeight = Math.min(617, Math.max(442, viewportHeight - 60));
@@ -735,7 +759,21 @@ function LandingScreen({
 
       <View style={styles.landingHeader}>
         <Text style={styles.landingLogo}>Wingr</Text>
+        <TouchableOpacity
+          accessibilityLabel="More options"
+          accessibilityRole="button"
+          accessibilityState={{ expanded: isMoreVisible }}
+          activeOpacity={0.6}
+          onPress={() => setIsMoreVisible(true)}
+          style={styles.landingMoreButton}
+        >
+          <MenuDots color="#A3A3A3" size={24} />
+        </TouchableOpacity>
       </View>
+      <HomeMoreSheet
+        visible={isMoreVisible}
+        onClose={() => setIsMoreVisible(false)}
+      />
 
       <View style={[styles.landingContent, { height: contentHeight }]}>
         <View
@@ -1583,6 +1621,7 @@ function RepliesScreen({
   onToneChange,
   replies,
   replyError,
+  onDismissReplyError,
   selectedScreenshotUri,
   selectedTone,
   vibeCheck,
@@ -1593,11 +1632,15 @@ function RepliesScreen({
   onRefreshReplies: () => Promise<boolean>;
   onToneChange: (tone: ReplyTone) => Promise<boolean>;
   replies: SuggestedReply[];
-  replyError: string | null;
+  replyError: ConversationFlowError | null;
+  onDismissReplyError: () => void;
   selectedScreenshotUri: string | null;
   selectedTone: ReplyTone;
   vibeCheck: VibeCheck;
 }) {
+  const errorPresentation = replyError
+    ? getReplyErrorPresentation(replyError)
+    : null;
   const scrollViewRef = useRef<ScrollView>(null);
   const scrollOffsetRef = useRef(0);
   const scrollViewportHeightRef = useRef(0);
@@ -1739,13 +1782,18 @@ function RepliesScreen({
             showControls={false}
             showTypingIndicator
           />
-          {replyError ? (
+          {errorPresentation ? (
             <InlineErrorCard
-              message={replyError}
-              onPrimaryAction={() => {
-                void onRefreshReplies();
-              }}
-              primaryLabel="Try again"
+              title={errorPresentation.title}
+              message={errorPresentation.message}
+              onPrimaryAction={
+                errorPresentation.dismiss
+                  ? onDismissReplyError
+                  : () => {
+                      void onRefreshReplies();
+                    }
+              }
+              primaryLabel={errorPresentation.primaryLabel}
             />
           ) : null}
         </View>
@@ -2076,6 +2124,16 @@ const styles = StyleSheet.create({
     height: 60,
     justifyContent: "center",
     paddingHorizontal: 16,
+    width: "100%",
+  },
+  landingMoreButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: 44,
+    height: 44,
+    position: "absolute",
+    right: 6,
+    top: 8,
   },
   landingHero: {
     backgroundColor: "#0D0D0D",
