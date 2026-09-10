@@ -82,6 +82,7 @@ import {
 } from "./components/conversation/ConversationContent";
 import { ReplyLoadingScreen } from "./components/conversation/ReplyLoadingScreen";
 import { initializeRevenueCat } from "./lib/revenuecat";
+import { clearAccountLocalState } from "./lib/account-local-state";
 
 const DEBUG_BOOT_PROBE = false;
 
@@ -376,6 +377,7 @@ export default function App() {
 
 function WingrApp() {
   const [screen, setScreen] = useState<Screen>("onboarding");
+  const [onboardingInstance, setOnboardingInstance] = useState(0);
   const [showDebugBootScreen, setShowDebugBootScreen] =
     useState(DEBUG_BOOT_PROBE);
   const landingRevealVersionRef = useRef(0);
@@ -515,6 +517,15 @@ function WingrApp() {
     return refreshReplies();
   };
 
+  const handleAccountDeleted = async () => {
+    await clearAccountLocalState();
+    conversation.reset();
+    setLandingRevealToken(null);
+    setUploadRevealToken(null);
+    setOnboardingInstance((current) => current + 1);
+    setScreen("onboarding");
+  };
+
   return (
     <PostHogProvider
       client={posthog}
@@ -524,12 +535,16 @@ function WingrApp() {
         <SafeAreaView style={styles.safeArea}>
           <StatusBar style="light" />
           {screen === "onboarding" ? (
-            <OnboardingFlow onComplete={handleEnterLanding} />
+            <OnboardingFlow
+              key={onboardingInstance}
+              onComplete={handleEnterLanding}
+            />
           ) : null}
 
           {screen === "landing" ? (
             <LandingScreen
               onContinue={handlePickScreenshotForUpload}
+              onAccountDeleted={handleAccountDeleted}
               onRevealStarted={(revealToken) => {
                 setLandingRevealToken((currentToken) =>
                   currentToken === revealToken ? null : currentToken,
@@ -586,10 +601,12 @@ function WingrApp() {
 
 function LandingScreen({
   onContinue,
+  onAccountDeleted,
   onRevealStarted,
   revealToken,
 }: {
   onContinue: () => void;
+  onAccountDeleted: () => Promise<void>;
   onRevealStarted: (revealToken: number) => void;
   revealToken: number | null;
 }) {
@@ -773,6 +790,7 @@ function LandingScreen({
       <HomeMoreSheet
         visible={isMoreVisible}
         onClose={() => setIsMoreVisible(false)}
+        onAccountDeleted={onAccountDeleted}
       />
 
       <View style={[styles.landingContent, { height: contentHeight }]}>

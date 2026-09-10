@@ -1,11 +1,22 @@
 begin;
 
-select plan(5);
+select plan(6);
 
 select has_table(
   'public',
   'onboarding_ai_reply_claims',
   'onboarding claims are persisted separately from UI state'
+);
+select is(
+  (
+    select confdeltype
+    from pg_constraint
+    where conrelid = 'public.onboarding_ai_reply_claims'::regclass
+      and contype = 'f'
+      and conkey = array[(select attnum from pg_attribute where attrelid = 'public.onboarding_ai_reply_claims'::regclass and attname = 'user_id')]
+  ),
+  'c',
+  'Auth-user deletion cascades onboarding-claim metadata'
 );
 
 set local session_replication_role = replica;

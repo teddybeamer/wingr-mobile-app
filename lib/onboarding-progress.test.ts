@@ -5,6 +5,7 @@ import {
   markOnboardingReplyDisplayed,
   ONBOARDING_REPLY_DISPLAYED_KEY,
   type OnboardingProgressStorage,
+  clearOnboardingReplyProgress,
 } from "./onboarding-progress";
 
 function storageWith(value: string | null = null) {
@@ -14,6 +15,9 @@ function storageWith(value: string | null = null) {
     getItem: async (key) => values.get(key) ?? null,
     setItem: async (key, nextValue) => {
       values.set(key, nextValue);
+    },
+    removeItem: async (key) => {
+      values.delete(key);
     },
   };
   return { storage, values };
@@ -25,6 +29,12 @@ test("onboarding reply progress is absent until a displayed reply is marked", as
   await markOnboardingReplyDisplayed(storage);
   assert.equal(values.get(ONBOARDING_REPLY_DISPLAYED_KEY), "true");
   assert.equal(await hasDisplayedOnboardingReply(storage), true);
+});
+
+test("account cleanup removes the onboarding marker", async () => {
+  const { storage, values } = storageWith("true");
+  await clearOnboardingReplyProgress(storage);
+  assert.equal(values.has(ONBOARDING_REPLY_DISPLAYED_KEY), false);
 });
 
 test("only the expected marker resumes the onboarding reply step", async () => {

@@ -1,92 +1,127 @@
-import {
-  CloudCross,
-  ShieldMinimalistic,
-  TrashBinMinimalistic,
-} from "@solar-icons/react-native/Linear";
-import { StyleSheet, Text, View } from "react-native";
-import { OnboardingScreenScaffold } from "./OnboardingScreenScaffold";
+import { ArrowLeft } from "@solar-icons/react-native/Linear";
+import * as Haptics from "expo-haptics";
+import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import Animated, { Easing, FadeInLeft } from "react-native-reanimated";
+import { CTAButton } from "../components/CTAButton";
+import { ProgressIndicator } from "../components/ProgressIndicator";
 import type { OnboardingScreenProps } from "../types/onboarding";
 
-const privacyItems = [
-  {
-    body: "Screenshots are processed without server storage.",
-    icon: TrashBinMinimalistic,
-    title: "Not stored",
-  },
-  {
-    body: "Your chats don't teach the AI.",
-    icon: ShieldMinimalistic,
-    title: "Not used for training",
-  },
-  {
-    body: "Your data stays yours.",
-    icon: CloudCross,
-    title: "Never sold",
-  },
-];
+const STAR_ENTRANCE = FadeInLeft.duration(350)
+  .delay(100)
+  .easing(Easing.out(Easing.cubic));
 
-export function PrivacyScreen(props: OnboardingScreenProps) {
+export function PrivacyScreen({
+  canGoBack,
+  content,
+  currentIndex,
+  onBack,
+  onNext,
+  onPrimaryAction,
+  totalSteps,
+}: OnboardingScreenProps) {
+  const continueOnboarding = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    if (onPrimaryAction) {
+      void onPrimaryAction();
+      return;
+    }
+    onNext();
+  };
+
   return (
-    <OnboardingScreenScaffold {...props}>
-      <View style={styles.stack}>
-        {privacyItems.map((item) => {
-          const Icon = item.icon;
+    <View style={styles.screen}>
+      <View>
+        <View style={styles.header}>
+          <TouchableOpacity
+            accessibilityLabel="Go back"
+            accessibilityRole="button"
+            disabled={!canGoBack}
+            hitSlop={8}
+            onPress={onBack}
+            style={!canGoBack ? styles.hiddenBackButton : undefined}
+          >
+            <ArrowLeft color="#D4D4D4" size={24} />
+          </TouchableOpacity>
+          <ProgressIndicator
+            currentIndex={currentIndex}
+            totalSteps={totalSteps}
+          />
+          <View style={styles.headerSpacer} />
+        </View>
 
-          return (
-            <View key={item.title} style={styles.card}>
-              <View style={styles.iconBox}>
-                <Icon color="#DCE8FF" size={24} />
-              </View>
-              <View style={styles.copy}>
-                <Text style={styles.title}>{item.title}</Text>
-                <Text style={styles.body}>{item.body}</Text>
-              </View>
-            </View>
-          );
-        })}
+        <View style={styles.copy}>
+          <Text style={styles.title}>
+            <Text>Your conversations </Text>
+            <Text style={styles.titleBlue}>stay private</Text>
+          </Text>
+          <Text style={styles.body}>{content.body}</Text>
+        </View>
       </View>
-    </OnboardingScreenScaffold>
+
+      <View style={styles.middleContent}>
+        <Animated.View entering={STAR_ENTRANCE}>
+          <Image
+            accessibilityIgnoresInvertColors
+            resizeMode="contain"
+            source={require("../../assets/images/star-onboarding.png")}
+            style={styles.starGraphic}
+          />
+        </Animated.View>
+      </View>
+
+      <CTAButton label={content.ctaLabel ?? "Continue"} onPress={continueOnboarding} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   body: {
-    color: "#E3E3E3",
+    color: "#FFFFFF",
     fontFamily: "ClashGroteskRegular",
     fontSize: 16,
     fontWeight: "400",
-    lineHeight: 20,
-  },
-  card: {
-    alignItems: "center",
-    alignSelf: "center",
-    backgroundColor: "#181818",
-    borderRadius: 12,
-    flexDirection: "row",
-    gap: 16,
-    padding: 16,
-    width: "76%",
+    lineHeight: 17,
   },
   copy: {
-    flex: 1,
     gap: 8,
+    marginTop: 16,
   },
-  iconBox: {
+  middleContent: {
     alignItems: "center",
-    backgroundColor: "#2557E6",
-    borderRadius: 11,
-    height: 42,
+    flex: 1,
     justifyContent: "center",
-    width: 42,
   },
-  stack: {
-    gap: 10,
+  header: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    height: 48,
+  },
+  headerSpacer: {
+    width: 24,
+  },
+  hiddenBackButton: {
+    opacity: 0,
+  },
+  screen: {
+    backgroundColor: "#080808",
+    flex: 1,
+    paddingBottom: 50,
+    paddingHorizontal: 16,
+    paddingTop: 4,
+  },
+  starGraphic: {
+    height: 242,
+    width: 235,
   },
   title: {
+    color: "#FFFFFF",
+    fontFamily: "ClashDisplay",
+    fontSize: 24,
+    fontWeight: "700",
+    lineHeight: 29,
+  },
+  titleBlue: {
     color: "#1970FD",
-    fontFamily: "ClashGrotesk",
-    fontSize: 17,
-    fontWeight: "600",
-    lineHeight: 21,
   },
 });

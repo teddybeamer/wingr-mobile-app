@@ -85,6 +85,56 @@ test("failed replacement signup terminates without another recovery", async () =
   assert.equal(calls.signup, 1);
 });
 
+test("account deletion authentication never creates an anonymous user without a session", async () => {
+  const calls = { signup: 0 };
+  const authenticate = createRequestAuthentication(
+    (() => ({
+      client: {
+        auth: {
+          async getSession() { return { data: { session: null }, error: null }; },
+          async signInAnonymously() { calls.signup++; return { data: { session: null }, error: null }; },
+        },
+      },
+      configuration: { url: "https://wingr.supabase.co", publishableKey: "public-key" },
+    })) as unknown as Parameters<typeof createRequestAuthentication>[0],
+    async () => {},
+    false,
+  );
+  await assert.rejects(authenticate(), /no active account session/);
+  assert.equal(calls.signup, 0);
+});
+
+test("account deletion authentication preserves an invalid persisted session on failure", async () => {
+  const invalidToken = new AuthApiError(
+    "Invalid Refresh Token: Refresh Token Not Found",
+    400,
+    "refresh_token_not_found",
+  );
+  const { authenticate, calls } = harness(invalidToken);
+  // Recreate the same harness with recovery deliberately disabled for deletion.
+  const deletionAuthentication = createRequestAuthentication(
+    (() => ({
+      client: {
+        auth: {
+          async getSession() {
+            return { data: { session: null }, error: invalidToken };
+          },
+          async signInAnonymously() {
+            throw new Error("must not create a replacement account");
+          },
+        },
+      },
+      configuration: { url: "https://wingr.supabase.co", publishableKey: "public-key" },
+    })) as unknown as Parameters<typeof createRequestAuthentication>[0],
+    async () => { calls.clear++; },
+    false,
+    false,
+  );
+  await assert.rejects(deletionAuthentication(), (error) => error === invalidToken);
+  assert.equal(calls.clear, 0);
+  assert.equal(calls.signup, 0);
+});
+
 test("original AI request proceeds once using recovered access token", async (t) => {
   const previous = process.env.EXPO_PUBLIC_WINGR_API_BASE_URL;
   process.env.EXPO_PUBLIC_WINGR_API_BASE_URL = "https://wingr.example";

@@ -1,7 +1,13 @@
-import { ArrowRightUp, Letter, Lock } from "@solar-icons/react-native/Linear";
+import {
+  ArrowRightUp,
+  Letter,
+  Lock,
+  TrashBinTrash,
+} from "@solar-icons/react-native/Linear";
 import * as Clipboard from "expo-clipboard";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Alert, Linking, StyleSheet, Text, TouchableOpacity } from "react-native";
+import { deleteWingrAccount } from "../lib/account-deletion";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BottomSheet } from "./BottomSheet";
 
@@ -11,12 +17,15 @@ const SUPPORT_EMAIL = "try.wingr.app@gmail.com";
 export function HomeMoreSheet({
   visible,
   onClose,
+  onAccountDeleted,
 }: {
   visible: boolean;
   onClose: () => void;
+  onAccountDeleted: () => Promise<void>;
 }) {
   const insets = useSafeAreaInsets();
   const pendingDestination = useRef<"privacy" | "support" | null>(null);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   const openDestination = async () => {
     const destination = pendingDestination.current;
@@ -47,6 +56,39 @@ export function HomeMoreSheet({
         );
       }
     }
+  };
+
+  const confirmAccountDeletion = () => {
+    if (isDeletingAccount) return;
+    Alert.alert(
+      "Are you sure you want to delete your account?",
+      "This will permanently delete your Wingr account and associated account data.",
+      [
+        { text: "No", style: "cancel" },
+        {
+          text: "Yes, delete account",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              if (isDeletingAccount) return;
+              setIsDeletingAccount(true);
+              try {
+                await deleteWingrAccount();
+                onClose();
+                await onAccountDeleted();
+              } catch {
+                Alert.alert(
+                  "Couldn’t delete account",
+                  "Please try again shortly.",
+                );
+              } finally {
+                setIsDeletingAccount(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -89,6 +131,21 @@ export function HomeMoreSheet({
           <ArrowRightUp color="#A3A3A3" size={24} />
         </TouchableOpacity>
       ))}
+      <TouchableOpacity
+        accessibilityLabel="Delete account"
+        accessibilityRole="button"
+        accessibilityHint="Permanently deletes your Wingr account"
+        disabled={!visible || isDeletingAccount}
+        activeOpacity={0.7}
+        onPress={confirmAccountDeletion}
+        style={[styles.row, styles.deleteRow, isDeletingAccount && styles.rowDisabled]}
+      >
+        <TrashBinTrash color="#FF5A65" size={24} />
+        <Text style={[styles.label, styles.deleteLabel]}>
+          {isDeletingAccount ? "Deleting account…" : "Delete account"}
+        </Text>
+        <ArrowRightUp color="#FF5A65" size={24} />
+      </TouchableOpacity>
     </BottomSheet>
   );
 }
@@ -120,5 +177,14 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "700",
     lineHeight: 29,
+  },
+  deleteRow: {
+    borderColor: "#FF5A65",
+  },
+  deleteLabel: {
+    color: "#FF5A65",
+  },
+  rowDisabled: {
+    opacity: 0.55,
   },
 });

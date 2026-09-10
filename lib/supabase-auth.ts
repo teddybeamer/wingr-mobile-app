@@ -88,6 +88,8 @@ function isInvalidRefreshToken(error: unknown) {
 export function createRequestAuthentication(
   getClient: typeof getSupabaseClient,
   clearSession: () => Promise<void>,
+  allowAnonymousSignup = true,
+  recoverInvalidSession = allowAnonymousSignup,
 ) {
   let pending: Promise<SupabaseRequestAuthentication> | null = null;
   async function initialize() {
@@ -106,12 +108,14 @@ export function createRequestAuthentication(
         session = data.session;
       }
     } catch (error) {
-      if (!isInvalidRefreshToken(error)) throw error;
+      if (!isInvalidRefreshToken(error) || !recoverInvalidSession) throw error;
       await clearSession();
       ({ client, configuration } = getClient());
       session = null;
     }
     if (!session) {
+      if (!allowAnonymousSignup)
+        throw new Error("Wingr has no active account session.");
       const { data, error } = await client.auth.signInAnonymously();
       if (error) throw error;
       session = data.session;
@@ -126,13 +130,36 @@ export function createRequestAuthentication(
   };
 }
 
+async function clearPersistedSupabaseSession() {
+  const key = sessionStorageKey(getSupabaseConfiguration().url);
+  await secureStorage.removeItem(key);
+  await secureStorage.removeItem(`${key}-user`);
+  await secureStorage.removeItem(`${key}-code-verifier`);
+  supabaseClient = null;
+  clientConfiguration = null;
+}
+
+/** Clears this installation's persisted identity without creating a replacement. */
+export async function clearSupabaseAuthSession() {
+  try {
+    const { client } = getSupabaseClient();
+    await client.auth.signOut({ scope: "local" });
+  } catch {
+    // The Auth record may already be deleted. The persisted session is removed below.
+  }
+  await clearPersistedSupabaseSession();
+}
+
 export const getSupabaseRequestAuthentication = createRequestAuthentication(
   getSupabaseClient,
-  async () => {
-    const key = sessionStorageKey(getSupabaseConfiguration().url);
-    await secureStorage.removeItem(key);
-    await secureStorage.removeItem(`${key}-user`);
-    await secureStorage.removeItem(`${key}-code-verifier`);
-    supabaseClient = null;
-  },
+  clearPersistedSupabaseSession,
 );
+
+// Account deletion must never create a replacement anonymous account just to delete it.
+export const getExistingSupabaseRequestAuthentication =
+  createRequestAuthentication(
+    getSupabaseClient,
+    clearPersistedSupabaseSession,
+    false,
+    false,
+  );

@@ -68,13 +68,13 @@ export const onboardingContent: Record<
   },
   privacy: {
     id: "privacy",
-    title: "Your privacy matters to us",
+    title: "Your conversations stay private",
     titleParts: [
-      { text: "Your privacy " },
-      { color: "blue", text: "matters to us" },
+      { text: "Your conversations " },
+      { color: "blue", text: "stay private" },
     ],
-    body: "Your chats can be personal. Wingr only uses your screenshot to understand the vibe and generate replies.",
-    ctaLabel: "Next",
+    body: "Your screenshot is securely processed to analyze your conversation and generate replies. Wingr doesn’t save your screenshots or conversations, and they’re not used to train AI models.",
+    ctaLabel: "Continue with WiNGR",
   },
   uploadScreenshot: {
     id: "uploadScreenshot",
