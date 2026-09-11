@@ -1,4 +1,8 @@
-import { createClient, isAuthApiError, type SupportedStorage } from "@supabase/supabase-js";
+import {
+  createClient,
+  isAuthApiError,
+  type SupportedStorage,
+} from "@supabase/supabase-js";
 
 type SupabaseConfiguration = {
   publishableKey: string;
@@ -8,6 +12,7 @@ type SupabaseConfiguration = {
 export type SupabaseRequestAuthentication = {
   accessToken: string;
   publishableKey: string;
+  userId: string;
 };
 
 const SESSION_EXPIRY_BUFFER_MS = 30_000;
@@ -20,7 +25,8 @@ function configuredBackendUrl() {
 
 export function getSupabaseConfiguration(): SupabaseConfiguration {
   const backendUrl = configuredBackendUrl();
-  const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim();
+  const publishableKey =
+    process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim();
   const url = backendUrl?.replace(/\/functions\/v1$/, "");
   if (!url || !publishableKey)
     throw new Error("Wingr secure identity is not configured.");
@@ -59,15 +65,19 @@ function getSupabaseClient() {
     clientConfiguration?.publishableKey !== configuration.publishableKey
   ) {
     clientConfiguration = configuration;
-    supabaseClient = createClient(configuration.url, configuration.publishableKey, {
-      auth: {
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-        persistSession: true,
-        storage: secureStorage,
-        storageKey: sessionStorageKey(configuration.url),
+    supabaseClient = createClient(
+      configuration.url,
+      configuration.publishableKey,
+      {
+        auth: {
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+          persistSession: true,
+          storage: secureStorage,
+          storageKey: sessionStorageKey(configuration.url),
+        },
       },
-    });
+    );
   }
   return { configuration, client: supabaseClient };
 }
@@ -77,11 +87,16 @@ function sessionStorageKey(url: string) {
 }
 
 function isInvalidRefreshToken(error: unknown) {
-  return isAuthApiError(error) &&
+  return (
+    isAuthApiError(error) &&
     (error.status === 400 || error.status === 401) &&
     (error.code === "refresh_token_not_found" ||
       error.code === "refresh_token_already_used" ||
-      (!error.code && /^Invalid Refresh Token: (Refresh Token Not Found|Refresh Token Already Used|Refresh Token is missing|Invalid Refresh Token)$/i.test(error.message)));
+      (!error.code &&
+        /^Invalid Refresh Token: (Refresh Token Not Found|Refresh Token Already Used|Refresh Token is missing|Invalid Refresh Token)$/i.test(
+          error.message,
+        )))
+  );
 }
 
 // The shared promise includes recovery, so simultaneous requests share one identity.
@@ -96,7 +111,8 @@ export function createRequestAuthentication(
     let { client, configuration } = getClient();
     let session;
     try {
-      const { data: sessionData, error: sessionError } = await client.auth.getSession();
+      const { data: sessionData, error: sessionError } =
+        await client.auth.getSession();
       if (sessionError) throw sessionError;
       session = sessionData.session;
       if (
@@ -120,12 +136,19 @@ export function createRequestAuthentication(
       if (error) throw error;
       session = data.session;
     }
-    if (!session?.access_token)
+    if (!session?.access_token || !session.user?.id)
       throw new Error("Wingr could not start a secure identity session.");
-    return { accessToken: session.access_token, publishableKey: configuration.publishableKey };
+    return {
+      accessToken: session.access_token,
+      publishableKey: configuration.publishableKey,
+      userId: session.user.id,
+    };
   }
   return () => {
-    if (!pending) pending = initialize().finally(() => { pending = null; });
+    if (!pending)
+      pending = initialize().finally(() => {
+        pending = null;
+      });
     return pending;
   };
 }

@@ -1,13 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { handleConversationRequest } from "./analyze-conversation.ts";
+import {
+  handleConversationRequest as handleConversationRequestCore,
+  type ConversationHandlerOptions,
+} from "./analyze-conversation.ts";
 import { ConversationError } from "./conversation.ts";
 import { input, result } from "./test-fixtures.ts";
 
+const AUTHENTICATED_USER_ID = "00000000-0000-4000-8000-000000000001";
 const request = (body: unknown = input) =>
   new Request("http://localhost/ai-conversation", {
     method: "POST",
+    headers: { authorization: "Bearer signed-user" },
     body: JSON.stringify(body),
+  });
+const handleConversationRequest = (
+  request: Request,
+  apiKey: string,
+  options: ConversationHandlerOptions = {},
+) =>
+  handleConversationRequestCore(request, apiKey, {
+    entitlementVerifier: {
+      hasActivePro: async () => true,
+    },
+    getVerifiedUserId: async () => AUTHENTICATED_USER_ID,
+    ...options,
   });
 const provider =
   (value: unknown): typeof fetch =>
@@ -26,16 +43,180 @@ test("endpoint returns messages, vibe and reply from one call compatible with th
     }),
     "key",
     {
-    fetchImpl: async (...args) => {
-      calls++;
-      return provider(result)(...args);
-    },
+      fetchImpl: async (...args) => {
+        calls++;
+        return provider(result)(...args);
+      },
     },
   );
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), result);
   assert.equal(calls, 1);
 });
+
+test("normal generation verifies the authenticated user before usage and OpenRouter", async () => {
+  const order: string[] = [];
+  const response = await handleConversationRequest(request(), "key", {
+    getVerifiedUserId: async (accessToken) => {
+      assert.equal(accessToken, "signed-user");
+      order.push("auth");
+      return AUTHENTICATED_USER_ID;
+    },
+    entitlementVerifier: {
+      hasActivePro: async (appUserId) => {
+        assert.equal(appUserId, AUTHENTICATED_USER_ID);
+        order.push("entitlement");
+        return true;
+      },
+    },
+    usageLimiter: {
+      claim: async () => {
+        order.push("usage");
+      },
+      claimOnboarding: async () => {
+        throw new Error("must not use the onboarding claim");
+      },
+    },
+    fetchImpl: async (...args) => {
+      order.push("openrouter");
+      return provider(result)(...args);
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(order, ["auth", "entitlement", "usage", "openrouter"]);
+});
+
+test("missing pro returns subscription_required without usage or OpenRouter", async () => {
+  let usageClaims = 0;
+  let providerCalls = 0;
+  const response = await handleConversationRequest(request(), "key", {
+    entitlementVerifier: {
+      hasActivePro: async () => false,
+    },
+    usageLimiter: {
+      claim: async () => {
+        usageClaims++;
+      },
+      claimOnboarding: async () => {},
+    },
+    fetchImpl: async (...args) => {
+      providerCalls++;
+      return provider(result)(...args);
+    },
+  });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), {
+    code: "subscription_required",
+    error: "An active WiNGR Pro subscription is required.",
+  });
+  assert.equal(usageClaims, 0);
+  assert.equal(providerCalls, 0);
+});
+
+test("request-body identity and premium fields cannot bypass the verified user entitlement", async () => {
+  const checkedUsers: string[] = [];
+  let usageClaims = 0;
+  let providerCalls = 0;
+  const response = await handleConversationRequest(
+    request({
+      ...input,
+      appUserId: "00000000-0000-4000-8000-000000000999",
+      isPro: true,
+      premium: true,
+      subscriptionStatus: "active",
+      userId: "00000000-0000-4000-8000-000000000999",
+    }),
+    "key",
+    {
+      entitlementVerifier: {
+        hasActivePro: async (appUserId) => {
+          checkedUsers.push(appUserId);
+          return false;
+        },
+      },
+      usageLimiter: {
+        claim: async () => {
+          usageClaims++;
+        },
+        claimOnboarding: async () => {},
+      },
+      fetchImpl: async (...args) => {
+        providerCalls++;
+        return provider(result)(...args);
+      },
+    },
+  );
+  assert.equal(response.status, 403);
+  assert.deepEqual(checkedUsers, [AUTHENTICATED_USER_ID]);
+  assert.equal(usageClaims, 0);
+  assert.equal(providerCalls, 0);
+});
+
+test("entitlement verification failures fail closed before usage and OpenRouter", async () => {
+  for (const failure of [
+    new Error("timeout"),
+    new Error("unavailable"),
+    new Error("malformed"),
+  ]) {
+    let usageClaims = 0;
+    let providerCalls = 0;
+    const response = await handleConversationRequest(request(), "key", {
+      entitlementVerifier: {
+        hasActivePro: async () => {
+          throw failure;
+        },
+      },
+      usageLimiter: {
+        claim: async () => {
+          usageClaims++;
+        },
+        claimOnboarding: async () => {},
+      },
+      fetchImpl: async (...args) => {
+        providerCalls++;
+        return provider(result)(...args);
+      },
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      code: "subscription_verification_unavailable",
+      error:
+        "Wingr could not verify your subscription right now. Please try again.",
+    });
+    assert.equal(usageClaims, 0);
+    assert.equal(providerCalls, 0);
+  }
+});
+
+test("request validation rejects before RevenueCat or usage", async () => {
+  let entitlementChecks = 0;
+  let usageClaims = 0;
+  const response = await handleConversationRequest(
+    request({ ...input, screenshot: "not-an-image" }),
+    "key",
+    {
+      entitlementVerifier: {
+        hasActivePro: async () => {
+          entitlementChecks++;
+          return true;
+        },
+      },
+      usageLimiter: {
+        claim: async () => {
+          usageClaims++;
+        },
+        claimOnboarding: async () => {},
+      },
+      fetchImpl: async () => {
+        throw new Error("must not call OpenRouter");
+      },
+    },
+  );
+  assert.equal(response.status, 400);
+  assert.equal(entitlementChecks, 0);
+  assert.equal(usageClaims, 0);
+});
+
 test("CORS and invalid requests never call the provider", async () => {
   const fetchImpl: typeof fetch = async () => {
     throw new Error("must not call");
@@ -44,7 +225,14 @@ test("CORS and invalid requests never call the provider", async () => {
     [new Request("http://localhost", { method: "OPTIONS" }), 200],
     [new Request("http://localhost"), 405],
     [request({ transcriptText: "old transcript" }), 400],
-    [new Request("http://localhost", { method: "POST", body: "{" }), 400],
+    [
+      new Request("http://localhost", {
+        method: "POST",
+        headers: { authorization: "Bearer signed-user" },
+        body: "{",
+      }),
+      400,
+    ],
   ] as const)
     assert.equal(
       (await handleConversationRequest(req, "key", { fetchImpl })).status,
@@ -178,7 +366,15 @@ test("failures before provider dispatch do not claim usage", async () => {
     ).status,
     400,
   );
-  assert.equal((await handleConversationRequest(request(), "", { fetchImpl, usageLimiter })).status, 502);
+  assert.equal(
+    (
+      await handleConversationRequest(request(), "", {
+        fetchImpl,
+        usageLimiter,
+      })
+    ).status,
+    502,
+  );
   assert.equal(claims, 0);
   assert.equal(calls, 0);
 });
@@ -189,7 +385,13 @@ test("the usage limit rejects before Gemini, including concurrent requests", asy
   const usageLimiter = {
     claim: async () => {
       await Promise.resolve();
-      if (used >= 500) throw new ConversationError("usage_limit", undefined, undefined, "2026-10-09T14:34:00Z");
+      if (used >= 500)
+        throw new ConversationError(
+          "usage_limit",
+          undefined,
+          undefined,
+          "2026-10-09T14:34:00Z",
+        );
       used++;
     },
     claimOnboarding: async () => {},
@@ -230,8 +432,14 @@ test("the usage limit rejects before Gemini, including concurrent requests", asy
       }),
     ),
   );
-  assert.equal(responses.filter((response) => response.status === 200).length, 500);
-  assert.equal(responses.filter((response) => response.status === 429).length, 1);
+  assert.equal(
+    responses.filter((response) => response.status === 200).length,
+    500,
+  );
+  assert.equal(
+    responses.filter((response) => response.status === 429).length,
+    1,
+  );
   assert.equal(calls, 500);
 });
 
@@ -239,13 +447,15 @@ test("onboarding claims are one-time, count as normal attempts and reject before
   let onboardingClaimed = false;
   let onboardingClaims = 0;
   let normalAttempts = 0;
+  let entitlementChecks = 0;
   let calls = 0;
   const usageLimiter = {
     claim: async () => {
       normalAttempts++;
     },
     claimOnboarding: async () => {
-      if (onboardingClaimed) throw new ConversationError("onboarding_reply_used");
+      if (onboardingClaimed)
+        throw new ConversationError("onboarding_reply_used");
       onboardingClaimed = true;
       onboardingClaims++;
       normalAttempts++;
@@ -258,10 +468,22 @@ test("onboarding claims are one-time, count as normal attempts and reject before
     return provider(result)(...args);
   };
   const first = await handleConversationRequest(onboardingRequest(), "key", {
+    entitlementVerifier: {
+      hasActivePro: async () => {
+        entitlementChecks++;
+        return false;
+      },
+    },
     usageLimiter,
     fetchImpl,
   });
   const second = await handleConversationRequest(onboardingRequest(), "key", {
+    entitlementVerifier: {
+      hasActivePro: async () => {
+        entitlementChecks++;
+        return false;
+      },
+    },
     usageLimiter,
     fetchImpl,
   });
@@ -273,6 +495,7 @@ test("onboarding claims are one-time, count as normal attempts and reject before
   });
   assert.equal(onboardingClaims, 1);
   assert.equal(normalAttempts, 1);
+  assert.equal(entitlementChecks, 0);
   assert.equal(calls, 1);
 });
 
@@ -283,7 +506,8 @@ test("an unusable onboarding completion and concurrent requests still consume on
     claim: async () => {},
     claimOnboarding: async () => {
       await Promise.resolve();
-      if (onboardingClaimed) throw new ConversationError("onboarding_reply_used");
+      if (onboardingClaimed)
+        throw new ConversationError("onboarding_reply_used");
       onboardingClaimed = true;
     },
   };
@@ -293,18 +517,25 @@ test("an unusable onboarding completion and concurrent requests still consume on
     usageLimiter,
     fetchImpl: async (...args) => {
       calls++;
-      return provider({ messages: [], replyable: false, vibeCheck: null, replies: [] })(
-        ...args,
-      );
+      return provider({
+        messages: [],
+        replyable: false,
+        vibeCheck: null,
+        replies: [],
+      })(...args);
     },
   });
-  const afterUnusable = await handleConversationRequest(onboardingRequest(), "key", {
-    usageLimiter,
-    fetchImpl: async (...args) => {
-      calls++;
-      return provider(result)(...args);
+  const afterUnusable = await handleConversationRequest(
+    onboardingRequest(),
+    "key",
+    {
+      usageLimiter,
+      fetchImpl: async (...args) => {
+        calls++;
+        return provider(result)(...args);
+      },
     },
-  });
+  );
   assert.equal(unusable.status, 422);
   assert.equal(afterUnusable.status, 409);
   assert.equal(calls, 1);
@@ -322,7 +553,13 @@ test("an unusable onboarding completion and concurrent requests still consume on
       }),
     ),
   );
-  assert.equal(concurrent.filter((response) => response.status === 200).length, 1);
-  assert.equal(concurrent.filter((response) => response.status === 409).length, 1);
+  assert.equal(
+    concurrent.filter((response) => response.status === 200).length,
+    1,
+  );
+  assert.equal(
+    concurrent.filter((response) => response.status === 409).length,
+    1,
+  );
   assert.equal(calls, 1);
 });

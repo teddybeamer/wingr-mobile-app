@@ -5,6 +5,7 @@ import { AccountDeletionError, deleteWingrAccount } from "./account-deletion";
 const authentication = async () => ({
   accessToken: "caller-token",
   publishableKey: "publishable-key",
+  userId: "caller-id",
 });
 
 test("account deletion sends only authenticated standard headers and no user ID/body", async (t) => {

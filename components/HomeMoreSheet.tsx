@@ -6,7 +6,14 @@ import {
 } from "@solar-icons/react-native/Linear";
 import * as Clipboard from "expo-clipboard";
 import { useRef, useState } from "react";
-import { Alert, Linking, StyleSheet, Text, TouchableOpacity } from "react-native";
+import {
+  Alert,
+  Linking,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { deleteWingrAccount } from "../lib/account-deletion";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BottomSheet } from "./BottomSheet";
@@ -100,63 +107,63 @@ export function HomeMoreSheet({
       onClosed={() => {
         void openDestination();
       }}
-      showHandle={false}
       bottomPadding={Math.max(30, insets.bottom) + 10}
-      panelStyle={styles.panel}
     >
-      {([
-        { id: "privacy", label: "Privacy", Icon: Lock },
-        { id: "support", label: "Contact Support", Icon: Letter },
-      ] as const).map(({ id, label, Icon }) => (
+      <View style={styles.options}>
+        {([
+          { id: "privacy", label: "Privacy", Icon: Lock },
+          { id: "support", label: "Contact Support", Icon: Letter },
+        ] as const).map(({ id, label, Icon }) => (
+          <TouchableOpacity
+            key={id}
+            accessibilityRole="link"
+            accessibilityLabel={label}
+            accessibilityHint={
+              id === "privacy"
+                ? "Opens the privacy policy in your browser"
+                : "Opens your email app"
+            }
+            disabled={!visible}
+            activeOpacity={0.7}
+            onPress={() => {
+              if (pendingDestination.current) return;
+              pendingDestination.current = id;
+              onClose();
+            }}
+            style={styles.row}
+          >
+            <Icon color="#A3A3A3" size={24} />
+            <Text style={styles.label}>{label}</Text>
+            <ArrowRightUp color="#A3A3A3" size={24} />
+          </TouchableOpacity>
+        ))}
         <TouchableOpacity
-          key={id}
-          accessibilityRole="link"
-          accessibilityLabel={label}
-          accessibilityHint={
-            id === "privacy"
-              ? "Opens the privacy policy in your browser"
-              : "Opens your email app"
-          }
-          disabled={!visible}
+          accessibilityLabel="Delete account"
+          accessibilityRole="button"
+          accessibilityHint="Permanently deletes your Wingr account"
+          disabled={!visible || isDeletingAccount}
           activeOpacity={0.7}
-          onPress={() => {
-            if (pendingDestination.current) return;
-            pendingDestination.current = id;
-            onClose();
-          }}
-          style={styles.row}
+          onPress={confirmAccountDeletion}
+          style={[
+            styles.row,
+            styles.deleteRow,
+            isDeletingAccount && styles.rowDisabled,
+          ]}
         >
-          <Icon color="#A3A3A3" size={24} />
-          <Text style={styles.label}>{label}</Text>
-          <ArrowRightUp color="#A3A3A3" size={24} />
+          <TrashBinTrash color="#FF5A65" size={24} />
+          <Text style={[styles.label, styles.deleteLabel]}>
+            {isDeletingAccount ? "Deleting account…" : "Delete account"}
+          </Text>
+          <ArrowRightUp color="#FF5A65" size={24} />
         </TouchableOpacity>
-      ))}
-      <TouchableOpacity
-        accessibilityLabel="Delete account"
-        accessibilityRole="button"
-        accessibilityHint="Permanently deletes your Wingr account"
-        disabled={!visible || isDeletingAccount}
-        activeOpacity={0.7}
-        onPress={confirmAccountDeletion}
-        style={[styles.row, styles.deleteRow, isDeletingAccount && styles.rowDisabled]}
-      >
-        <TrashBinTrash color="#FF5A65" size={24} />
-        <Text style={[styles.label, styles.deleteLabel]}>
-          {isDeletingAccount ? "Deleting account…" : "Delete account"}
-        </Text>
-        <ArrowRightUp color="#FF5A65" size={24} />
-      </TouchableOpacity>
+      </View>
     </BottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  panel: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    gap: 16,
-    paddingHorizontal: 10,
-    paddingTop: 26,
+  options: {
+    gap: 12,
   },
   row: {
     width: "100%",
@@ -166,17 +173,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: "row",
     gap: 12,
-    minHeight: 48,
-    paddingHorizontal: 16,
+    minHeight: 64,
+    paddingHorizontal: 24,
     paddingVertical: 8,
   },
   label: {
     color: "#F5F5F5",
     flex: 1,
-    fontFamily: "ClashDisplay",
-    fontSize: 24,
-    fontWeight: "700",
-    lineHeight: 29,
+    fontFamily: "ClashGrotesk",
+    fontSize: 18,
+    fontWeight: "600",
+    lineHeight: 22,
   },
   deleteRow: {
     borderColor: "#FF5A65",

@@ -8,7 +8,15 @@ endpoint with the original screenshot, tone and context. Images are not resized 
 
 ## Configuration
 
-- Backend secret: `OPENROUTER_API_KEY` (see `functions/.env.example`).
+- Backend secrets/configuration (see `functions/.env.example`):
+  - `OPENROUTER_API_KEY`.
+  - `REVENUECAT_V2_SECRET_API_KEY`: a RevenueCat v2 secret key restricted to
+    `customer_information:customers:read`. Never expose this key to the app or
+    prefix it with `EXPO_PUBLIC_`.
+  - `REVENUECAT_PROJECT_ID`: the RevenueCat project resource ID (`proj...`).
+  - `REVENUECAT_PRO_ENTITLEMENT_RESOURCE_ID`: the RevenueCat entitlement
+    resource ID (`entl...`) whose lookup key is exactly `pro`. This is not the
+    literal `pro` lookup key; copy the internal resource ID from RevenueCat.
 - App: `EXPO_PUBLIC_WINGR_API_BASE_URL=https://YOUR_PROJECT_REF.supabase.co/functions/v1`.
 - App identity: `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Enable Anonymous Sign-Ins in Supabase Auth before deploying; the app creates and securely persists an anonymous session per installation.
 - Model and 25-second provider deadline: `functions/_shared/openrouter.ts`.
@@ -18,10 +26,24 @@ endpoint with the original screenshot, tone and context. Images are not resized 
 - App network deadline: 35 seconds, including response body reads.
 - Images: PNG/JPEG/WebP, at most 10 MB. Context: at most 4,000 characters.
 
-Run locally with `supabase start` and `supabase functions serve` after configuring the secret.
-This change requires a new native app build to reflect the removed native dependencies and
-new direct file-system dependency. The installed Expo SDK remains 54; the required v56
-reference was read and the used APIs were also checked against installed package types.
+Run locally with `supabase start` and `supabase functions serve --env-file supabase/functions/.env.local`
+after configuring the secrets in an ignored local file. Configure the deployed
+function and deploy it with:
+
+```sh
+supabase secrets set REVENUECAT_V2_SECRET_API_KEY='replace-with-v2-secret' REVENUECAT_PROJECT_ID='proj_replace_me' REVENUECAT_PRO_ENTITLEMENT_RESOURCE_ID='entl_replace_me'
+supabase functions deploy ai-conversation
+```
+
+Create the RevenueCat key under Project settings > API keys as a v2 secret key.
+Grant only `customer_information:customers:read`; the function does not need any
+write permission. The endpoint reads
+`GET /v2/projects/{project_id}/customers/{supabase_user_id}/active_entitlements`.
+The URL customer ID always comes from the verified Supabase JWT subject.
+
+This entitlement enforcement is server-only and does not require another native
+app build. The existing RevenueCat client integration still requires a development
+or native build as before.
 
 ## Contract
 
@@ -76,11 +98,24 @@ Never disable privacy controls to troubleshoot a failed request.
 
 ## Usage limit
 
-Every authenticated anonymous user can dispatch 500 AI generation attempts in a rolling 30-day window. The count uses `attempted_at > now() - interval '30 days'`, so an event exactly 30 days old no longer counts. An attempt is permanently recorded immediately before OpenRouter is called; successful replies and unusable model results both count. Rejections before provider dispatch do not. The endpoint returns HTTP 429 with `code: "usage_limit"` before calling Gemini once the cap is reached. The same cap applies to Weekly and Monthly subscribers.
+For normal generations the server verifies the bearer JWT, validates the request,
+checks RevenueCat for the authenticated Supabase UUID's active `pro` entitlement,
+claims usage, and only then calls OpenRouter. A successful RevenueCat response
+without the configured active entitlement returns HTTP 403 with
+`code: "subscription_required"`. RevenueCat configuration, network, timeout,
+authentication, authorization, rate-limit, and response-validation failures return
+HTTP 503 with `code: "subscription_verification_unavailable"`. Neither response
+claims usage or calls OpenRouter.
+
+Every authenticated anonymous subscriber can dispatch 500 AI generation attempts in a rolling 30-day window. The count uses `attempted_at > now() - interval '30 days'`, so an event exactly 30 days old no longer counts. An attempt is permanently recorded immediately before OpenRouter is called; successful replies and unusable model results both count. Rejections before provider dispatch do not. The endpoint returns HTTP 429 with `code: "usage_limit"` before calling Gemini once the cap is reached. The same cap applies to Weekly and Monthly subscribers.
 
 The endpoint uses `claim_ai_generation_attempt_with_availability(is_onboarding)` to wrap the original claim RPCs in the same locked transaction. A blocked response includes `retryAt`, an ISO timestamp computed as the 500th newest active attempt plus 30 days (also correct above the cap). The app shows “Reply limit reached” with this time in the phone's timezone, rounded up to a minute, and a “Got it” button that dismisses the notice without requesting a reply. Missing or invalid timestamps use a generic limit message. Deploy the availability migration before the updated edge function, then update/reload the app; the original RPCs remain compatible with older functions.
 
-The onboarding screenshot flow is separately limited to one provider dispatch per anonymous user. Its atomic claim permanently records both the one-time onboarding marker and one normal generation attempt before OpenRouter is called. Repeating it returns HTTP 409 with `code: "onboarding_reply_used"` and never reaches Gemini.
+The onboarding screenshot flow does not require `pro` and remains separately
+limited to one provider dispatch per anonymous user. Its atomic claim permanently
+records both the one-time onboarding marker and one normal generation attempt
+before OpenRouter is called. Repeating it returns HTTP 409 with
+`code: "onboarding_reply_used"` and never reaches Gemini.
 
 The provider schema omits string length bounds and the large message-array bound, and uses Gemini's supported
 nullable type form. The former bounded schema triggered Google `INVALID_ARGUMENT`

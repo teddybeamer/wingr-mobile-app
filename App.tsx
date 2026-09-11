@@ -409,7 +409,9 @@ function WingrApp() {
   });
 
   useEffect(() => {
-    void initializeRevenueCat();
+    void initializeRevenueCat().catch(() => {
+      // The paywall retries initialization and presents a safe loading failure.
+    });
   }, []);
 
   console.log("[Wingr boot] App render", {

@@ -9,6 +9,7 @@ import {
 import { handleCors } from "./cors.ts";
 import { error, json } from "./http.ts";
 import { analyzeWithGemini } from "./openrouter.ts";
+import type { RevenueCatEntitlementVerifier } from "./revenuecat-entitlement.ts";
 import type { UsageLimiter } from "./usage-limit.ts";
 
 type GeminiOptions = NonNullable<Parameters<typeof analyzeWithGemini>[2]>;
@@ -16,8 +17,47 @@ export type ConversationHandlerOptions = Omit<
   GeminiOptions,
   "onProviderDispatch" | "signal"
 > & {
+  entitlementVerifier?: RevenueCatEntitlementVerifier;
+  getVerifiedUserId?: (accessToken: string) => Promise<string | null>;
   usageLimiter?: UsageLimiter;
 };
+
+const ACCESS_ERRORS = {
+  authentication_verification_unavailable: {
+    message: "Wingr could not verify your account right now. Please try again.",
+    status: 503,
+  },
+  subscription_required: {
+    message: "An active WiNGR Pro subscription is required.",
+    status: 403,
+  },
+  subscription_verification_unavailable: {
+    message:
+      "Wingr could not verify your subscription right now. Please try again.",
+    status: 503,
+  },
+  unauthorized: {
+    message: "Authentication is required.",
+    status: 401,
+  },
+} as const;
+
+function accessError(code: keyof typeof ACCESS_ERRORS) {
+  const failure = ACCESS_ERRORS[code];
+  return json({ code, error: failure.message }, { status: failure.status });
+}
+
+function bearerToken(request: Request) {
+  const authorization = request.headers.get("authorization");
+  if (!authorization?.startsWith("Bearer ")) return null;
+  return authorization.slice("Bearer ".length).trim() || null;
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    value,
+  );
+}
 
 export async function handleConversationRequest(
   request: Request,
@@ -27,6 +67,28 @@ export async function handleConversationRequest(
   const corsResponse = handleCors(request);
   if (corsResponse) return corsResponse;
   if (request.method !== "POST") return error("Method not allowed.", 405);
+
+  const {
+    entitlementVerifier,
+    getVerifiedUserId,
+    usageLimiter,
+    ...geminiOptions
+  } = options;
+
+  const accessToken = bearerToken(request);
+  if (!accessToken) return accessError("unauthorized");
+  if (!getVerifiedUserId) {
+    return accessError("authentication_verification_unavailable");
+  }
+  let userId: string | null;
+  try {
+    userId = await getVerifiedUserId(accessToken);
+  } catch {
+    return accessError("authentication_verification_unavailable");
+  }
+  const authenticatedUserId = userId?.trim() ?? "";
+  if (!isUuid(authenticatedUserId)) return accessError("unauthorized");
+
   try {
     let value;
     try {
@@ -44,7 +106,23 @@ export async function handleConversationRequest(
       throw new ConversationError("invalid_request");
     }
     const input = parseConversationRequest(value);
-    const { usageLimiter, ...geminiOptions } = options;
+
+    if (!input.isOnboardingGeneration) {
+      if (!entitlementVerifier) {
+        return accessError("subscription_verification_unavailable");
+      }
+      let hasActivePro: boolean;
+      try {
+        hasActivePro = await entitlementVerifier.hasActivePro(
+          authenticatedUserId,
+          request.signal,
+        );
+      } catch {
+        return accessError("subscription_verification_unavailable");
+      }
+      if (!hasActivePro) return accessError("subscription_required");
+    }
+
     const result = await analyzeWithGemini(input, apiKey, {
       ...geminiOptions,
       signal: request.signal,
@@ -77,6 +155,9 @@ export async function handleConversationRequest(
     };
     // Closed enum and numeric status only: never log a failure object or provider body.
     console.warn("[Wingr AI] request failed", diagnostics);
-    return json({ error: safeError.message, ...diagnostics, retryAt: safeError.retryAt }, { status });
+    return json(
+      { error: safeError.message, ...diagnostics, retryAt: safeError.retryAt },
+      { status },
+    );
   }
 }
