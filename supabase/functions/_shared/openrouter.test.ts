@@ -40,6 +40,8 @@ test("one multimodal request uses Gemini with medium reasoning, standard Vertex 
         assert.equal(body.model, "google/gemini-3.8-flash");
         assert.deepEqual(body.reasoning, { effort: "medium" });
         assert.equal(body.service_tier, "default");
+        assert.equal(body.max_tokens, 5000);
+        assert.equal(body.max_completion_tokens, undefined);
         assert.deepEqual(body.provider, {
           only: ["google-vertex/global"],
           zdr: true,

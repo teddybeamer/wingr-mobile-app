@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  configureRevenueCatWithSupabaseUser,
+  createRevenueCatIdentityCoordinator,
   isRevenueCatPurchaseCancelled,
   purchasePlanAndComplete,
   restoreAndComplete,
@@ -20,27 +20,29 @@ const customerInfo = (pro: boolean) => ({
   entitlements: { active: pro ? { pro: { isActive: true } } : {} },
 });
 
-test("RevenueCat is configured with the authenticated Supabase UUID", async () => {
+test("RevenueCat replaces a deleted account identity without reconfiguring the SDK", async () => {
+  const identity = createRevenueCatIdentityCoordinator();
   const calls: string[] = [];
-  let configuration: { apiKey: string; appUserID: string } | undefined;
-
-  await configureRevenueCatWithSupabaseUser({
-    apiKey: "test_public_key",
-    configure(value) {
-      calls.push("configure");
-      configuration = value;
+  const dependencies = {
+    apiKey: "public-key",
+    configure: ({ appUserID }: { apiKey: string; appUserID: string }) => {
+      calls.push(`configure:${appUserID}`);
     },
-    async getAuthentication() {
-      calls.push("authenticate");
-      return { userId: "7ebf38e2-8505-4aa9-893c-16a4c46cb262" };
+    logIn: async (appUserID: string) => {
+      calls.push(`login:${appUserID}`);
     },
+  };
+  await identity.identify({ ...dependencies, appUserID: "old-user" });
+  await identity.clear(async () => {
+    calls.push("logout");
   });
-
-  assert.deepEqual(calls, ["authenticate", "configure"]);
-  assert.deepEqual(configuration, {
-    apiKey: "test_public_key",
-    appUserID: "7ebf38e2-8505-4aa9-893c-16a4c46cb262",
-  });
+  await identity.identify({ ...dependencies, appUserID: "new-user" });
+  assert.equal(identity.currentUserId(), "new-user");
+  assert.deepEqual(calls, [
+    "configure:old-user",
+    "logout",
+    "login:new-user",
+  ]);
 });
 
 for (const [plan, expectedPackage] of [

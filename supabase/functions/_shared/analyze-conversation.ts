@@ -1,10 +1,6 @@
 import {
   ConversationError,
   parseConversationRequest,
-  MAX_SCREENSHOT_LENGTH,
-  MAX_CONTEXT_LENGTH,
-  MAX_PREVIOUS_WINGR_SUGGESTIONS,
-  MAX_REPLY_LENGTH,
 } from "./conversation.ts";
 import { handleCors } from "./cors.ts";
 import { error, json } from "./http.ts";
@@ -21,6 +17,64 @@ export type ConversationHandlerOptions = Omit<
   getVerifiedUserId?: (accessToken: string) => Promise<string | null>;
   usageLimiter?: UsageLimiter;
 };
+
+// A 10 MiB image expands to a 13,981,048-character data URL. 14 MiB leaves
+// 692,492 bytes beyond the maximum valid screenshot-and-metadata payload.
+export const MAX_REQUEST_BODY_BYTES = 14 * 1024 * 1024;
+
+function contentLengthExceedsLimit(request: Request) {
+  const contentLength = request.headers.get("content-length");
+  return (
+    contentLength !== null &&
+    /^\d+$/.test(contentLength) &&
+    Number(contentLength) > MAX_REQUEST_BODY_BYTES
+  );
+}
+
+async function readRequestBodyWithinLimit(request: Request): Promise<string> {
+  if (contentLengthExceedsLimit(request))
+    throw new ConversationError("payload_too_large");
+
+  if (!request.body) return "";
+
+  const reader = request.body.getReader();
+  let buffer = new Uint8Array(0);
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      if (value.byteLength > MAX_REQUEST_BODY_BYTES - length) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The response remains a deterministic 413 even if the peer has
+          // already closed the incoming stream.
+        }
+        throw new ConversationError("payload_too_large");
+      }
+      const requiredLength = length + value.byteLength;
+      if (requiredLength > buffer.byteLength) {
+        const capacity = Math.min(
+          MAX_REQUEST_BODY_BYTES,
+          Math.max(requiredLength, Math.max(64 * 1024, buffer.byteLength * 2)),
+        );
+        const next = new Uint8Array(capacity);
+        next.set(buffer);
+        buffer = next;
+      }
+      buffer.set(value, length);
+      length = requiredLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return new TextDecoder("utf-8", { fatal: true }).decode(
+    buffer.subarray(0, length),
+  );
+}
 
 const ACCESS_ERRORS = {
   authentication_verification_unavailable: {
@@ -92,17 +146,10 @@ export async function handleConversationRequest(
   try {
     let value;
     try {
-      const body = await request.text();
-      if (
-        body.length >
-        MAX_SCREENSHOT_LENGTH +
-          MAX_CONTEXT_LENGTH +
-          MAX_PREVIOUS_WINGR_SUGGESTIONS * MAX_REPLY_LENGTH +
-          1024
-      )
-        throw new Error();
+      const body = await readRequestBodyWithinLimit(request);
       value = JSON.parse(body);
-    } catch {
+    } catch (failure) {
+      if (failure instanceof ConversationError) throw failure;
       throw new ConversationError("invalid_request");
     }
     const input = parseConversationRequest(value);
@@ -141,6 +188,7 @@ export async function handleConversationRequest(
         : new ConversationError("provider");
     const status = {
       invalid_request: 400,
+      payload_too_large: 413,
       invalid_output: 502,
       unusable_screenshot: 422,
       provider: 502,

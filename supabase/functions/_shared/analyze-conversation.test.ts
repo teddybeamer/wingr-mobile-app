@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   handleConversationRequest as handleConversationRequestCore,
+  MAX_REQUEST_BODY_BYTES,
   type ConversationHandlerOptions,
 } from "./analyze-conversation.ts";
 import { ConversationError } from "./conversation.ts";
+import { createRevenueCatEntitlementVerifier } from "./revenuecat-entitlement.ts";
 import { input, result } from "./test-fixtures.ts";
 
 const AUTHENTICATED_USER_ID = "00000000-0000-4000-8000-000000000001";
@@ -14,6 +16,25 @@ const request = (body: unknown = input) =>
     headers: { authorization: "Bearer signed-user" },
     body: JSON.stringify(body),
   });
+const streamedRequest = (
+  chunks: Uint8Array[],
+  headers: Record<string, string> = {},
+) => {
+  let index = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (index === chunks.length) return controller.close();
+      controller.enqueue(chunks[index++]);
+    },
+  });
+  return new Request("http://localhost/ai-conversation", {
+    method: "POST",
+    headers: { authorization: "Bearer signed-user", ...headers },
+    body,
+    // Required by Node's Fetch implementation for a streamed request body.
+    duplex: "half",
+  } as RequestInit);
+};
 const handleConversationRequest = (
   request: Request,
   apiKey: string,
@@ -113,6 +134,49 @@ test("missing pro returns subscription_required without usage or OpenRouter", as
   assert.equal(providerCalls, 0);
 });
 
+test("a confirmed missing RevenueCat customer returns subscription_required", async () => {
+  let revenueCatCalls = 0;
+  let usageClaims = 0;
+  let providerCalls = 0;
+  const entitlementVerifier = createRevenueCatEntitlementVerifier({
+    apiKey: "server-secret",
+    projectId: "proj_wingr",
+    proEntitlementResourceId: "entl_pro",
+    fetchImpl: async () => {
+      revenueCatCalls++;
+      return revenueCatCalls === 1
+        ? Response.json({ type: "resource_missing" }, { status: 404 })
+        : Response.json({
+            object: "list",
+            items: [],
+            next_page: null,
+            url: "/v2/projects/proj_wingr/customers",
+          });
+    },
+  });
+  const response = await handleConversationRequest(request(), "key", {
+    entitlementVerifier,
+    usageLimiter: {
+      claim: async () => {
+        usageClaims++;
+      },
+      claimOnboarding: async () => {},
+    },
+    fetchImpl: async (...args) => {
+      providerCalls++;
+      return provider(result)(...args);
+    },
+  });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), {
+    code: "subscription_required",
+    error: "An active WiNGR Pro subscription is required.",
+  });
+  assert.equal(revenueCatCalls, 2);
+  assert.equal(usageClaims, 0);
+  assert.equal(providerCalls, 0);
+});
+
 test("request-body identity and premium fields cannot bypass the verified user entitlement", async () => {
   const checkedUsers: string[] = [];
   let usageClaims = 0;
@@ -191,8 +255,12 @@ test("entitlement verification failures fail closed before usage and OpenRouter"
 test("request validation rejects before RevenueCat or usage", async () => {
   let entitlementChecks = 0;
   let usageClaims = 0;
+  let providerCalls = 0;
+  const jpegBytesDeclaredAsPng =
+    "data:image/png;base64," +
+    Buffer.from([0xff, 0xd8, 0xff]).toString("base64");
   const response = await handleConversationRequest(
-    request({ ...input, screenshot: "not-an-image" }),
+    request({ ...input, screenshot: jpegBytesDeclaredAsPng }),
     "key",
     {
       entitlementVerifier: {
@@ -208,13 +276,114 @@ test("request validation rejects before RevenueCat or usage", async () => {
         claimOnboarding: async () => {},
       },
       fetchImpl: async () => {
-        throw new Error("must not call OpenRouter");
+        providerCalls++;
+        return provider(result)(new Request("http://localhost"));
       },
     },
   );
   assert.equal(response.status, 400);
+  assert.equal((await response.json()).code, "invalid_request");
   assert.equal(entitlementChecks, 0);
   assert.equal(usageClaims, 0);
+  assert.equal(providerCalls, 0);
+});
+
+test("Content-Length above the request limit rejects before the body is read", async () => {
+  let entitlementChecks = 0;
+  let usageClaims = 0;
+  let providerCalls = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(new Uint8Array([123]));
+    },
+  });
+  const req = new Request("http://localhost/ai-conversation", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer signed-user",
+      "content-length": String(MAX_REQUEST_BODY_BYTES + 1),
+    },
+    body,
+    duplex: "half",
+  } as RequestInit);
+  const response = await handleConversationRequest(req, "key", {
+    entitlementVerifier: {
+      hasActivePro: async () => {
+        entitlementChecks++;
+        return true;
+      },
+    },
+    usageLimiter: {
+      claim: async () => {
+        usageClaims++;
+      },
+      claimOnboarding: async () => {
+        usageClaims++;
+      },
+    },
+    fetchImpl: async () => {
+      providerCalls++;
+      return provider(result)(new Request("http://localhost"));
+    },
+  });
+  assert.equal(response.status, 413);
+  assert.equal((await response.json()).code, "payload_too_large");
+  assert.equal(req.bodyUsed, false);
+  assert.equal(entitlementChecks, 0);
+  assert.equal(usageClaims, 0);
+  assert.equal(providerCalls, 0);
+});
+
+test("streamed bodies that exceed the limit reject before RevenueCat and OpenRouter", async () => {
+  for (const headers of [
+    {},
+    { "content-length": "1" },
+  ] as Record<string, string>[]) {
+    let entitlementChecks = 0;
+    let usageClaims = 0;
+    let providerCalls = 0;
+    const response = await handleConversationRequest(
+      streamedRequest(
+        [new Uint8Array(MAX_REQUEST_BODY_BYTES), new Uint8Array([123])],
+        headers,
+      ),
+      "key",
+      {
+        entitlementVerifier: {
+          hasActivePro: async () => {
+            entitlementChecks++;
+            return true;
+          },
+        },
+        usageLimiter: {
+          claim: async () => {
+            usageClaims++;
+          },
+          claimOnboarding: async () => {
+            usageClaims++;
+          },
+        },
+        fetchImpl: async () => {
+          providerCalls++;
+          return provider(result)(new Request("http://localhost"));
+        },
+      },
+    );
+    assert.equal(response.status, 413);
+    assert.equal((await response.json()).code, "payload_too_large");
+    assert.equal(entitlementChecks, 0);
+    assert.equal(usageClaims, 0);
+    assert.equal(providerCalls, 0);
+  }
+});
+
+test("a body exactly at the byte boundary is parsed and malformed JSON remains a 400", async () => {
+  const response = await handleConversationRequest(
+    streamedRequest([new Uint8Array(MAX_REQUEST_BODY_BYTES).fill(0x20)]),
+    "key",
+  );
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).code, "invalid_request");
 });
 
 test("CORS and invalid requests never call the provider", async () => {

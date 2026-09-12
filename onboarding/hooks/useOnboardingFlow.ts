@@ -3,7 +3,7 @@ import { onboardingFlow } from '../data/onboardingConfig';
 import type { OnboardingStepId } from '../types/onboarding';
 
 export function useOnboardingFlow(
-  onComplete: () => void,
+  onComplete: () => void | Promise<void>,
   initialStepId?: OnboardingStepId,
 ) {
   const initialIndex = Math.max(
@@ -48,7 +48,7 @@ export function useOnboardingFlow(
           [currentStep.id]: choiceId,
         }));
       },
-      skip: onComplete,
+      skip: () => void onComplete(),
       totalSteps,
     }),
     [

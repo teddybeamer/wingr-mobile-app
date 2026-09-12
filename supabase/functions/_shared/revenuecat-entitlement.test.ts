@@ -17,6 +17,23 @@ function response(items: unknown[], nextPage: string | null = null) {
   });
 }
 
+function missingCustomerResponse() {
+  return Response.json(
+    { type: "resource_missing", message: "PRIVATE UPSTREAM RESPONSE" },
+    { status: 404 },
+  );
+}
+
+function customerListResponse(value: Record<string, unknown> = {}) {
+  return Response.json({
+    object: "list",
+    items: [],
+    next_page: null,
+    url: "/v2/projects/proj_wingr/customers",
+    ...value,
+  });
+}
+
 function activeEntitlement(entitlementId: string) {
   return {
     object: "customer.active_entitlement",
@@ -62,6 +79,76 @@ test("a successful RevenueCat response without pro denies access", async () => {
   }
 });
 
+test("a confirmed missing RevenueCat customer has no active pro entitlement", async () => {
+  const urls: string[] = [];
+  const hasPro = await verifier(async (url, init) => {
+    urls.push(String(url));
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("authorization"), "Bearer server-secret");
+    return urls.length === 1 ? missingCustomerResponse() : customerListResponse();
+  }).hasActivePro(APP_USER_ID);
+  assert.equal(hasPro, false);
+  assert.deepEqual(urls, [
+    `https://api.revenuecat.com/v2/projects/proj_wingr/customers/${APP_USER_ID}/active_entitlements?limit=100`,
+    "https://api.revenuecat.com/v2/projects/proj_wingr/customers?limit=1",
+  ]);
+});
+
+test("only resource_missing 404 triggers the project confirmation", async () => {
+  let calls = 0;
+  await assert.rejects(
+    verifier(async () => {
+      calls++;
+      return Response.json({ type: "different_error" }, { status: 404 });
+    }).hasActivePro(APP_USER_ID),
+    (failure: unknown) => {
+      assert.ok(failure instanceof RevenueCatVerificationError);
+      assert.equal(failure.upstreamStatus, 404);
+      return true;
+    },
+  );
+  assert.equal(calls, 1);
+});
+
+test("missing-customer confirmation failures remain fail closed", async () => {
+  for (const status of [404, 401, 403, 429, 500, 503]) {
+    let calls = 0;
+    await assert.rejects(
+      verifier(async () => {
+        calls++;
+        return calls === 1
+          ? missingCustomerResponse()
+          : Response.json({ type: "confirmation_failure" }, { status });
+      }).hasActivePro(APP_USER_ID),
+      (failure: unknown) => {
+        assert.ok(failure instanceof RevenueCatVerificationError);
+        assert.equal(failure.reason, "unavailable");
+        assert.equal(failure.upstreamStatus, status);
+        return true;
+      },
+    );
+    assert.equal(calls, 2);
+  }
+});
+
+test("a malformed missing-customer confirmation response remains fail closed", async () => {
+  let calls = 0;
+  await assert.rejects(
+    verifier(async () => {
+      calls++;
+      return calls === 1
+        ? missingCustomerResponse()
+        : customerListResponse({ url: undefined });
+    }).hasActivePro(APP_USER_ID),
+    (failure: unknown) => {
+      assert.ok(failure instanceof RevenueCatVerificationError);
+      assert.equal(failure.reason, "malformed");
+      return true;
+    },
+  );
+  assert.equal(calls, 2);
+});
+
 test("RevenueCat 401, 403, and 429 responses fail closed", async () => {
   for (const status of [401, 403, 429]) {
     await assert.rejects(
@@ -80,6 +167,30 @@ test("RevenueCat 401, 403, and 429 responses fail closed", async () => {
       },
     );
   }
+});
+
+test("RevenueCat failure metadata retains only machine-readable type and code", async () => {
+  await assert.rejects(
+    verifier(async () =>
+      Response.json(
+        {
+          type: "resource_missing",
+          code: "customer_not_found",
+          message: "PRIVATE UPSTREAM RESPONSE",
+        },
+        { status: 404 },
+      ),
+    ).hasActivePro(APP_USER_ID),
+    (failure: unknown) => {
+      assert.ok(failure instanceof RevenueCatVerificationError);
+      assert.equal(failure.reason, "unavailable");
+      assert.equal(failure.upstreamStatus, 404);
+      assert.equal(failure.upstreamErrorType, "resource_missing");
+      assert.equal(failure.upstreamErrorCode, "customer_not_found");
+      assert.ok(!failure.message.includes("PRIVATE"));
+      return true;
+    },
+  );
 });
 
 test("network failures and timeouts fail closed", async () => {

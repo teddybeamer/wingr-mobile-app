@@ -33,7 +33,7 @@ export function buildOpenRouterRequest(request: ConversationRequest) {
         ],
       },
     ],
-    max_tokens: 8000,
+    max_tokens: 5000,
     response_format: {
       type: "json_schema",
       json_schema: {

@@ -21,10 +21,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": [
-        "android.permission.RECORD_AUDIO",
-        "com.android.vending.BILLING"
-      ]
+      "permissions": ["com.android.vending.BILLING"]
     },
     "web": {
       "bundler": "metro",
@@ -34,7 +31,9 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Wingr needs access to your photos so you can upload text screenshots."
+          "photosPermission": "Wingr needs access to your photos so you can upload text screenshots.",
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ],
       "expo-font"

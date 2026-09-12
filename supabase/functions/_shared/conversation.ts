@@ -24,6 +24,7 @@ export type ConversationResult = {
 
 export const CONVERSATION_ERROR_KINDS = [
   "invalid_request",
+  "payload_too_large",
   "invalid_output",
   "unusable_screenshot",
   "provider",
@@ -99,6 +100,7 @@ export class ConversationError extends Error {
         : {
             invalid_request:
               "Choose a PNG, JPEG, or WebP screenshot under 10 MB and a valid tone.",
+            payload_too_large: "The request payload is too large.",
             invalid_output:
               "Wingr could not create a reliable reply. Please try again.",
             unusable_screenshot:
@@ -133,6 +135,9 @@ export const MAX_SCREENSHOT_LENGTH = Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 32;
 export const MAX_CONTEXT_LENGTH = 4000;
 export const MAX_REPLY_LENGTH = 500;
 export const MAX_PREVIOUS_WINGR_SUGGESTIONS = 3;
+const IMAGE_SIGNATURE_BASE64_LENGTH = 16;
+
+type SupportedImageType = "png" | "jpeg" | "webp";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -151,6 +156,37 @@ function text(value: unknown, max: number): value is string {
 export function isReplyTone(value: unknown): value is ReplyTone {
   return REPLY_TONES.includes(value as ReplyTone);
 }
+
+function hasExpectedImageSignature(
+  declaredType: SupportedImageType,
+  base64Payload: string,
+): boolean {
+  let signature: string;
+  try {
+    // Twelve decoded bytes cover every supported signature. Decode only this
+    // bounded prefix rather than allocating the complete image during parsing.
+    signature = atob(base64Payload.slice(0, IMAGE_SIGNATURE_BASE64_LENGTH));
+  } catch {
+    return false;
+  }
+
+  const matches = (expected: readonly number[], offset = 0) =>
+    signature.length >= offset + expected.length &&
+    expected.every(
+      (byte, index) => signature.charCodeAt(offset + index) === byte,
+    );
+
+  switch (declaredType) {
+    case "png":
+      return matches([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    case "jpeg":
+      return matches([0xff, 0xd8, 0xff]);
+    case "webp":
+      return matches([0x52, 0x49, 0x46, 0x46]) &&
+        matches([0x57, 0x45, 0x42, 0x50], 8);
+  }
+}
+
 export function parseConversationRequest(value: unknown): ConversationRequest {
   if (
     !isObject(value) ||
@@ -181,6 +217,11 @@ export function parseConversationRequest(value: unknown): ConversationRequest {
     match[2].length % 4 !== 0 ||
     (match[2].length / 4) * 3 - (match[2].match(/=+$/)?.[0].length ?? 0) >
       MAX_IMAGE_BYTES
+  ) {
+    throw new ConversationError("invalid_request");
+  }
+  if (
+    !hasExpectedImageSignature(match[1] as SupportedImageType, match[2])
   ) {
     throw new ConversationError("invalid_request");
   }

@@ -1,13 +1,14 @@
 import { Platform } from "react-native";
 import Purchases, {
   type CustomerInfo,
+  type CustomerInfoUpdateListener,
   type MakePurchaseResult,
   type PurchasesOfferings,
   type PurchasesPackage,
 } from "react-native-purchases";
 import { getSupabaseRequestAuthentication } from "./supabase-auth";
 import {
-  configureRevenueCatWithSupabaseUser,
+  createRevenueCatIdentityCoordinator,
   hasProEntitlement,
 } from "./revenuecat-core";
 
@@ -25,6 +26,7 @@ declare const process:
 const REVENUECAT_TEST_STORE_API_KEY = "test_FvuyCnFJNducCpuqsWLtyzMhkoL";
 
 let initializationPromise: Promise<boolean> | null = null;
+const revenueCatIdentity = createRevenueCatIdentityCoordinator();
 
 function getProductionApiKey() {
   if (Platform.OS === "ios") {
@@ -48,7 +50,15 @@ function getRevenueCatApiKey() {
     : getProductionApiKey();
 }
 
-export function initializeRevenueCat() {
+export function initializeRevenueCat(authenticatedUserId?: string) {
+  const requestedUserId = authenticatedUserId?.trim() || null;
+  if (
+    initializationPromise &&
+    requestedUserId &&
+    revenueCatIdentity.currentUserId() !== requestedUserId
+  ) {
+    initializationPromise = null;
+  }
   if (!initializationPromise) {
     initializationPromise = (async () => {
       const apiKey = getRevenueCatApiKey();
@@ -57,10 +67,18 @@ export function initializeRevenueCat() {
         return false;
       }
 
-      await configureRevenueCatWithSupabaseUser({
+      const appUserID =
+        requestedUserId ??
+        (await getSupabaseRequestAuthentication()).userId.trim();
+      if (!appUserID) {
+        throw new Error("Wingr could not identify the RevenueCat customer.");
+      }
+
+      await revenueCatIdentity.identify({
         apiKey,
+        appUserID,
         configure: (configuration) => Purchases.configure(configuration),
-        getAuthentication: getSupabaseRequestAuthentication,
+        logIn: (userId) => Purchases.logIn(userId),
       });
       return true;
     })().catch((error) => {
@@ -70,6 +88,20 @@ export function initializeRevenueCat() {
   }
 
   return initializationPromise;
+}
+
+export function subscribeToRevenueCatCustomerInfo(
+  listener: CustomerInfoUpdateListener,
+) {
+  Purchases.addCustomerInfoUpdateListener(listener);
+  return () => {
+    Purchases.removeCustomerInfoUpdateListener(listener);
+  };
+}
+
+export async function clearRevenueCatIdentity() {
+  initializationPromise = null;
+  await revenueCatIdentity.clear(() => Purchases.logOut());
 }
 
 async function requireRevenueCat() {

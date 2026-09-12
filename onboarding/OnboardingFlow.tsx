@@ -25,7 +25,9 @@ import type {
 } from "./types/onboarding";
 
 type OnboardingFlowProps = {
-  onComplete: () => void;
+  initialStepId?: OnboardingStepId;
+  onComplete: () => void | Promise<void>;
+  userId: string;
 };
 
 const screenMap: Record<
@@ -45,14 +47,18 @@ const screenMap: Record<
   wouldYouSend: WouldYouSendScreen,
 };
 
-export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
+export function OnboardingFlow({
+  initialStepId,
+  onComplete,
+  userId,
+}: OnboardingFlowProps) {
   const [hasRestoredReplyProgress, setHasRestoredReplyProgress] = useState<
     boolean | null
   >(null);
 
   useEffect(() => {
     let mounted = true;
-    void hasDisplayedOnboardingReply()
+    void hasDisplayedOnboardingReply(userId)
       .then((hasDisplayedReply) => {
         if (mounted) setHasRestoredReplyProgress(hasDisplayedReply);
       })
@@ -62,14 +68,18 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [userId]);
 
   if (hasRestoredReplyProgress === null) return null;
 
   return (
     <OnboardingFlowContent
-      initialStepId={hasRestoredReplyProgress ? "testimonials" : undefined}
+      initialStepId={
+        initialStepId ??
+        (hasRestoredReplyProgress ? "testimonials" : undefined)
+      }
       onComplete={onComplete}
+      userId={userId}
     />
   );
 }
@@ -77,14 +87,15 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 function OnboardingFlowContent({
   initialStepId,
   onComplete,
+  userId,
 }: OnboardingFlowProps & { initialStepId?: OnboardingStepId }) {
   const conversation = useConversationFlow();
   const [analysisFailureCount, setAnalysisFailureCount] = useState(0);
-  const completeOnboarding = useCallback(() => {
+  const completeOnboarding = useCallback(async () => {
     conversation.reset();
     setAnalysisFailureCount(0);
     posthog.capture("onboarding_completed");
-    onComplete();
+    await onComplete();
   }, [conversation, onComplete]);
   const {
     canGoBack,
@@ -124,7 +135,7 @@ function OnboardingFlowContent({
       } else if (result === "ready") {
         setAnalysisFailureCount(0);
         try {
-          await markOnboardingReplyDisplayed();
+          await markOnboardingReplyDisplayed(userId);
         } catch {
           // The reply remains usable even if local resume progress cannot be saved.
         }
@@ -132,7 +143,7 @@ function OnboardingFlowContent({
 
       return result;
     },
-    [conversation],
+    [conversation, userId],
   );
 
   const handlePrimaryAction = async () => {

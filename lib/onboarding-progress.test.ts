@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  clearOnboardingCompletion,
   hasDisplayedOnboardingReply,
+  hasCompletedOnboarding,
+  markOnboardingCompleted,
   markOnboardingReplyDisplayed,
+  ONBOARDING_COMPLETED_KEY,
   ONBOARDING_REPLY_DISPLAYED_KEY,
   type OnboardingProgressStorage,
   clearOnboardingReplyProgress,
@@ -23,12 +27,15 @@ function storageWith(value: string | null = null) {
   return { storage, values };
 }
 
-test("onboarding reply progress is absent until a displayed reply is marked", async () => {
+test("onboarding reply progress is absent until a displayed reply is marked for that user", async () => {
   const { storage, values } = storageWith();
-  assert.equal(await hasDisplayedOnboardingReply(storage), false);
-  await markOnboardingReplyDisplayed(storage);
-  assert.equal(values.get(ONBOARDING_REPLY_DISPLAYED_KEY), "true");
-  assert.equal(await hasDisplayedOnboardingReply(storage), true);
+  assert.equal(await hasDisplayedOnboardingReply("user-a", storage), false);
+  await markOnboardingReplyDisplayed("user-a", storage);
+  assert.deepEqual(JSON.parse(values.get(ONBOARDING_REPLY_DISPLAYED_KEY)!), {
+    userId: "user-a",
+  });
+  assert.equal(await hasDisplayedOnboardingReply("user-a", storage), true);
+  assert.equal(await hasDisplayedOnboardingReply("user-b", storage), false);
 });
 
 test("account cleanup removes the onboarding marker", async () => {
@@ -39,11 +46,26 @@ test("account cleanup removes the onboarding marker", async () => {
 
 test("only the expected marker resumes the onboarding reply step", async () => {
   assert.equal(
-    await hasDisplayedOnboardingReply(storageWith("false").storage),
+    await hasDisplayedOnboardingReply(
+      "user-a",
+      storageWith(JSON.stringify({ userId: "user-b" })).storage,
+    ),
     false,
   );
   assert.equal(
-    await hasDisplayedOnboardingReply(storageWith("true").storage),
+    await hasDisplayedOnboardingReply(
+      "user-a",
+      storageWith(JSON.stringify({ userId: "user-a" })).storage,
+    ),
     true,
   );
+});
+
+test("onboarding completion is persisted per account and cleared with local account state", async () => {
+  const { storage, values } = storageWith();
+  await markOnboardingCompleted("user-a", storage);
+  assert.equal(await hasCompletedOnboarding("user-a", storage), true);
+  assert.equal(await hasCompletedOnboarding("user-b", storage), false);
+  await clearOnboardingCompletion(storage);
+  assert.equal(values.has(ONBOARDING_COMPLETED_KEY), false);
 });

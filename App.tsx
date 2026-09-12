@@ -81,8 +81,23 @@ import {
   VibeCheckCard,
 } from "./components/conversation/ConversationContent";
 import { ReplyLoadingScreen } from "./components/conversation/ReplyLoadingScreen";
-import { initializeRevenueCat } from "./lib/revenuecat";
+import {
+  getRevenueCatCustomerInfo,
+  hasProEntitlement,
+  initializeRevenueCat,
+  subscribeToRevenueCatCustomerInfo,
+} from "./lib/revenuecat";
 import { clearAccountLocalState } from "./lib/account-local-state";
+import { getSupabaseRequestAuthentication } from "./lib/supabase-auth";
+import {
+  hasCompletedOnboarding,
+  markOnboardingCompleted,
+} from "./lib/onboarding-progress";
+import {
+  resolveLaunchRoute,
+  routeForCustomerInfo,
+  type LaunchRoute,
+} from "./lib/launch-routing";
 
 const DEBUG_BOOT_PROBE = false;
 
@@ -376,7 +391,15 @@ export default function App() {
 }
 
 function WingrApp() {
-  const [screen, setScreen] = useState<Screen>("onboarding");
+  const [screen, setScreen] = useState<Screen | null>(null);
+  const [authenticatedUserId, setAuthenticatedUserId] = useState<
+    string | null
+  >(null);
+  const [onboardingInitialStep, setOnboardingInitialStep] = useState<
+    "paywall" | undefined
+  >(undefined);
+  const [launchError, setLaunchError] = useState(false);
+  const [launchRevision, setLaunchRevision] = useState(0);
   const [onboardingInstance, setOnboardingInstance] = useState(0);
   const [showDebugBootScreen, setShowDebugBootScreen] =
     useState(DEBUG_BOOT_PROBE);
@@ -386,6 +409,7 @@ function WingrApp() {
     null,
   );
   const uploadRevealVersionRef = useRef(0);
+  const launchGenerationRef = useRef(0);
   const [uploadRevealToken, setUploadRevealToken] = useState<number | null>(
     null,
   );
@@ -409,10 +433,66 @@ function WingrApp() {
   });
 
   useEffect(() => {
-    void initializeRevenueCat().catch(() => {
-      // The paywall retries initialization and presents a safe loading failure.
-    });
-  }, []);
+    let mounted = true;
+    let unsubscribe: (() => void) | undefined;
+    let customerInfoRevision = 0;
+    const generation = ++launchGenerationRef.current;
+
+    const commitRoute = (route: LaunchRoute, userId: string) => {
+      if (!mounted || launchGenerationRef.current !== generation) return;
+      setAuthenticatedUserId(userId);
+      setOnboardingInitialStep(route === "paywall" ? "paywall" : undefined);
+      setScreen(route === "main" ? "landing" : "onboarding");
+      setLaunchError(false);
+    };
+
+    const routeUpdatedCustomerInfo = async (
+      customerInfo: Parameters<typeof hasProEntitlement>[0],
+      userId: string,
+    ) => {
+      const revision = ++customerInfoRevision;
+      const route = await routeForCustomerInfo({
+        customerInfo,
+        hasProEntitlement,
+        hasCompletedOnboarding: () =>
+          hasCompletedOnboarding(userId).catch(() => false),
+        markOnboardingCompleted: () =>
+          markOnboardingCompleted(userId).catch(() => {}),
+      });
+      if (revision === customerInfoRevision) commitRoute(route, userId);
+    };
+
+    void resolveLaunchRoute({
+      getAuthentication: getSupabaseRequestAuthentication,
+      initializeRevenueCat,
+      getCustomerInfo: getRevenueCatCustomerInfo,
+      hasProEntitlement,
+      hasCompletedOnboarding: (userId) =>
+        hasCompletedOnboarding(userId).catch(() => false),
+      markOnboardingCompleted: (userId) =>
+        markOnboardingCompleted(userId).catch(() => {}),
+    })
+      .then(({ route, userId }) => {
+        if (!mounted || launchGenerationRef.current !== generation) return;
+        commitRoute(route, userId);
+        unsubscribe = subscribeToRevenueCatCustomerInfo((customerInfo) => {
+          void routeUpdatedCustomerInfo(customerInfo, userId).catch(() => {
+            // Keep the last authoritative route if only a local marker read fails.
+          });
+        });
+      })
+      .catch(() => {
+        if (mounted && launchGenerationRef.current === generation) {
+          setScreen(null);
+          setLaunchError(true);
+        }
+      });
+
+    return () => {
+      mounted = false;
+      unsubscribe?.();
+    };
+  }, [launchRevision]);
 
   console.log("[Wingr boot] App render", {
     fontsLoaded,
@@ -460,6 +540,19 @@ function WingrApp() {
     );
   }
 
+  if (screen === null) {
+    return (
+      <View style={styles.debugBootScreen}>
+        <Text style={styles.debugBootTitle}>Wingr</Text>
+        <Text style={styles.debugBootBody}>
+          {launchError
+            ? "Wingr could not verify your subscription. Restart the app to try again."
+            : "Loading your account…"}
+        </Text>
+      </View>
+    );
+  }
+
   const handlePickScreenshotForUpload = async () => {
     const screenshotUri = await pickScreenshot();
 
@@ -475,7 +568,10 @@ function WingrApp() {
     setScreen("upload");
   };
 
-  const handleEnterLanding = () => {
+  const handleEnterLanding = async () => {
+    if (authenticatedUserId) {
+      await markOnboardingCompleted(authenticatedUserId).catch(() => {});
+    }
     if (!landingRevealPlayedRef.current) {
       landingRevealPlayedRef.current = true;
       landingRevealVersionRef.current += 1;
@@ -520,12 +616,17 @@ function WingrApp() {
   };
 
   const handleAccountDeleted = async () => {
+    launchGenerationRef.current += 1;
     await clearAccountLocalState();
     conversation.reset();
+    setAuthenticatedUserId(null);
+    setOnboardingInitialStep(undefined);
     setLandingRevealToken(null);
     setUploadRevealToken(null);
     setOnboardingInstance((current) => current + 1);
-    setScreen("onboarding");
+    setScreen(null);
+    setLaunchError(false);
+    setLaunchRevision((current) => current + 1);
   };
 
   return (
@@ -536,10 +637,12 @@ function WingrApp() {
       <BootErrorBoundary>
         <SafeAreaView style={styles.safeArea}>
           <StatusBar style="light" />
-          {screen === "onboarding" ? (
+          {screen === "onboarding" && authenticatedUserId ? (
             <OnboardingFlow
+              initialStepId={onboardingInitialStep}
               key={onboardingInstance}
               onComplete={handleEnterLanding}
+              userId={authenticatedUserId}
             />
           ) : null}
 

@@ -62,7 +62,7 @@ export type OnboardingScreenProps = {
   ctaLoading?: boolean;
   analysisFailureCount?: number;
   onBack: () => void;
-  onComplete: () => void;
+  onComplete: () => void | Promise<void>;
   onNext: () => void;
   onPrimaryAction?: () => void | Promise<void>;
   onReplacementScreenshotSelected?: (

@@ -13,30 +13,45 @@ type OfferingLike<TPackage> = {
   weekly: TPackage | null;
 };
 
+export function createRevenueCatIdentityCoordinator() {
+  let configured = false;
+  let userId: string | null = null;
+
+  return {
+    currentUserId() {
+      return userId;
+    },
+    async identify({
+      apiKey,
+      appUserID,
+      configure,
+      logIn,
+    }: {
+      apiKey: string;
+      appUserID: string;
+      configure: (configuration: { apiKey: string; appUserID: string }) => void;
+      logIn: (appUserID: string) => Promise<unknown>;
+    }) {
+      if (!configured) {
+        configure({ apiKey, appUserID });
+        configured = true;
+      } else if (userId !== appUserID) {
+        await logIn(appUserID);
+      }
+      userId = appUserID;
+    },
+    async clear(logOut: () => Promise<unknown>) {
+      userId = null;
+      if (configured) await logOut();
+    },
+  };
+}
+
 export class RevenueCatPackageUnavailableError extends Error {
   constructor(plan: RevenueCatPlan) {
     super(`The RevenueCat ${plan} package is unavailable.`);
     this.name = "RevenueCatPackageUnavailableError";
   }
-}
-
-export async function configureRevenueCatWithSupabaseUser({
-  apiKey,
-  configure,
-  getAuthentication,
-}: {
-  apiKey: string;
-  configure: (configuration: { apiKey: string; appUserID: string }) => void;
-  getAuthentication: () => Promise<{ userId: string }>;
-}) {
-  const authentication = await getAuthentication();
-  const appUserID = authentication.userId.trim();
-
-  if (!appUserID) {
-    throw new Error("Wingr could not identify the RevenueCat customer.");
-  }
-
-  configure({ apiKey, appUserID });
 }
 
 export function hasProEntitlement(customerInfo: CustomerInfoLike) {
@@ -60,7 +75,7 @@ export async function purchasePlanAndComplete<TPackage>({
   purchasePackage,
 }: {
   offering: OfferingLike<TPackage>;
-  onComplete: () => void;
+  onComplete: () => void | Promise<void>;
   plan: RevenueCatPlan;
   purchasePackage: (
     selectedPackage: TPackage,
@@ -76,7 +91,7 @@ export async function purchasePlanAndComplete<TPackage>({
   const unlocked = hasProEntitlement(customerInfo);
 
   if (unlocked) {
-    onComplete();
+    await onComplete();
   }
 
   return unlocked;
@@ -86,14 +101,14 @@ export async function restoreAndComplete({
   onComplete,
   restorePurchases,
 }: {
-  onComplete: () => void;
+  onComplete: () => void | Promise<void>;
   restorePurchases: () => Promise<CustomerInfoLike>;
 }) {
   const customerInfo = await restorePurchases();
   const unlocked = hasProEntitlement(customerInfo);
 
   if (unlocked) {
-    onComplete();
+    await onComplete();
   }
 
   return unlocked;

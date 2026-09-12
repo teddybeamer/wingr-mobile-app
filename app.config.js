@@ -21,10 +21,7 @@ export default {
         monochromeImage: './assets/android-icon-monochrome.png',
       },
       predictiveBackGestureEnabled: false,
-      permissions: [
-        'android.permission.RECORD_AUDIO',
-        'com.android.vending.BILLING',
-      ],
+      permissions: ['com.android.vending.BILLING'],
     },
     web: {
       bundler: 'metro',
@@ -36,6 +33,8 @@ export default {
         {
           photosPermission:
             'Wingr needs access to your photos so you can upload text screenshots.',
+          cameraPermission: false,
+          microphonePermission: false,
         },
       ],
       'expo-font',

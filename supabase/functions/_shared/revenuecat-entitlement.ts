@@ -16,6 +16,8 @@ export class RevenueCatVerificationError extends Error {
       | "timeout"
       | "unavailable",
     public readonly upstreamStatus?: number,
+    public readonly upstreamErrorType?: string,
+    public readonly upstreamErrorCode?: string,
   ) {
     super("RevenueCat entitlement verification is unavailable.");
     this.name = "RevenueCatVerificationError";
@@ -30,7 +32,28 @@ function nonEmpty(value: string) {
   return value.trim().length > 0;
 }
 
-function parseActiveEntitlementList(value: unknown) {
+function safeMachineReadableErrorField(value: unknown) {
+  return typeof value === "string" && /^[a-zA-Z0-9._-]{1,100}$/.test(value)
+    ? value
+    : undefined;
+}
+
+async function revenueCatErrorMetadata(response: Response) {
+  try {
+    const payload = await response.json();
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload))
+      return {};
+    const error = payload as { type?: unknown; code?: unknown };
+    return {
+      type: safeMachineReadableErrorField(error.type),
+      code: safeMachineReadableErrorField(error.code),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function parseRevenueCatListEnvelope(value: unknown) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new RevenueCatVerificationError("malformed");
   }
@@ -45,10 +68,21 @@ function parseActiveEntitlementList(value: unknown) {
     list.object !== "list" ||
     !Array.isArray(list.items) ||
     (list.next_page !== null && typeof list.next_page !== "string") ||
-    typeof list.url !== "string"
+      typeof list.url !== "string"
   ) {
     throw new RevenueCatVerificationError("malformed");
   }
+
+  return list as {
+    items: unknown[];
+    next_page: string | null;
+    object: "list";
+    url: string;
+  };
+}
+
+function parseActiveEntitlementList(value: unknown) {
+  const list = parseRevenueCatListEnvelope(value);
 
   const items: ActiveEntitlement[] = list.items.map((item) => {
     if (typeof item !== "object" || item === null || Array.isArray(item)) {
@@ -77,7 +111,7 @@ function parseActiveEntitlementList(value: unknown) {
 
   return {
     items,
-    hasNextPage: typeof list.next_page === "string",
+    hasNextPage: list.next_page !== null,
   };
 }
 
@@ -118,6 +152,36 @@ export function createRevenueCatEntitlementVerifier({
       const timer = setTimeout(abort, timeoutMs);
 
       try {
+        const headers = {
+          accept: "application/json",
+          authorization: `Bearer ${resolvedApiKey}`,
+        };
+        const confirmProjectIsReadable = async () => {
+          const url = new URL(
+            `${REVENUECAT_API_BASE_URL}/projects/${encodeURIComponent(resolvedProjectId)}/customers`,
+          );
+          url.searchParams.set("limit", "1");
+          const response = await fetchImpl(url, {
+            headers,
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            const metadata = await revenueCatErrorMetadata(response);
+            throw new RevenueCatVerificationError(
+              "unavailable",
+              response.status,
+              metadata.type,
+              metadata.code,
+            );
+          }
+          let payload: unknown;
+          try {
+            payload = await response.json();
+          } catch {
+            throw new RevenueCatVerificationError("malformed");
+          }
+          parseRevenueCatListEnvelope(payload);
+        };
         let startingAfter: string | undefined;
         for (let page = 0; page < MAX_ENTITLEMENT_PAGES; page++) {
           const url = new URL(
@@ -129,16 +193,23 @@ export function createRevenueCatEntitlementVerifier({
           }
 
           const response = await fetchImpl(url, {
-            headers: {
-              accept: "application/json",
-              authorization: `Bearer ${resolvedApiKey}`,
-            },
+            headers,
             signal: controller.signal,
           });
           if (!response.ok) {
+            const metadata = await revenueCatErrorMetadata(response);
+            if (
+              response.status === 404 &&
+              metadata.type === "resource_missing"
+            ) {
+              await confirmProjectIsReadable();
+              return false;
+            }
             throw new RevenueCatVerificationError(
               "unavailable",
               response.status,
+              metadata.type,
+              metadata.code,
             );
           }
 

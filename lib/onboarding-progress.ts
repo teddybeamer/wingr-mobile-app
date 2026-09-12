@@ -1,10 +1,15 @@
 export const ONBOARDING_REPLY_DISPLAYED_KEY =
   "wingr.onboarding.reply-displayed.v1";
+export const ONBOARDING_COMPLETED_KEY = "wingr.onboarding.completed.v1";
 
 export type OnboardingProgressStorage = {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
   removeItem(key: string): Promise<void>;
+};
+
+type AccountMarker = {
+  userId: string;
 };
 
 async function getDefaultStorage(): Promise<OnboardingProgressStorage> {
@@ -23,20 +28,57 @@ async function getDefaultStorage(): Promise<OnboardingProgressStorage> {
   };
 }
 
-export async function hasDisplayedOnboardingReply(
+async function hasAccountMarker(
+  key: string,
+  userId: string,
   storage?: OnboardingProgressStorage,
 ) {
   const resolvedStorage = storage ?? (await getDefaultStorage());
-  return (
-    (await resolvedStorage.getItem(ONBOARDING_REPLY_DISPLAYED_KEY)) === "true"
-  );
+  const stored = await resolvedStorage.getItem(key);
+  if (!stored) return false;
+  try {
+    const marker = JSON.parse(stored) as Partial<AccountMarker>;
+    return marker.userId === userId;
+  } catch {
+    return false;
+  }
 }
 
-export async function markOnboardingReplyDisplayed(
+async function setAccountMarker(
+  key: string,
+  userId: string,
   storage?: OnboardingProgressStorage,
 ) {
   const resolvedStorage = storage ?? (await getDefaultStorage());
-  await resolvedStorage.setItem(ONBOARDING_REPLY_DISPLAYED_KEY, "true");
+  await resolvedStorage.setItem(key, JSON.stringify({ userId }));
+}
+
+export function hasDisplayedOnboardingReply(
+  userId: string,
+  storage?: OnboardingProgressStorage,
+) {
+  return hasAccountMarker(ONBOARDING_REPLY_DISPLAYED_KEY, userId, storage);
+}
+
+export function markOnboardingReplyDisplayed(
+  userId: string,
+  storage?: OnboardingProgressStorage,
+) {
+  return setAccountMarker(ONBOARDING_REPLY_DISPLAYED_KEY, userId, storage);
+}
+
+export function hasCompletedOnboarding(
+  userId: string,
+  storage?: OnboardingProgressStorage,
+) {
+  return hasAccountMarker(ONBOARDING_COMPLETED_KEY, userId, storage);
+}
+
+export function markOnboardingCompleted(
+  userId: string,
+  storage?: OnboardingProgressStorage,
+) {
+  return setAccountMarker(ONBOARDING_COMPLETED_KEY, userId, storage);
 }
 
 export async function clearOnboardingReplyProgress(
@@ -44,4 +86,11 @@ export async function clearOnboardingReplyProgress(
 ) {
   const resolvedStorage = storage ?? (await getDefaultStorage());
   await resolvedStorage.removeItem(ONBOARDING_REPLY_DISPLAYED_KEY);
+}
+
+export async function clearOnboardingCompletion(
+  storage?: OnboardingProgressStorage,
+) {
+  const resolvedStorage = storage ?? (await getDefaultStorage());
+  await resolvedStorage.removeItem(ONBOARDING_COMPLETED_KEY);
 }
