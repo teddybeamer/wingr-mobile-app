@@ -43,6 +43,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "test": "tsx --test lib/*.test.ts supabase/functions/_shared/*.test.ts",
+    "test:db-concurrency": "bash supabase/tests/database/ai_generation_concurrency.integration.sh",
     "typecheck": "node --stack-size=8192 node_modules/typescript/bin/tsc --noEmit && tsc -p supabase/tsconfig.json"
   },
   "private": true

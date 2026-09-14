@@ -1,12 +1,9 @@
-import {
-  ConversationError,
-  parseConversationRequest,
-} from "./conversation.ts";
+import { ConversationError, parseConversationRequest } from "./conversation.ts";
 import { handleCors } from "./cors.ts";
 import { error, json } from "./http.ts";
 import { analyzeWithGemini } from "./openrouter.ts";
 import type { RevenueCatEntitlementVerifier } from "./revenuecat-entitlement.ts";
-import type { UsageLimiter } from "./usage-limit.ts";
+import type { GenerationLease, UsageLimiter } from "./usage-limit.ts";
 
 type GeminiOptions = NonNullable<Parameters<typeof analyzeWithGemini>[2]>;
 export type ConversationHandlerOptions = Omit<
@@ -113,6 +110,13 @@ function isUuid(value: string) {
   );
 }
 
+function retryAfterHeader(retryAt: string | undefined) {
+  if (!retryAt) return undefined;
+  const milliseconds = Date.parse(retryAt) - Date.now();
+  if (!Number.isFinite(milliseconds)) return undefined;
+  return { "retry-after": String(Math.max(1, Math.ceil(milliseconds / 1000))) };
+}
+
 export async function handleConversationRequest(
   request: Request,
   apiKey: string,
@@ -170,17 +174,40 @@ export async function handleConversationRequest(
       if (!hasActivePro) return accessError("subscription_required");
     }
 
-    const result = await analyzeWithGemini(input, apiKey, {
-      ...geminiOptions,
-      signal: request.signal,
-      onProviderDispatch: async () =>
-        input.isOnboardingGeneration
-          ? usageLimiter?.claimOnboarding(request.headers.get("authorization"))
-          : usageLimiter?.claim(request.headers.get("authorization")),
-    });
-    if (!result.replyable || !result.messages.length || !result.vibeCheck)
-      throw new ConversationError("unusable_screenshot");
-    return json(result);
+    const authorization = request.headers.get("authorization");
+    const generationLease: { current: GenerationLease | null } = {
+      current: null,
+    };
+    try {
+      const result = await analyzeWithGemini(input, apiKey, {
+        ...geminiOptions,
+        signal: request.signal,
+        onProviderDispatch: async () => {
+          if (!usageLimiter)
+            throw new ConversationError("generation_protection_unavailable");
+          generationLease.current = input.isOnboardingGeneration
+            ? await usageLimiter.claimOnboarding(authorization)
+            : await usageLimiter.claim(authorization);
+        },
+      });
+      if (!result.replyable || !result.messages.length || !result.vibeCheck)
+        throw new ConversationError("unusable_screenshot");
+      return json(result);
+    } finally {
+      if (generationLease.current && usageLimiter) {
+        try {
+          await usageLimiter.release(
+            authorization,
+            generationLease.current.leaseId,
+          );
+        } catch {
+          // The 60-second database TTL safely recovers a failed release.
+          console.warn("[Wingr AI] generation lease release failed", {
+            code: "generation_lease_release_failed",
+          });
+        }
+      }
+    }
   } catch (failure) {
     const safeError =
       failure instanceof ConversationError
@@ -193,6 +220,8 @@ export async function handleConversationRequest(
       unusable_screenshot: 422,
       provider: 502,
       timeout: 504,
+      generation_in_progress: 429,
+      generation_protection_unavailable: 503,
       usage_limit: 429,
       onboarding_reply_used: 409,
     }[safeError.kind];
@@ -205,7 +234,13 @@ export async function handleConversationRequest(
     console.warn("[Wingr AI] request failed", diagnostics);
     return json(
       { error: safeError.message, ...diagnostics, retryAt: safeError.retryAt },
-      { status },
+      {
+        status,
+        headers:
+          safeError.kind === "generation_in_progress"
+            ? retryAfterHeader(safeError.retryAt)
+            : undefined,
+      },
     );
   }
 }

@@ -24,9 +24,7 @@ const pngSignature = Uint8Array.from([
 ]);
 const jpegSignature = Uint8Array.from([0xff, 0xd8, 0xff]);
 const webpSignature = Uint8Array.from([
-  0x52, 0x49, 0x46, 0x46,
-  0x04, 0x00, 0x00, 0x00,
-  0x57, 0x45, 0x42, 0x50,
+  0x52, 0x49, 0x46, 0x46, 0x04, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
 ]);
 
 test("accepts image input and preserves tone, context and bounded Wingr suggestions without a transcript", () => {
@@ -55,7 +53,10 @@ test("rejects MIME/signature mismatches, arbitrary content and truncated signatu
   for (const screenshot of [
     imageDataUrl("png", jpegSignature),
     imageDataUrl("jpeg", pngSignature),
-    imageDataUrl("webp", Uint8Array.from({ length: 12 }, () => 0x41)),
+    imageDataUrl(
+      "webp",
+      Uint8Array.from({ length: 12 }, () => 0x41),
+    ),
     imageDataUrl("png", html),
     imageDataUrl("png", pngSignature.slice(0, 7)),
     imageDataUrl("jpeg", jpegSignature.slice(0, 2)),
@@ -74,7 +75,10 @@ test("preserves the 10 MiB decoded image limit", () => {
     ...input,
     screenshot: imageDataUrl("png", bytes.subarray(0, MAX_IMAGE_BYTES)),
   };
-  assert.equal(parseConversationRequest(atLimit).screenshot, atLimit.screenshot);
+  assert.equal(
+    parseConversationRequest(atLimit).screenshot,
+    atLimit.screenshot,
+  );
   invalid(
     () =>
       parseConversationRequest({
@@ -183,5 +187,24 @@ test("Gemini wire schema uses its supported nullable type and keeps string limit
       ...result,
       vibeCheck: { ...result.vibeCheck, summary: "x".repeat(1001) },
     }),
+  );
+});
+
+test("concurrency protection errors expose only safe typed messages", () => {
+  const retryAt = new Date(Date.now() + 60_000).toISOString();
+  const active = new ConversationError(
+    "generation_in_progress",
+    undefined,
+    undefined,
+    retryAt,
+  );
+  assert.equal(
+    active.message,
+    "A reply is already being generated. Please wait a moment.",
+  );
+  assert.equal(active.retryAt, retryAt);
+  assert.equal(
+    new ConversationError("generation_protection_unavailable").message,
+    "Wingr could not safely start a reply right now. Please try again.",
   );
 });

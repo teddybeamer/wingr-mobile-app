@@ -1,9 +1,19 @@
-import { ConversationError } from "./conversation.ts";
+import { ConversationError, parseRetryAt } from "./conversation.ts";
+
+export type GenerationLease = {
+  expiresAt: string;
+  leaseId: string;
+};
 
 export type UsageLimiter = {
-  claim(authorization: string | null): Promise<void>;
-  claimOnboarding(authorization: string | null): Promise<void>;
+  claim(authorization: string | null): Promise<GenerationLease>;
+  claimOnboarding(authorization: string | null): Promise<GenerationLease>;
+  release(authorization: string | null, leaseId: string): Promise<boolean>;
 };
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const LEASE_RELEASE_TIMEOUT_MS = 2_000;
 
 export function createSupabaseUsageLimiter({
   fetchImpl = fetch,
@@ -14,48 +24,101 @@ export function createSupabaseUsageLimiter({
   publishableKey: string;
   supabaseUrl: string;
 }): UsageLimiter {
+  const headers = (authorization: string) => ({
+    apikey: publishableKey,
+    authorization,
+    "content-type": "application/json",
+  });
+  const protectionFailure = () =>
+    new ConversationError("generation_protection_unavailable");
+  const validAuthorization = (authorization: string | null) =>
+    authorization?.startsWith("Bearer ") && publishableKey && supabaseUrl;
   const claim = async (
     authorization: string | null,
     isOnboarding: boolean,
-  ): Promise<void> => {
-    if (!authorization?.startsWith("Bearer ") || !publishableKey || !supabaseUrl)
-      throw new ConversationError("provider");
+  ): Promise<GenerationLease> => {
+    if (!validAuthorization(authorization)) throw protectionFailure();
     let response: Response;
     try {
       response = await fetchImpl(
-        `${supabaseUrl.replace(/\/$/, "")}/rest/v1/rpc/claim_ai_generation_attempt_with_availability`,
+        `${supabaseUrl.replace(/\/$/, "")}/rest/v1/rpc/begin_ai_generation`,
         {
           method: "POST",
-          headers: {
-            apikey: publishableKey,
-            authorization,
-            "content-type": "application/json",
-          },
+          headers: headers(authorization!),
           body: JSON.stringify({ is_onboarding: isOnboarding }),
         },
       );
     } catch {
-      throw new ConversationError("provider");
+      throw protectionFailure();
     }
-    if (!response.ok) throw new ConversationError("provider");
+    if (!response.ok) throw protectionFailure();
     let result;
     try {
       result = await response.json();
     } catch {
-      throw new ConversationError("provider");
+      throw protectionFailure();
     }
     if (result?.status === "usage_limit")
-      throw new ConversationError("usage_limit", undefined, undefined, result.retryAt);
+      throw new ConversationError(
+        "usage_limit",
+        undefined,
+        undefined,
+        result.retryAt,
+      );
+    if (result?.status === "generation_in_progress")
+      throw new ConversationError(
+        "generation_in_progress",
+        undefined,
+        undefined,
+        result.retryAt,
+      );
     if (isOnboarding && result?.status === "onboarding_reply_used")
       throw new ConversationError("onboarding_reply_used");
-    if (result?.status !== "allowed") throw new ConversationError("provider");
+    const expiresAt = parseRetryAt(result?.expiresAt);
+    if (
+      result?.status !== "allowed" ||
+      typeof result?.leaseId !== "string" ||
+      !UUID_PATTERN.test(result.leaseId) ||
+      !expiresAt
+    )
+      throw protectionFailure();
+    return { expiresAt, leaseId: result.leaseId };
   };
   return {
-    async claim(authorization) {
-      await claim(authorization, false);
+    claim(authorization) {
+      return claim(authorization, false);
     },
-    async claimOnboarding(authorization) {
-      await claim(authorization, true);
+    claimOnboarding(authorization) {
+      return claim(authorization, true);
+    },
+    async release(authorization, leaseId) {
+      if (!validAuthorization(authorization) || !UUID_PATTERN.test(leaseId))
+        throw protectionFailure();
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(),
+        LEASE_RELEASE_TIMEOUT_MS,
+      );
+      let released;
+      try {
+        const response = await fetchImpl(
+          `${supabaseUrl.replace(/\/$/, "")}/rest/v1/rpc/release_ai_generation_lease`,
+          {
+            method: "POST",
+            headers: headers(authorization!),
+            body: JSON.stringify({ requested_lease_id: leaseId }),
+            signal: controller.signal,
+          },
+        );
+        if (!response.ok) throw protectionFailure();
+        released = await response.json();
+      } catch {
+        throw protectionFailure();
+      } finally {
+        clearTimeout(timer);
+      }
+      if (typeof released !== "boolean") throw protectionFailure();
+      return released;
     },
   };
 }

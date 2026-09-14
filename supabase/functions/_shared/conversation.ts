@@ -29,6 +29,8 @@ export const CONVERSATION_ERROR_KINDS = [
   "unusable_screenshot",
   "provider",
   "timeout",
+  "generation_in_progress",
+  "generation_protection_unavailable",
   "usage_limit",
   "onboarding_reply_used",
 ] as const;
@@ -69,7 +71,9 @@ export type ProviderErrorReason = keyof typeof PROVIDER_ERROR_REASONS;
 export function parseRetryAt(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const match =
-    /^([1-9]\d{3})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,6})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
+    /^([1-9]\d{3})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,6})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(
+      value,
+    );
   if (
     !match ||
     Number(match[3]) >
@@ -109,13 +113,18 @@ export class ConversationError extends Error {
               "Wingr could not analyze that screenshot right now. Please try again.",
             timeout:
               "Wingr took too long to analyze that screenshot. Please try again.",
+            generation_in_progress:
+              "A reply is already being generated. Please wait a moment.",
+            generation_protection_unavailable:
+              "Wingr could not safely start a reply right now. Please try again.",
             usage_limit:
               "You’ve reached your reply limit. Please check back later.",
             onboarding_reply_used:
               "You've already used your free onboarding reply.",
           }[kind],
     );
-    if (kind === "usage_limit") this.retryAt = parseRetryAt(retryAt);
+    if (kind === "usage_limit" || kind === "generation_in_progress")
+      this.retryAt = parseRetryAt(retryAt);
     if (kind === "provider" && validProviderStatus(providerStatus))
       this.providerStatus = providerStatus;
     if (
@@ -182,8 +191,10 @@ function hasExpectedImageSignature(
     case "jpeg":
       return matches([0xff, 0xd8, 0xff]);
     case "webp":
-      return matches([0x52, 0x49, 0x46, 0x46]) &&
-        matches([0x57, 0x45, 0x42, 0x50], 8);
+      return (
+        matches([0x52, 0x49, 0x46, 0x46]) &&
+        matches([0x57, 0x45, 0x42, 0x50], 8)
+      );
   }
 }
 
@@ -199,7 +210,8 @@ export function parseConversationRequest(value: unknown): ConversationRequest {
     (value.previousWingrSuggestions !== undefined &&
       (!Array.isArray(value.previousWingrSuggestions) ||
         value.previousWingrSuggestions.length === 0 ||
-        value.previousWingrSuggestions.length > MAX_PREVIOUS_WINGR_SUGGESTIONS ||
+        value.previousWingrSuggestions.length >
+          MAX_PREVIOUS_WINGR_SUGGESTIONS ||
         value.previousWingrSuggestions.some(
           (suggestion) => !text(suggestion, MAX_REPLY_LENGTH),
         ))) ||
@@ -220,9 +232,7 @@ export function parseConversationRequest(value: unknown): ConversationRequest {
   ) {
     throw new ConversationError("invalid_request");
   }
-  if (
-    !hasExpectedImageSignature(match[1] as SupportedImageType, match[2])
-  ) {
+  if (!hasExpectedImageSignature(match[1] as SupportedImageType, match[2])) {
     throw new ConversationError("invalid_request");
   }
   return {

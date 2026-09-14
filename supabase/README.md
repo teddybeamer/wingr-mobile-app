@@ -109,7 +109,16 @@ claims usage or calls OpenRouter.
 
 Every authenticated anonymous subscriber can dispatch 500 AI generation attempts in a rolling 30-day window. The count uses `attempted_at > now() - interval '30 days'`, so an event exactly 30 days old no longer counts. An attempt is permanently recorded immediately before OpenRouter is called; successful replies and unusable model results both count. Rejections before provider dispatch do not. The endpoint returns HTTP 429 with `code: "usage_limit"` before calling Gemini once the cap is reached. The same cap applies to Weekly and Monthly subscribers.
 
-The endpoint uses `claim_ai_generation_attempt_with_availability(is_onboarding)` to wrap the original claim RPCs in the same locked transaction. A blocked response includes `retryAt`, an ISO timestamp computed as the 500th newest active attempt plus 30 days (also correct above the cap). The app shows “Reply limit reached” with this time in the phone's timezone, rounded up to a minute, and a “Got it” button that dismisses the notice without requesting a reply. Missing or invalid timestamps use a generic limit message. Deploy the availability migration before the updated edge function, then update/reload the app; the original RPCs remain compatible with older functions.
+`begin_ai_generation(is_onboarding)` calls `claim_ai_generation_attempt_with_availability(is_onboarding)`, which wraps the original claim RPCs in the same locked transaction. A blocked response includes `retryAt`, an ISO timestamp computed as the 500th newest active attempt plus 30 days (also correct above the cap). The app shows “Reply limit reached” with this time in the phone's timezone, rounded up to a minute, and a “Got it” button that dismisses the notice without requesting a reply. Missing or invalid timestamps use a generic limit message. Deploy the availability and concurrency migrations before the updated edge function; the original RPCs remain compatible with older functions.
+
+`begin_ai_generation(is_onboarding)` adds a database-backed, per-user lease around
+the existing atomic claim. Only one generation can be active for a Supabase user
+across all Edge Function instances. The lease and attempt are created in the same
+transaction immediately before OpenRouter dispatch. A concurrent request returns
+HTTP 429 with `code: "generation_in_progress"`, a `Retry-After` header, and no new
+attempt. The Edge Function releases the token-matched lease in `finally`; a failed
+release cannot replace the provider response and recovers through the 60-second
+lease expiration. Database or acquisition failures fail closed before OpenRouter.
 
 The onboarding screenshot flow does not require `pro` and remains separately
 limited to one provider dispatch per anonymous user. Its atomic claim permanently
