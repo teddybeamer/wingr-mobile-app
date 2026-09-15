@@ -13,6 +13,7 @@ type Size = {
 
 type ResponsiveMiddleContentProps = {
   children: ReactNode;
+  offsetY?: number;
   scrollable?: boolean;
 };
 
@@ -24,6 +25,7 @@ function sizesMatch(current: Size, next: Size) {
 
 export function ResponsiveMiddleContent({
   children,
+  offsetY = 0,
   scrollable = false,
 }: ResponsiveMiddleContentProps) {
   const [viewportSize, setViewportSize] = useState<Size>({ height: 0, width: 0 });
@@ -43,6 +45,8 @@ export function ResponsiveMiddleContent({
         availableWidth / contentSize.width,
       )
     : 1;
+  const offsetStyle =
+    offsetY === 0 ? undefined : { transform: [{ translateY: offsetY }] };
 
   const updateSize =
     (setSize: (size: Size) => void, currentSize: Size) =>
@@ -64,7 +68,7 @@ export function ResponsiveMiddleContent({
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        style={styles.scrollViewport}
+        style={[styles.scrollViewport, offsetStyle]}
       >
         <View style={styles.content}>{children}</View>
       </ScrollView>
@@ -74,7 +78,7 @@ export function ResponsiveMiddleContent({
   return (
     <View
       onLayout={updateSize(setViewportSize, viewportSize)}
-      style={styles.viewport}
+      style={[styles.viewport, offsetStyle]}
     >
       <View
         onLayout={updateSize(setContentSize, contentSize)}

@@ -11,6 +11,7 @@ import type { OnboardingScreenProps } from "../types/onboarding";
 type OnboardingScreenScaffoldProps = OnboardingScreenProps & {
   bottomContent?: ReactNode;
   children?: ReactNode;
+  middleContentOffsetY?: number;
   middleContentScrollable?: boolean;
 };
 
@@ -25,6 +26,7 @@ export function OnboardingScreenScaffold({
   ctaLoading,
   currentIndex,
   isLastStep,
+  middleContentOffsetY = 0,
   middleContentScrollable = false,
   onBack,
   onComplete,
@@ -73,7 +75,10 @@ export function OnboardingScreenScaffold({
         </View>
       </View>
 
-      <ResponsiveMiddleContent scrollable={middleContentScrollable}>
+      <ResponsiveMiddleContent
+        offsetY={middleContentOffsetY}
+        scrollable={middleContentScrollable}
+      >
         {content.chatMessages ? (
           <ExampleChatCard messages={content.chatMessages} />
         ) : null}

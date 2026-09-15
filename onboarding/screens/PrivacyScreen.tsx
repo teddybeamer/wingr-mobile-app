@@ -106,7 +106,7 @@ const styles = StyleSheet.create({
   screen: {
     backgroundColor: "#080808",
     flex: 1,
-    paddingBottom: 50,
+    paddingBottom: 22,
     paddingHorizontal: 16,
     paddingTop: 4,
   },
@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
   title: {
     color: "#FFFFFF",
     fontFamily: "ClashDisplay",
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: "700",
     lineHeight: 29,
   },

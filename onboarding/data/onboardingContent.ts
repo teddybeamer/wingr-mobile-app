@@ -51,9 +51,9 @@ export const onboardingContent: Record<
   },
   wouldYouSend: {
     id: "wouldYouSend",
-    title: "If Wingr gave you a reply that felt right, would you send it?",
+    title: "If WiNGR gave you a reply that felt right, would you send it?",
     titleParts: [
-      { text: "If Wingr gave you a reply\nthat felt right, " },
+      { text: "If WiNGR gave you a reply\nthat felt right, " },
       { color: "blue", text: "would you\nsend it?" },
     ],
     body: "",
@@ -126,6 +126,6 @@ export const onboardingContent: Record<
       { text: " to keep the chats going" },
     ],
     body: "Unlock instant vibe checks and sendable replies for the chats that actually matter.",
-    ctaLabel: "Unlock Unlimited",
+    ctaLabel: "Get WiNGR Pro",
   },
 };
