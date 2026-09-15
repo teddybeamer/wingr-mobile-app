@@ -1,6 +1,6 @@
 export default {
   expo: {
-    name: 'wingr-mobile-app',
+    name: 'WiNGR',
     slug: 'wingr-mobile-app',
     version: '1.0.0',
     orientation: 'portrait',
