@@ -7,6 +7,7 @@ export default {
     icon: './assets/icon.png',
     userInterfaceStyle: 'dark',
     ios: {
+      icon: './assets/WiNGR.icon',
       supportsTablet: true,
       bundleIdentifier: 'com.perkristian.wingrmobileapp',
       infoPlist: {
