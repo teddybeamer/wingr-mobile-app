@@ -187,6 +187,8 @@ test("only resource_missing 404 triggers the missing-customer confirmation", asy
     (failure: unknown) => {
       assert.ok(failure instanceof RevenueCatVerificationError);
       assert.equal(failure.upstreamStatus, 404);
+      assert.equal(failure.operation, "active_entitlements");
+      assert.equal(failure.category, "resource_not_found");
       return true;
     },
   );
@@ -207,6 +209,17 @@ test("missing-customer confirmation failures remain fail closed", async () => {
         assert.ok(failure instanceof RevenueCatVerificationError);
         assert.equal(failure.reason, "unavailable");
         assert.equal(failure.upstreamStatus, status);
+        assert.equal(failure.operation, "customer_list_confirmation");
+        assert.equal(
+          failure.category,
+          status === 401
+            ? "authentication"
+            : status === 403
+              ? "permissions"
+              : status === 404
+                ? "project_mismatch"
+                : "upstream_response",
+        );
         return true;
       },
     );
@@ -231,6 +244,15 @@ test("subscription permission and upstream failures fail closed", async () => {
         assert.ok(failure instanceof RevenueCatVerificationError);
         assert.equal(failure.reason, "unavailable");
         assert.equal(failure.upstreamStatus, status);
+        assert.equal(failure.operation, "subscriptions");
+        assert.equal(
+          failure.category,
+          status === 401
+            ? "authentication"
+            : status === 403
+              ? "permissions"
+              : "upstream_response",
+        );
         assert.ok(!failure.message.includes("PRIVATE"));
         return true;
       },
@@ -338,7 +360,9 @@ test("network failures, timeouts, malformed payloads, and incomplete configurati
     }).verifyAccess(APP_USER_ID),
     (failure: unknown) =>
       failure instanceof RevenueCatVerificationError &&
-      failure.reason === "unavailable",
+      failure.reason === "unavailable" &&
+      failure.operation === "active_entitlements" &&
+      failure.category === "network",
   );
 
   await assert.rejects(
@@ -355,7 +379,9 @@ test("network failures, timeouts, malformed payloads, and incomplete configurati
     ).verifyAccess(APP_USER_ID),
     (failure: unknown) =>
       failure instanceof RevenueCatVerificationError &&
-      failure.reason === "timeout",
+      failure.reason === "timeout" &&
+      failure.operation === "active_entitlements" &&
+      failure.category === "timeout_or_abort",
   );
 
   for (const payload of [
@@ -367,7 +393,9 @@ test("network failures, timeouts, malformed payloads, and incomplete configurati
       verifier(async () => Response.json(payload)).verifyAccess(APP_USER_ID),
       (failure: unknown) =>
         failure instanceof RevenueCatVerificationError &&
-        failure.reason === "malformed",
+        failure.reason === "malformed" &&
+        failure.operation === "active_entitlements" &&
+        failure.category === "response_semantics",
     );
   }
 
@@ -384,6 +412,8 @@ test("network failures, timeouts, malformed payloads, and incomplete configurati
     }).verifyAccess(APP_USER_ID),
     (failure: unknown) =>
       failure instanceof RevenueCatVerificationError &&
-      failure.reason === "configuration",
+      failure.reason === "configuration" &&
+      failure.operation === "configuration" &&
+      failure.category === "configuration",
   );
 });

@@ -10,6 +10,25 @@ export type RevenueCatAccess =
   | { hasActivePro: false }
   | { hasActivePro: true; plan: RevenueCatSubscriptionPlan };
 
+export type RevenueCatVerificationOperation =
+  | "configuration"
+  | "active_entitlements"
+  | "customer_list_confirmation"
+  | "subscriptions";
+
+export type RevenueCatVerificationCategory =
+  | "authentication"
+  | "configuration"
+  | "network"
+  | "pagination"
+  | "permissions"
+  | "project_mismatch"
+  | "resource_not_found"
+  | "response_parsing"
+  | "response_semantics"
+  | "timeout_or_abort"
+  | "upstream_response";
+
 export type RevenueCatEntitlementVerifier = {
   verifyAccess(
     appUserId: string,
@@ -27,10 +46,25 @@ export class RevenueCatVerificationError extends Error {
     public readonly upstreamStatus?: number,
     public readonly upstreamErrorType?: string,
     public readonly upstreamErrorCode?: string,
+    public readonly operation?: RevenueCatVerificationOperation,
+    public readonly category?: RevenueCatVerificationCategory,
   ) {
     super("RevenueCat entitlement verification is unavailable.");
     this.name = "RevenueCatVerificationError";
   }
+}
+
+function httpFailureCategory(
+  operation: RevenueCatVerificationOperation,
+  status: number,
+): RevenueCatVerificationCategory {
+  if (status === 401) return "authentication";
+  if (status === 403) return "permissions";
+  if (status === 404)
+    return operation === "customer_list_confirmation"
+      ? "project_mismatch"
+      : "resource_not_found";
+  return "upstream_response";
 }
 
 type ActiveEntitlement = {
@@ -143,7 +177,14 @@ function parseSubscriptionEntitlementIds(value: unknown) {
   const list = parseRevenueCatListEnvelope(value);
   if (list.next_page !== null) {
     // Plan classification must not depend on a partial entitlement list.
-    throw new RevenueCatVerificationError("malformed");
+    throw new RevenueCatVerificationError(
+      "malformed",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "pagination",
+    );
   }
 
   return list.items.map((item) => {
@@ -242,7 +283,14 @@ export function createRevenueCatEntitlementVerifier({
         !Number.isFinite(timeoutMs) ||
         timeoutMs <= 0
       ) {
-        throw new RevenueCatVerificationError("configuration");
+        throw new RevenueCatVerificationError(
+          "configuration",
+          undefined,
+          undefined,
+          undefined,
+          "configuration",
+          "configuration",
+        );
       }
 
       const controller = new AbortController();
@@ -250,13 +298,19 @@ export function createRevenueCatEntitlementVerifier({
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) abort();
       const timer = setTimeout(abort, timeoutMs);
+      let currentOperation: RevenueCatVerificationOperation =
+        "active_entitlements";
 
       try {
         const headers = {
           accept: "application/json",
           authorization: `Bearer ${resolvedApiKey}`,
         };
-        const getJson = async (url: URL) => {
+        const getJson = async (
+          operation: RevenueCatVerificationOperation,
+          url: URL,
+        ) => {
+          currentOperation = operation;
           const response = await fetchImpl(url, {
             headers,
             signal: controller.signal,
@@ -268,12 +322,21 @@ export function createRevenueCatEntitlementVerifier({
               response.status,
               metadata.type,
               metadata.code,
+              operation,
+              httpFailureCategory(operation, response.status),
             );
           }
           try {
             return await response.json();
           } catch {
-            throw new RevenueCatVerificationError("malformed");
+            throw new RevenueCatVerificationError(
+              "malformed",
+              undefined,
+              undefined,
+              undefined,
+              operation,
+              "response_parsing",
+            );
           }
         };
         const confirmProjectIsReadable = async () => {
@@ -281,7 +344,9 @@ export function createRevenueCatEntitlementVerifier({
             `${REVENUECAT_API_BASE_URL}/projects/${encodeURIComponent(resolvedProjectId)}/customers`,
           );
           url.searchParams.set("limit", "1");
-          parseRevenueCatListEnvelope(await getJson(url));
+          parseRevenueCatListEnvelope(
+            await getJson("customer_list_confirmation", url),
+          );
         };
 
         let hasActivePro = false;
@@ -297,7 +362,7 @@ export function createRevenueCatEntitlementVerifier({
 
           let payload: unknown;
           try {
-            payload = await getJson(url);
+            payload = await getJson("active_entitlements", url);
           } catch (failure) {
             if (
               failure instanceof RevenueCatVerificationError &&
@@ -316,11 +381,25 @@ export function createRevenueCatEntitlementVerifier({
           );
           if (!entitlements.nextCursor) break;
           if (entitlements.nextCursor === entitlementCursor) {
-            throw new RevenueCatVerificationError("malformed");
+            throw new RevenueCatVerificationError(
+              "malformed",
+              undefined,
+              undefined,
+              undefined,
+              "active_entitlements",
+              "pagination",
+            );
           }
           entitlementCursor = entitlements.nextCursor;
           if (page === MAX_REVENUECAT_PAGES - 1) {
-            throw new RevenueCatVerificationError("malformed");
+            throw new RevenueCatVerificationError(
+              "malformed",
+              undefined,
+              undefined,
+              undefined,
+              "active_entitlements",
+              "pagination",
+            );
           }
         }
 
@@ -337,7 +416,7 @@ export function createRevenueCatEntitlementVerifier({
             url.searchParams.set("starting_after", subscriptionCursor);
           }
           const subscriptions = parseCustomerSubscriptionList(
-            await getJson(url),
+            await getJson("subscriptions", url),
           );
           for (const subscription of subscriptions.items) {
             if (
@@ -352,11 +431,25 @@ export function createRevenueCatEntitlementVerifier({
           }
           if (!subscriptions.nextCursor) break;
           if (subscriptions.nextCursor === subscriptionCursor) {
-            throw new RevenueCatVerificationError("malformed");
+            throw new RevenueCatVerificationError(
+              "malformed",
+              undefined,
+              undefined,
+              undefined,
+              "subscriptions",
+              "pagination",
+            );
           }
           subscriptionCursor = subscriptions.nextCursor;
           if (page === MAX_REVENUECAT_PAGES - 1) {
-            throw new RevenueCatVerificationError("malformed");
+            throw new RevenueCatVerificationError(
+              "malformed",
+              undefined,
+              undefined,
+              undefined,
+              "subscriptions",
+              "pagination",
+            );
           }
         }
 
@@ -380,9 +473,27 @@ export function createRevenueCatEntitlementVerifier({
         }
         throw new RevenueCatVerificationError("malformed");
       } catch (failure) {
-        if (failure instanceof RevenueCatVerificationError) throw failure;
+        if (failure instanceof RevenueCatVerificationError) {
+          if (failure.operation && failure.category) throw failure;
+          throw new RevenueCatVerificationError(
+            failure.reason,
+            failure.upstreamStatus,
+            failure.upstreamErrorType,
+            failure.upstreamErrorCode,
+            failure.operation ?? currentOperation,
+            failure.category ??
+              (failure.reason === "malformed"
+                ? "response_semantics"
+                : "upstream_response"),
+          );
+        }
         throw new RevenueCatVerificationError(
           controller.signal.aborted ? "timeout" : "unavailable",
+          undefined,
+          undefined,
+          undefined,
+          currentOperation,
+          controller.signal.aborted ? "timeout_or_abort" : "network",
         );
       } finally {
         clearTimeout(timer);

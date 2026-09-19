@@ -6,7 +6,10 @@ import {
   type ConversationHandlerOptions,
 } from "./analyze-conversation.ts";
 import { ConversationError } from "./conversation.ts";
-import { createRevenueCatEntitlementVerifier } from "./revenuecat-entitlement.ts";
+import {
+  createRevenueCatEntitlementVerifier,
+  RevenueCatVerificationError,
+} from "./revenuecat-entitlement.ts";
 import type { RevenueCatSubscriptionPlan } from "./revenuecat-entitlement.ts";
 import { input, result } from "./test-fixtures.ts";
 import type { GenerationLease, UsageLimiter } from "./usage-limit.ts";
@@ -382,6 +385,53 @@ test("entitlement verification failures fail closed before usage and OpenRouter"
     });
     assert.equal(usageClaims, 0);
     assert.equal(providerCalls, 0);
+  }
+});
+
+test("RevenueCat diagnostics contain only closed, non-identifying metadata", async () => {
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...values: unknown[]) => warnings.push(values);
+  try {
+    const response = await handleConversationRequest(request(), "PRIVATE_KEY", {
+      entitlementVerifier: {
+        verifyAccess: async () => {
+          throw new RevenueCatVerificationError(
+            "unavailable",
+            403,
+            "authorization_error",
+            "forbidden",
+            "subscriptions",
+            "permissions",
+          );
+        },
+      },
+    });
+    assert.equal(response.status, 503);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.deepEqual(warnings, [
+    [
+      "[Wingr AI] RevenueCat verification failed",
+      {
+        category: "permissions",
+        code: "revenuecat_verification_failed",
+        operation: "subscriptions",
+        upstreamErrorCode: "forbidden",
+        upstreamErrorType: "authorization_error",
+        upstreamStatus: 403,
+      },
+    ],
+  ]);
+  const serialized = JSON.stringify(warnings);
+  for (const privateValue of [
+    "PRIVATE_KEY",
+    "Bearer signed-user",
+    AUTHENTICATED_USER_ID,
+  ]) {
+    assert.ok(!serialized.includes(privateValue));
   }
 });
 

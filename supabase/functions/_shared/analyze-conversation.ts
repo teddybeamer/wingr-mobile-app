@@ -2,6 +2,7 @@ import { ConversationError, parseConversationRequest } from "./conversation.ts";
 import { handleCors } from "./cors.ts";
 import { error, json } from "./http.ts";
 import { analyzeWithGemini } from "./openrouter.ts";
+import { RevenueCatVerificationError } from "./revenuecat-entitlement.ts";
 import type {
   RevenueCatAccess,
   RevenueCatEntitlementVerifier,
@@ -173,7 +174,25 @@ export async function handleConversationRequest(
           authenticatedUserId,
           request.signal,
         );
-      } catch {
+      } catch (failure) {
+        const diagnostic =
+          failure instanceof RevenueCatVerificationError
+            ? {
+                category: failure.category ?? "response_semantics",
+                code: "revenuecat_verification_failed",
+                operation: failure.operation ?? "configuration",
+                upstreamErrorCode: failure.upstreamErrorCode,
+                upstreamErrorType: failure.upstreamErrorType,
+                upstreamStatus: failure.upstreamStatus,
+              }
+            : {
+                category: "unexpected",
+                code: "revenuecat_verification_failed",
+                operation: "unknown",
+              };
+        // Closed enums and machine-readable upstream metadata only. Never log
+        // the failure object, request, customer ID, authorization, or body.
+        console.warn("[Wingr AI] RevenueCat verification failed", diagnostic);
         return accessError("subscription_verification_unavailable");
       }
       if (!access.hasActivePro) return accessError("subscription_required");
