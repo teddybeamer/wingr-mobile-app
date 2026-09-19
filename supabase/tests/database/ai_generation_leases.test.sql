@@ -159,13 +159,56 @@ select ok(
   'the onboarding lease releases normally'
 );
 
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000405', true);
+insert into public.ai_generation_attempts (user_id, attempted_at)
+select auth.uid(), now() - interval '1 day' from generate_series(1, 124);
+with claim as (
+  select public.begin_ai_generation(false, 'weekly') as value
+)
+insert into lease_test_state (name, lease_id)
+select 'weekly-attempt-125', (value->>'leaseId')::uuid from claim;
+select is(
+  (
+    select count(*)
+    from public.ai_generation_attempts
+    where user_id = auth.uid()
+      and attempted_at > now() - interval '7 days'
+  ),
+  125::bigint,
+  'the guarded Weekly claim can become attempt 125'
+);
+select ok(
+  public.release_ai_generation_lease(
+    (select lease_id from lease_test_state where name = 'weekly-attempt-125')
+  ),
+  'attempt 125 Weekly lease releases normally'
+);
+select is(
+  public.begin_ai_generation(false, 'weekly')->>'status',
+  'usage_limit',
+  'the guarded Weekly claim rejects attempt 126'
+);
+select is(
+  (select count(*) from public.ai_generation_leases where user_id = auth.uid()),
+  0::bigint,
+  'a Weekly usage-limited user acquires no lease'
+);
+
 select ok(
   has_function_privilege('authenticated', 'public.begin_ai_generation(boolean)', 'execute'),
   'authenticated users can begin a guarded generation'
 );
 select ok(
+  has_function_privilege('authenticated', 'public.begin_ai_generation(boolean, text)', 'execute'),
+  'authenticated edge-function callers can begin a plan-specific generation'
+);
+select ok(
   not has_function_privilege('anon', 'public.begin_ai_generation(boolean)', 'execute'),
   'unauthenticated callers cannot begin a guarded generation'
+);
+select ok(
+  not has_function_privilege('anon', 'public.begin_ai_generation(boolean, text)', 'execute'),
+  'unauthenticated callers cannot begin a plan-specific generation'
 );
 select ok(
   has_function_privilege('authenticated', 'public.release_ai_generation_lease(uuid)', 'execute'),

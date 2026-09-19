@@ -29,7 +29,10 @@ test("usage limiter begins and releases a lease with the caller JWT", async () =
         }),
       );
       if (calls === 1) {
-        assert.equal(init?.body, '{"is_onboarding":false}');
+        assert.equal(
+          init?.body,
+          '{"is_onboarding":false,"subscription_plan":"weekly"}',
+        );
         return Response.json({
           status: "allowed",
           retryAt: null,
@@ -41,7 +44,7 @@ test("usage limiter begins and releases a lease with the caller JWT", async () =
       return Response.json(true);
     },
   });
-  const lease = await limiter.claim("Bearer user-token");
+  const lease = await limiter.claim("Bearer user-token", "weekly");
   assert.deepEqual(lease, { expiresAt: expiration, leaseId: LEASE_ID });
   assert.equal(await limiter.release("Bearer user-token", lease.leaseId), true);
   assert.equal(calls, 2);
@@ -58,7 +61,7 @@ test("usage limiter exposes a typed limit error without calling Gemini", async (
       }),
   });
   await assert.rejects(
-    limiter.claim("Bearer user-token"),
+    limiter.claim("Bearer user-token", "monthly"),
     (error: unknown) =>
       error instanceof ConversationError &&
       error.kind === "usage_limit" &&
@@ -78,7 +81,7 @@ test("usage limiter exposes an active lease as a typed retryable error", async (
       }),
   });
   await assert.rejects(
-    limiter.claim("Bearer user-token"),
+    limiter.claim("Bearer user-token", "monthly"),
     (error: unknown) =>
       error instanceof ConversationError &&
       error.kind === "generation_in_progress" &&
@@ -97,7 +100,7 @@ test("malformed acquisition and release responses fail closed", async () => {
       fetchImpl: async () => response,
     });
     await assert.rejects(
-      limiter.claim("Bearer user-token"),
+      limiter.claim("Bearer user-token", "monthly"),
       (error: unknown) =>
         error instanceof ConversationError &&
         error.kind === "generation_protection_unavailable",

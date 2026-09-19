@@ -7,6 +7,7 @@ import {
 } from "./analyze-conversation.ts";
 import { ConversationError } from "./conversation.ts";
 import { createRevenueCatEntitlementVerifier } from "./revenuecat-entitlement.ts";
+import type { RevenueCatSubscriptionPlan } from "./revenuecat-entitlement.ts";
 import { input, result } from "./test-fixtures.ts";
 import type { GenerationLease, UsageLimiter } from "./usage-limit.ts";
 
@@ -25,7 +26,11 @@ function createInMemoryGuard(initialAttempts: Record<string, number> = {}) {
   const active = new Map<string, GenerationLease>();
   const attempts = new Map(Object.entries(initialAttempts));
   const onboardingClaims = new Set<string>();
-  const begin = async (authorization: string | null, isOnboarding: boolean) => {
+  const begin = async (
+    authorization: string | null,
+    isOnboarding: boolean,
+    subscriptionPlan: RevenueCatSubscriptionPlan = "monthly",
+  ) => {
     await Promise.resolve();
     const user = authorization ?? "missing";
     const current = active.get(user);
@@ -39,7 +44,8 @@ function createInMemoryGuard(initialAttempts: Record<string, number> = {}) {
     if (isOnboarding && onboardingClaims.has(user))
       throw new ConversationError("onboarding_reply_used");
     const used = attempts.get(user) ?? 0;
-    if (used >= 500) throw new ConversationError("usage_limit");
+    const limit = subscriptionPlan === "weekly" ? 125 : 500;
+    if (used >= limit) throw new ConversationError("usage_limit");
     if (isOnboarding) onboardingClaims.add(user);
     attempts.set(user, used + 1);
     const lease = testLease(crypto.randomUUID());
@@ -47,7 +53,8 @@ function createInMemoryGuard(initialAttempts: Record<string, number> = {}) {
     return lease;
   };
   const limiter: UsageLimiter = {
-    claim: (authorization) => begin(authorization, false),
+    claim: (authorization, subscriptionPlan) =>
+      begin(authorization, false, subscriptionPlan),
     claimOnboarding: (authorization) => begin(authorization, true),
     release: async (authorization, leaseId) => {
       const user = authorization ?? "missing";
@@ -111,7 +118,7 @@ const handleConversationRequest = (
 ) =>
   handleConversationRequestCore(request, apiKey, {
     entitlementVerifier: {
-      hasActivePro: async () => true,
+      verifyAccess: async () => ({ hasActivePro: true, plan: "monthly" }),
     },
     getVerifiedUserId: async () => AUTHENTICATED_USER_ID,
     usageLimiter: allowUsage(),
@@ -154,14 +161,15 @@ test("normal generation verifies the authenticated user before usage and OpenRou
       return AUTHENTICATED_USER_ID;
     },
     entitlementVerifier: {
-      hasActivePro: async (appUserId) => {
+      verifyAccess: async (appUserId) => {
         assert.equal(appUserId, AUTHENTICATED_USER_ID);
         order.push("entitlement");
-        return true;
+        return { hasActivePro: true, plan: "monthly" };
       },
     },
     usageLimiter: {
-      claim: async () => {
+      claim: async (_authorization, subscriptionPlan) => {
+        assert.equal(subscriptionPlan, "monthly");
         order.push("usage");
         return testLease();
       },
@@ -193,7 +201,7 @@ test("missing pro returns subscription_required without usage or OpenRouter", as
   let providerCalls = 0;
   const response = await handleConversationRequest(request(), "key", {
     entitlementVerifier: {
-      hasActivePro: async () => false,
+      verifyAccess: async () => ({ hasActivePro: false }),
     },
     usageLimiter: {
       claim: async () => {
@@ -223,8 +231,10 @@ test("a confirmed missing RevenueCat customer returns subscription_required", as
   let providerCalls = 0;
   const entitlementVerifier = createRevenueCatEntitlementVerifier({
     apiKey: "server-secret",
+    monthlyProductResourceId: "prod_monthly",
     projectId: "proj_wingr",
     proEntitlementResourceId: "entl_pro",
+    weeklyProductResourceId: "prod_weekly",
     fetchImpl: async () => {
       revenueCatCalls++;
       return revenueCatCalls === 1
@@ -278,9 +288,9 @@ test("request-body identity and premium fields cannot bypass the verified user e
     "key",
     {
       entitlementVerifier: {
-        hasActivePro: async (appUserId) => {
+        verifyAccess: async (appUserId) => {
           checkedUsers.push(appUserId);
-          return false;
+          return { hasActivePro: false };
         },
       },
       usageLimiter: {
@@ -303,6 +313,40 @@ test("request-body identity and premium fields cannot bypass the verified user e
   assert.equal(providerCalls, 0);
 });
 
+test("request-body plan and product fields cannot override the trusted RevenueCat plan", async () => {
+  const claimedPlans: string[] = [];
+  const response = await handleConversationRequest(
+    request({
+      ...input,
+      plan: "monthly",
+      productId: "prodeb09795a02",
+      subscriptionType: "monthly",
+      usageLimit: 500,
+    }),
+    "key",
+    {
+      entitlementVerifier: {
+        verifyAccess: async () => ({
+          hasActivePro: true,
+          plan: "weekly",
+        }),
+      },
+      usageLimiter: {
+        claim: async (_authorization, subscriptionPlan) => {
+          claimedPlans.push(subscriptionPlan);
+          return testLease();
+        },
+        claimOnboarding: async () => testLease(),
+        release: async () => true,
+      },
+      fetchImpl: provider(result),
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(claimedPlans, ["weekly"]);
+});
+
 test("entitlement verification failures fail closed before usage and OpenRouter", async () => {
   for (const failure of [
     new Error("timeout"),
@@ -313,7 +357,7 @@ test("entitlement verification failures fail closed before usage and OpenRouter"
     let providerCalls = 0;
     const response = await handleConversationRequest(request(), "key", {
       entitlementVerifier: {
-        hasActivePro: async () => {
+        verifyAccess: async () => {
           throw failure;
         },
       },
@@ -353,9 +397,9 @@ test("request validation rejects before RevenueCat or usage", async () => {
     "key",
     {
       entitlementVerifier: {
-        hasActivePro: async () => {
+        verifyAccess: async () => {
           entitlementChecks++;
-          return true;
+          return { hasActivePro: true, plan: "monthly" };
         },
       },
       usageLimiter: {
@@ -399,9 +443,9 @@ test("Content-Length above the request limit rejects before the body is read", a
   } as RequestInit);
   const response = await handleConversationRequest(req, "key", {
     entitlementVerifier: {
-      hasActivePro: async () => {
+      verifyAccess: async () => {
         entitlementChecks++;
-        return true;
+        return { hasActivePro: true, plan: "monthly" };
       },
     },
     usageLimiter: {
@@ -444,9 +488,9 @@ test("streamed bodies that exceed the limit reject before RevenueCat and OpenRou
       "key",
       {
         entitlementVerifier: {
-          hasActivePro: async () => {
+          verifyAccess: async () => {
             entitlementChecks++;
-            return true;
+            return { hasActivePro: true, plan: "monthly" };
           },
         },
         usageLimiter: {
@@ -720,6 +764,39 @@ test("the usage limit rejects before Gemini, including concurrent requests", asy
   assert.equal(calls, 500);
 });
 
+test("the Weekly limit allows attempt 125 and rejects attempt 126 before OpenRouter", async () => {
+  const authorization = "Bearer signed-user";
+  const guard = createInMemoryGuard({ [authorization]: 124 });
+  const weeklyVerifier = {
+    verifyAccess: async () => ({
+      hasActivePro: true as const,
+      plan: "weekly" as const,
+    }),
+  };
+  let providerCalls = 0;
+  const fetchImpl: typeof fetch = async (...args) => {
+    providerCalls++;
+    return provider(result)(...args);
+  };
+
+  const attempt125 = await handleConversationRequest(request(), "key", {
+    entitlementVerifier: weeklyVerifier,
+    usageLimiter: guard.limiter,
+    fetchImpl,
+  });
+  const attempt126 = await handleConversationRequest(request(), "key", {
+    entitlementVerifier: weeklyVerifier,
+    usageLimiter: guard.limiter,
+    fetchImpl,
+  });
+
+  assert.equal(attempt125.status, 200);
+  assert.equal(attempt126.status, 429);
+  assert.equal((await attempt126.json()).code, "usage_limit");
+  assert.equal(guard.attemptsFor(authorization), 125);
+  assert.equal(providerCalls, 1);
+});
+
 test("onboarding claims are one-time, count as normal attempts and reject before Gemini", async () => {
   let onboardingClaimed = false;
   let onboardingClaims = 0;
@@ -749,9 +826,9 @@ test("onboarding claims are one-time, count as normal attempts and reject before
   };
   const first = await handleConversationRequest(onboardingRequest(), "key", {
     entitlementVerifier: {
-      hasActivePro: async () => {
+      verifyAccess: async () => {
         entitlementChecks++;
-        return false;
+        return { hasActivePro: false };
       },
     },
     usageLimiter,
@@ -759,9 +836,9 @@ test("onboarding claims are one-time, count as normal attempts and reject before
   });
   const second = await handleConversationRequest(onboardingRequest(), "key", {
     entitlementVerifier: {
-      hasActivePro: async () => {
+      verifyAccess: async () => {
         entitlementChecks++;
-        return false;
+        return { hasActivePro: false };
       },
     },
     usageLimiter,
@@ -1069,7 +1146,9 @@ test("missing or failed acquisition protection fails closed before OpenRouter", 
   ]) {
     let providerCalls = 0;
     const response = await handleConversationRequestCore(request(), "key", {
-      entitlementVerifier: { hasActivePro: async () => true },
+      entitlementVerifier: {
+        verifyAccess: async () => ({ hasActivePro: true, plan: "monthly" }),
+      },
       getVerifiedUserId: async () => AUTHENTICATED_USER_ID,
       usageLimiter,
       fetchImpl: async (...args) => {

@@ -12,9 +12,13 @@ const usageLimiter = createSupabaseUsageLimiter({
 });
 const entitlementVerifier = createRevenueCatEntitlementVerifier({
   apiKey: Deno.env.get("REVENUECAT_V2_SECRET_API_KEY") ?? "",
+  monthlyProductResourceId:
+    Deno.env.get("REVENUECAT_MONTHLY_PRODUCT_RESOURCE_ID") ?? "",
   proEntitlementResourceId:
     Deno.env.get("REVENUECAT_PRO_ENTITLEMENT_RESOURCE_ID") ?? "",
   projectId: Deno.env.get("REVENUECAT_PROJECT_ID") ?? "",
+  weeklyProductResourceId:
+    Deno.env.get("REVENUECAT_WEEKLY_PRODUCT_RESOURCE_ID") ?? "",
 });
 // This client has no administrative credentials. getClaims verifies the caller's
 // JWT before its subject is used as the RevenueCat App User ID.

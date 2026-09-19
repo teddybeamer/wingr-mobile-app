@@ -11,12 +11,16 @@ endpoint with the original screenshot, tone and context. Images are not resized 
 - Backend secrets/configuration (see `functions/.env.example`):
   - `OPENROUTER_API_KEY`.
   - `REVENUECAT_V2_SECRET_API_KEY`: a RevenueCat v2 secret key restricted to
-    `customer_information:customers:read`. Never expose this key to the app or
-    prefix it with `EXPO_PUBLIC_`.
+    `customer_information:customers:read` and
+    `customer_information:subscriptions:read`. Never expose this key to the app
+    or prefix it with `EXPO_PUBLIC_`.
   - `REVENUECAT_PROJECT_ID`: the RevenueCat project resource ID (`proj...`).
   - `REVENUECAT_PRO_ENTITLEMENT_RESOURCE_ID`: the RevenueCat entitlement
     resource ID (`entl...`) whose lookup key is exactly `pro`. This is not the
     literal `pro` lookup key; copy the internal resource ID from RevenueCat.
+  - `REVENUECAT_WEEKLY_PRODUCT_RESOURCE_ID` and
+    `REVENUECAT_MONTHLY_PRODUCT_RESOURCE_ID`: the trusted RevenueCat product
+    resource IDs (`prod...`) used to classify an active Pro subscription.
 - App: `EXPO_PUBLIC_WINGR_API_BASE_URL=https://YOUR_PROJECT_REF.supabase.co/functions/v1`.
 - App identity: `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Enable Anonymous Sign-Ins in Supabase Auth before deploying; the app creates and securely persists an anonymous session per installation.
 - Model and 25-second provider deadline: `functions/_shared/openrouter.ts`.
@@ -31,15 +35,19 @@ after configuring the secrets in an ignored local file. Configure the deployed
 function and deploy it with:
 
 ```sh
-supabase secrets set REVENUECAT_V2_SECRET_API_KEY='replace-with-v2-secret' REVENUECAT_PROJECT_ID='proj_replace_me' REVENUECAT_PRO_ENTITLEMENT_RESOURCE_ID='entl_replace_me'
+supabase db push
+supabase secrets set REVENUECAT_V2_SECRET_API_KEY='replace-with-v2-secret' REVENUECAT_PROJECT_ID='proj_replace_me' REVENUECAT_PRO_ENTITLEMENT_RESOURCE_ID='entl_replace_me' REVENUECAT_WEEKLY_PRODUCT_RESOURCE_ID='prodcf6bb9dcdc' REVENUECAT_MONTHLY_PRODUCT_RESOURCE_ID='prodeb09795a02'
 supabase functions deploy ai-conversation
 ```
 
 Create the RevenueCat key under Project settings > API keys as a v2 secret key.
-Grant only `customer_information:customers:read`; the function does not need any
-write permission. The endpoint reads
-`GET /v2/projects/{project_id}/customers/{supabase_user_id}/active_entitlements`.
-The URL customer ID always comes from the verified Supabase JWT subject.
+Grant only `customer_information:customers:read` and
+`customer_information:subscriptions:read`; the function does not need any write
+permission. The endpoint reads the authenticated customer's `active_entitlements`
+and `subscriptions`. It requires the configured active `pro` entitlement, then
+classifies only access-granting subscriptions that include that entitlement by
+their trusted RevenueCat product resource ID. The URL customer ID always comes
+from the verified Supabase JWT subject.
 
 This entitlement enforcement is server-only and does not require another native
 app build. The existing RevenueCat client integration still requires a development
@@ -107,9 +115,33 @@ authentication, authorization, rate-limit, and response-validation failures retu
 HTTP 503 with `code: "subscription_verification_unavailable"`. Neither response
 claims usage or calls OpenRouter.
 
-Every authenticated anonymous subscriber can dispatch 500 AI generation attempts in a rolling 30-day window. The count uses `attempted_at > now() - interval '30 days'`, so an event exactly 30 days old no longer counts. An attempt is permanently recorded immediately before OpenRouter is called; successful replies and unusable model results both count. Rejections before provider dispatch do not. The endpoint returns HTTP 429 with `code: "usage_limit"` before calling Gemini once the cap is reached. The same cap applies to Weekly and Monthly subscribers.
+Weekly subscribers can dispatch 125 AI generation attempts in a rolling seven-day
+window. Monthly subscribers retain 500 attempts in a rolling 30-day window. The
+count uses a strict `attempted_at > now() - window` boundary, so an event exactly
+seven or 30 days old no longer counts. Existing attempt history is retained and
+interpreted with the currently verified subscription plan. An attempt is
+permanently recorded immediately before OpenRouter is called; successful replies
+and unusable model results both count. Rejections before provider dispatch do not.
+The endpoint returns HTTP 429 with `code: "usage_limit"` before calling Gemini
+once the applicable cap is reached.
 
-`begin_ai_generation(is_onboarding)` calls `claim_ai_generation_attempt_with_availability(is_onboarding)`, which wraps the original claim RPCs in the same locked transaction. A blocked response includes `retryAt`, an ISO timestamp computed as the 500th newest active attempt plus 30 days (also correct above the cap). The app shows “Reply limit reached” with this time in the phone's timezone, rounded up to a minute, and a “Got it” button that dismisses the notice without requesting a reply. Missing or invalid timestamps use a generic limit message. Deploy the availability and concurrency migrations before the updated edge function; the original RPCs remain compatible with older functions.
+`begin_ai_generation(is_onboarding, subscription_plan)` calls the plan-aware
+availability claim in the same locked transaction. The plan comes only from the
+server-side RevenueCat verification. Limits and windows are fixed in the database;
+authenticated callers cannot provide arbitrary policy values. A blocked response
+includes `retryAt`, computed as the applicable cap's newest boundary attempt plus
+seven or 30 days. The app shows “Reply limit reached” with this time in the phone's
+timezone, rounded up to a minute, and a “Got it” button that dismisses the notice
+without requesting a reply. Missing or invalid timestamps use a generic limit
+message. Deploy `20260919120000_plan_specific_ai_generation_limits.sql` before
+the updated edge function; the original one-argument RPCs remain Monthly-compatible
+for older deployed functions.
+
+RevenueCat's current `product_id` and `gives_access` fields determine the plan;
+pending product changes do not take effect early. If both configured products
+simultaneously grant `pro`, the server chooses Weekly's stricter policy. An active
+`pro` entitlement without a classifiable access-granting subscription fails closed
+with `subscription_verification_unavailable` rather than receiving the Monthly cap.
 
 `begin_ai_generation(is_onboarding)` adds a database-backed, per-user lease around
 the existing atomic claim. Only one generation can be active for a Supabase user

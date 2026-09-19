@@ -1,4 +1,5 @@
 import { ConversationError, parseRetryAt } from "./conversation.ts";
+import type { RevenueCatSubscriptionPlan } from "./revenuecat-entitlement.ts";
 
 export type GenerationLease = {
   expiresAt: string;
@@ -6,7 +7,10 @@ export type GenerationLease = {
 };
 
 export type UsageLimiter = {
-  claim(authorization: string | null): Promise<GenerationLease>;
+  claim(
+    authorization: string | null,
+    subscriptionPlan: RevenueCatSubscriptionPlan,
+  ): Promise<GenerationLease>;
   claimOnboarding(authorization: string | null): Promise<GenerationLease>;
   release(authorization: string | null, leaseId: string): Promise<boolean>;
 };
@@ -36,8 +40,15 @@ export function createSupabaseUsageLimiter({
   const claim = async (
     authorization: string | null,
     isOnboarding: boolean,
+    subscriptionPlan?: RevenueCatSubscriptionPlan,
   ): Promise<GenerationLease> => {
     if (!validAuthorization(authorization)) throw protectionFailure();
+    if (
+      !isOnboarding &&
+      subscriptionPlan !== "weekly" &&
+      subscriptionPlan !== "monthly"
+    )
+      throw protectionFailure();
     let response: Response;
     try {
       response = await fetchImpl(
@@ -45,7 +56,14 @@ export function createSupabaseUsageLimiter({
         {
           method: "POST",
           headers: headers(authorization!),
-          body: JSON.stringify({ is_onboarding: isOnboarding }),
+          body: JSON.stringify(
+            isOnboarding
+              ? { is_onboarding: true }
+              : {
+                  is_onboarding: false,
+                  subscription_plan: subscriptionPlan,
+                },
+          ),
         },
       );
     } catch {
@@ -85,8 +103,8 @@ export function createSupabaseUsageLimiter({
     return { expiresAt, leaseId: result.leaseId };
   };
   return {
-    claim(authorization) {
-      return claim(authorization, false);
+    claim(authorization, subscriptionPlan) {
+      return claim(authorization, false, subscriptionPlan);
     },
     claimOnboarding(authorization) {
       return claim(authorization, true);

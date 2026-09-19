@@ -2,7 +2,11 @@ import { ConversationError, parseConversationRequest } from "./conversation.ts";
 import { handleCors } from "./cors.ts";
 import { error, json } from "./http.ts";
 import { analyzeWithGemini } from "./openrouter.ts";
-import type { RevenueCatEntitlementVerifier } from "./revenuecat-entitlement.ts";
+import type {
+  RevenueCatAccess,
+  RevenueCatEntitlementVerifier,
+  RevenueCatSubscriptionPlan,
+} from "./revenuecat-entitlement.ts";
 import type { GenerationLease, UsageLimiter } from "./usage-limit.ts";
 
 type GeminiOptions = NonNullable<Parameters<typeof analyzeWithGemini>[2]>;
@@ -158,20 +162,22 @@ export async function handleConversationRequest(
     }
     const input = parseConversationRequest(value);
 
+    let subscriptionPlan: RevenueCatSubscriptionPlan | null = null;
     if (!input.isOnboardingGeneration) {
       if (!entitlementVerifier) {
         return accessError("subscription_verification_unavailable");
       }
-      let hasActivePro: boolean;
+      let access: RevenueCatAccess;
       try {
-        hasActivePro = await entitlementVerifier.hasActivePro(
+        access = await entitlementVerifier.verifyAccess(
           authenticatedUserId,
           request.signal,
         );
       } catch {
         return accessError("subscription_verification_unavailable");
       }
-      if (!hasActivePro) return accessError("subscription_required");
+      if (!access.hasActivePro) return accessError("subscription_required");
+      subscriptionPlan = access.plan;
     }
 
     const authorization = request.headers.get("authorization");
@@ -185,9 +191,17 @@ export async function handleConversationRequest(
         onProviderDispatch: async () => {
           if (!usageLimiter)
             throw new ConversationError("generation_protection_unavailable");
-          generationLease.current = input.isOnboardingGeneration
-            ? await usageLimiter.claimOnboarding(authorization)
-            : await usageLimiter.claim(authorization);
+          if (input.isOnboardingGeneration) {
+            generationLease.current =
+              await usageLimiter.claimOnboarding(authorization);
+          } else {
+            if (!subscriptionPlan)
+              throw new ConversationError("generation_protection_unavailable");
+            generationLease.current = await usageLimiter.claim(
+              authorization,
+              subscriptionPlan,
+            );
+          }
         },
       });
       if (!result.replyable || !result.messages.length || !result.vibeCheck)
