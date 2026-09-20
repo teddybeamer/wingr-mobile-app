@@ -1,23 +1,30 @@
 import { useMemo, useState } from "react";
 import { onboardingFlow } from "../data/onboardingConfig";
+import {
+  advanceOnboardingNavigation,
+  createOnboardingNavigation,
+  goBackInOnboarding,
+  goToOnboardingStep,
+} from "../navigation-history";
 import type { OnboardingStepId } from "../types/onboarding";
 
 export function useOnboardingFlow(
   onComplete: () => void | Promise<void>,
   initialStepId?: OnboardingStepId,
 ) {
-  const initialIndex = Math.max(
-    onboardingFlow.findIndex((step) => step.id === initialStepId),
-    0,
+  const [navigation, setNavigation] = useState(() =>
+    createOnboardingNavigation(initialStepId),
   );
-  const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [selectedChoices, setSelectedChoices] = useState<
     Record<string, string>
   >({});
   const totalSteps = onboardingFlow.length;
+  const currentIndex = onboardingFlow.findIndex(
+    (step) => step.id === navigation.currentStepId,
+  );
   const currentStep = onboardingFlow[currentIndex];
   const isLastStep = currentIndex === totalSteps - 1;
-  const canGoBack = currentIndex > initialIndex;
+  const canGoBack = navigation.history.length > 0;
   const selectedChoiceId =
     selectedChoices[currentStep.id] ?? currentStep.content.defaultChoiceId;
   const canContinue =
@@ -30,13 +37,15 @@ export function useOnboardingFlow(
       currentIndex,
       currentStep,
       goBack: () => {
-        setCurrentIndex((index) => Math.max(index - 1, initialIndex));
+        setNavigation(goBackInOnboarding);
       },
-      goToStep: (stepId: OnboardingStepId) => {
-        const nextIndex = onboardingFlow.findIndex(
-          (step) => step.id === stepId,
+      goToStep: (
+        stepId: OnboardingStepId,
+        options?: { resetHistory?: boolean },
+      ) => {
+        setNavigation((current) =>
+          goToOnboardingStep(current, stepId, options),
         );
-        if (nextIndex >= initialIndex) setCurrentIndex(nextIndex);
       },
       goNext: (force = false) => {
         if (!force && !canContinue) {
@@ -48,7 +57,7 @@ export function useOnboardingFlow(
           return;
         }
 
-        setCurrentIndex((index) => Math.min(index + 1, totalSteps - 1));
+        setNavigation(advanceOnboardingNavigation);
       },
       isLastStep,
       selectedChoiceId,
@@ -66,8 +75,8 @@ export function useOnboardingFlow(
       canGoBack,
       currentIndex,
       currentStep,
-      initialIndex,
       isLastStep,
+      navigation.history.length,
       onComplete,
       selectedChoiceId,
       totalSteps,

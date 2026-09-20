@@ -1,0 +1,51 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  advanceOnboardingNavigation,
+  createOnboardingNavigation,
+  goBackInOnboarding,
+  goToOnboardingStep,
+} from "../onboarding/navigation-history";
+
+test("generated reply history returns from Testimonials to Your Reply", () => {
+  let navigation = createOnboardingNavigation("uploadScreenshot");
+  navigation = advanceOnboardingNavigation(navigation);
+  assert.equal(navigation.currentStepId, "vibecheck");
+  navigation = advanceOnboardingNavigation(navigation);
+  assert.equal(navigation.currentStepId, "testimonials");
+  assert.equal(goBackInOnboarding(navigation).currentStepId, "vibecheck");
+});
+
+test("Skip history returns from Testimonials to Choose Screenshot", () => {
+  let navigation = createOnboardingNavigation("uploadScreenshot");
+  navigation = goToOnboardingStep(navigation, "testimonials");
+  assert.equal(navigation.currentStepId, "testimonials");
+  assert.equal(
+    goBackInOnboarding(navigation).currentStepId,
+    "uploadScreenshot",
+  );
+});
+
+test("Skip history never visits Your Reply", () => {
+  const navigation = goToOnboardingStep(
+    createOnboardingNavigation("uploadScreenshot"),
+    "testimonials",
+  );
+  assert.equal(navigation.history.includes("vibecheck"), false);
+  assert.equal(navigation.currentStepId === "vibecheck", false);
+});
+
+test("recovery cannot navigate back to Your Reply without a usable local reply", () => {
+  const restoredClaim = createOnboardingNavigation("testimonials");
+  assert.deepEqual(goBackInOnboarding(restoredClaim), restoredClaim);
+
+  let defensiveRecovery = createOnboardingNavigation("uploadScreenshot");
+  defensiveRecovery = advanceOnboardingNavigation(defensiveRecovery);
+  assert.equal(defensiveRecovery.currentStepId, "vibecheck");
+  defensiveRecovery = goToOnboardingStep(defensiveRecovery, "testimonials", {
+    resetHistory: true,
+  });
+  assert.equal(defensiveRecovery.currentStepId, "testimonials");
+  assert.deepEqual(defensiveRecovery.history, []);
+  assert.deepEqual(goBackInOnboarding(defensiveRecovery), defensiveRecovery);
+});

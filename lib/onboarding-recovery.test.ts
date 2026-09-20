@@ -17,7 +17,7 @@ test("a new user with no local progress or server claim starts normal onboarding
   );
 });
 
-test("a server claim repairs missing local progress and resumes at Rating", async () => {
+test("a server claim repairs missing local progress and resumes at Testimonials", async () => {
   const repaired: string[] = [];
   assert.equal(
     await resolveOnboardingResumeStep({
@@ -28,7 +28,7 @@ test("a server claim repairs missing local progress and resumes at Rating", asyn
       },
       userId: "user-a",
     }),
-    "rating",
+    "testimonials",
   );
   assert.deepEqual(repaired, ["user-a"]);
 });
@@ -69,7 +69,7 @@ test("an explicit paywall route bypasses onboarding claim reconciliation", async
   assert.equal(progressReads, 0);
 });
 
-test("onboarding_reply_used fallback repairs progress and resumes at Rating", async () => {
+test("onboarding_reply_used fallback repairs progress and resumes at Testimonials", async () => {
   const repaired: string[] = [];
   assert.equal(
     await recoverOnboardingReplyUsed({
@@ -79,7 +79,7 @@ test("onboarding_reply_used fallback repairs progress and resumes at Rating", as
       },
       userId: "user-a",
     }),
-    "rating",
+    "testimonials",
   );
   assert.deepEqual(repaired, ["user-a"]);
 });

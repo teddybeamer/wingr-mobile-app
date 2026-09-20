@@ -149,7 +149,7 @@ const styles = StyleSheet.create({
   },
   compactSurface: {
     borderRadius: 30,
-    height: 44,
+    height: 60,
     paddingHorizontal: 12,
   },
   fitContentSurface: {

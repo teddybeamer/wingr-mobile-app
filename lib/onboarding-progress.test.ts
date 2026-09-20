@@ -41,17 +41,52 @@ test("onboarding reply progress is absent until a displayed reply is marked for 
   assert.equal(await hasDisplayedOnboardingReply("user-b", storage), false);
 });
 
-test("recovered claims persist the Rating checkpoint while legacy markers remain compatible", async () => {
+test("recovered claims persist the Testimonials checkpoint while legacy markers remain compatible", async () => {
   const recovered = storageWith();
   await markOnboardingClaimRecovered("user-a", recovered.storage);
+  assert.deepEqual(
+    JSON.parse(recovered.values.get(ONBOARDING_REPLY_DISPLAYED_KEY)!),
+    {
+      resumeStep: "testimonials",
+      userId: "user-a",
+    },
+  );
   assert.equal(
     await getOnboardingReplyResumeStep("user-a", recovered.storage),
-    "rating",
+    "testimonials",
   );
 
   const legacy = storageWith(JSON.stringify({ userId: "user-a" }));
   assert.equal(
     await getOnboardingReplyResumeStep("user-a", legacy.storage),
+    "testimonials",
+  );
+});
+
+test("previous Rating recovery checkpoints migrate to Testimonials", async () => {
+  const previousRecovery = storageWith(
+    JSON.stringify({ resumeStep: "rating", userId: "user-a" }),
+  );
+  assert.equal(
+    await getOnboardingReplyResumeStep("user-a", previousRecovery.storage),
+    "testimonials",
+  );
+  assert.deepEqual(
+    JSON.parse(previousRecovery.values.get(ONBOARDING_REPLY_DISPLAYED_KEY)!),
+    {
+      resumeStep: "testimonials",
+      userId: "user-a",
+    },
+  );
+
+  const writeFailure = storageWith(
+    JSON.stringify({ resumeStep: "rating", userId: "user-a" }),
+  );
+  writeFailure.storage.setItem = async () => {
+    throw new Error("storage unavailable");
+  };
+  assert.equal(
+    await getOnboardingReplyResumeStep("user-a", writeFailure.storage),
     "testimonials",
   );
 });

@@ -138,7 +138,7 @@ function OnboardingFlowContent({
         });
         if (recoveryStep) {
           setAnalysisFailureCount(0);
-          goToStep(recoveryStep);
+          goToStep(recoveryStep, { resetHistory: true });
           return "recovered" as const;
         }
         setAnalysisFailureCount((count) => count + 1);

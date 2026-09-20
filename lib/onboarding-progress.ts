@@ -67,7 +67,17 @@ export async function getOnboardingReplyResumeStep(
   try {
     const marker = JSON.parse(stored) as Partial<AccountMarker>;
     if (marker.userId !== userId) return null;
-    return marker.resumeStep === "rating" ? "rating" : "testimonials";
+    if (marker.resumeStep === "rating") {
+      await setAccountMarker(
+        ONBOARDING_REPLY_DISPLAYED_KEY,
+        userId,
+        { resumeStep: "testimonials" },
+        resolvedStorage,
+      ).catch(() => {
+        // The migrated destination is still safe when persistence is unavailable.
+      });
+    }
+    return "testimonials";
   } catch {
     return null;
   }
@@ -99,7 +109,7 @@ export function markOnboardingClaimRecovered(
   return setAccountMarker(
     ONBOARDING_REPLY_DISPLAYED_KEY,
     userId,
-    { resumeStep: "rating" },
+    { resumeStep: "testimonials" },
     storage,
   );
 }

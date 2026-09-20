@@ -30,7 +30,7 @@ export async function resolveOnboardingResumeStep({
   await markRecovered(userId).catch(() => {
     // The authoritative server claim still determines the safe resume step.
   });
-  return "rating";
+  return "testimonials";
 }
 
 export async function recoverOnboardingReplyUsed({
@@ -46,5 +46,5 @@ export async function recoverOnboardingReplyUsed({
   await markRecovered(userId).catch(() => {
     // Do not strand the user if local recovery persistence is unavailable.
   });
-  return "rating" as const;
+  return "testimonials" as const;
 }
