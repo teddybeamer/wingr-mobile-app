@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
-import { onboardingFlow } from '../data/onboardingConfig';
-import type { OnboardingStepId } from '../types/onboarding';
+import { useMemo, useState } from "react";
+import { onboardingFlow } from "../data/onboardingConfig";
+import type { OnboardingStepId } from "../types/onboarding";
 
 export function useOnboardingFlow(
   onComplete: () => void | Promise<void>,
@@ -11,13 +11,17 @@ export function useOnboardingFlow(
     0,
   );
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
-  const [selectedChoices, setSelectedChoices] = useState<Record<string, string>>({});
+  const [selectedChoices, setSelectedChoices] = useState<
+    Record<string, string>
+  >({});
   const totalSteps = onboardingFlow.length;
   const currentStep = onboardingFlow[currentIndex];
   const isLastStep = currentIndex === totalSteps - 1;
   const canGoBack = currentIndex > initialIndex;
-  const selectedChoiceId = selectedChoices[currentStep.id] ?? currentStep.content.defaultChoiceId;
-  const canContinue = !currentStep.content.requiresSelection || Boolean(selectedChoiceId);
+  const selectedChoiceId =
+    selectedChoices[currentStep.id] ?? currentStep.content.defaultChoiceId;
+  const canContinue =
+    !currentStep.content.requiresSelection || Boolean(selectedChoiceId);
 
   return useMemo(
     () => ({
@@ -27,6 +31,12 @@ export function useOnboardingFlow(
       currentStep,
       goBack: () => {
         setCurrentIndex((index) => Math.max(index - 1, initialIndex));
+      },
+      goToStep: (stepId: OnboardingStepId) => {
+        const nextIndex = onboardingFlow.findIndex(
+          (step) => step.id === stepId,
+        );
+        if (nextIndex >= initialIndex) setCurrentIndex(nextIndex);
       },
       goNext: (force = false) => {
         if (!force && !canContinue) {

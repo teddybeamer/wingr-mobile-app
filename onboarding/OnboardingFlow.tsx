@@ -2,10 +2,11 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Alert } from "react-native";
 import { posthog } from "../lib/posthog";
+import { markOnboardingReplyDisplayed } from "../lib/onboarding-progress";
 import {
-  hasDisplayedOnboardingReply,
-  markOnboardingReplyDisplayed,
-} from "../lib/onboarding-progress";
+  recoverOnboardingReplyUsed,
+  resolveOnboardingResumeStep,
+} from "../lib/onboarding-recovery";
 import { useConversationFlow } from "../hooks/useConversationFlow";
 import { ChangeScreen } from "./screens/ChangeScreen";
 import { PaywallScreen } from "./screens/PaywallScreen";
@@ -52,32 +53,30 @@ export function OnboardingFlow({
   onComplete,
   userId,
 }: OnboardingFlowProps) {
-  const [hasRestoredReplyProgress, setHasRestoredReplyProgress] = useState<
-    boolean | null
-  >(null);
+  const [restoredInitialStep, setRestoredInitialStep] = useState<{
+    loaded: boolean;
+    step?: OnboardingStepId;
+  }>({ loaded: false });
 
   useEffect(() => {
     let mounted = true;
-    void hasDisplayedOnboardingReply(userId)
-      .then((hasDisplayedReply) => {
-        if (mounted) setHasRestoredReplyProgress(hasDisplayedReply);
+    void resolveOnboardingResumeStep({ initialStepId, userId })
+      .then((step) => {
+        if (mounted) setRestoredInitialStep({ loaded: true, step });
       })
       .catch(() => {
-        if (mounted) setHasRestoredReplyProgress(false);
+        if (mounted) setRestoredInitialStep({ loaded: true });
       });
     return () => {
       mounted = false;
     };
-  }, [userId]);
+  }, [initialStepId, userId]);
 
-  if (hasRestoredReplyProgress === null) return null;
+  if (!restoredInitialStep.loaded) return null;
 
   return (
     <OnboardingFlowContent
-      initialStepId={
-        initialStepId ??
-        (hasRestoredReplyProgress ? "testimonials" : undefined)
-      }
+      initialStepId={restoredInitialStep.step}
       onComplete={onComplete}
       userId={userId}
     />
@@ -103,6 +102,7 @@ function OnboardingFlowContent({
     currentIndex,
     currentStep,
     goBack,
+    goToStep,
     goNext,
     isLastStep,
     selectedChoiceId,
@@ -128,9 +128,19 @@ function OnboardingFlowContent({
 
   const analyzeScreenshotForOnboarding = useCallback(
     async (screenshotUri?: string) => {
-      const result = await conversation.analyzeOnboardingScreenshot(screenshotUri);
+      const result =
+        await conversation.analyzeOnboardingScreenshot(screenshotUri);
 
       if (typeof result === "object" && result.status === "error") {
+        const recoveryStep = await recoverOnboardingReplyUsed({
+          errorCode: result.error.code,
+          userId,
+        });
+        if (recoveryStep) {
+          setAnalysisFailureCount(0);
+          goToStep(recoveryStep);
+          return "recovered" as const;
+        }
         setAnalysisFailureCount((count) => count + 1);
       } else if (result === "ready") {
         setAnalysisFailureCount(0);
@@ -143,7 +153,7 @@ function OnboardingFlowContent({
 
       return result;
     },
-    [conversation, userId],
+    [conversation, goToStep, userId],
   );
 
   const handlePrimaryAction = async () => {
@@ -177,10 +187,7 @@ function OnboardingFlowContent({
     const result = await analyzeScreenshotForOnboarding(screenshotUri);
 
     if (typeof result === "object" && result.status === "error") {
-      Alert.alert(
-        "Could not read screenshot",
-        result.error.message,
-      );
+      Alert.alert("Could not read screenshot", result.error.message);
       goBack();
     }
   };
@@ -223,7 +230,13 @@ function OnboardingFlowContent({
       onRetryScreenshotAnalysis={retryScreenshotAnalysis}
       onScreenshotSelected={handleScreenshotSelected}
       onSelectChoice={selectChoice}
-      onSkip={skip}
+      onSkip={() => {
+        if (isUploadStep) {
+          goToStep("testimonials");
+          return;
+        }
+        skip();
+      }}
       selectedChoiceId={selectedChoiceId}
       totalSteps={totalSteps}
     />

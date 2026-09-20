@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   clearOnboardingCompletion,
+  getOnboardingReplyResumeStep,
   hasDisplayedOnboardingReply,
   hasCompletedOnboarding,
+  markOnboardingClaimRecovered,
   markOnboardingCompleted,
   markOnboardingReplyDisplayed,
   ONBOARDING_COMPLETED_KEY,
@@ -32,10 +34,26 @@ test("onboarding reply progress is absent until a displayed reply is marked for 
   assert.equal(await hasDisplayedOnboardingReply("user-a", storage), false);
   await markOnboardingReplyDisplayed("user-a", storage);
   assert.deepEqual(JSON.parse(values.get(ONBOARDING_REPLY_DISPLAYED_KEY)!), {
+    resumeStep: "testimonials",
     userId: "user-a",
   });
   assert.equal(await hasDisplayedOnboardingReply("user-a", storage), true);
   assert.equal(await hasDisplayedOnboardingReply("user-b", storage), false);
+});
+
+test("recovered claims persist the Rating checkpoint while legacy markers remain compatible", async () => {
+  const recovered = storageWith();
+  await markOnboardingClaimRecovered("user-a", recovered.storage);
+  assert.equal(
+    await getOnboardingReplyResumeStep("user-a", recovered.storage),
+    "rating",
+  );
+
+  const legacy = storageWith(JSON.stringify({ userId: "user-a" }));
+  assert.equal(
+    await getOnboardingReplyResumeStep("user-a", legacy.storage),
+    "testimonials",
+  );
 });
 
 test("account cleanup removes the onboarding marker", async () => {

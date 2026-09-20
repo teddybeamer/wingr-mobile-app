@@ -9,8 +9,11 @@ export type OnboardingProgressStorage = {
 };
 
 type AccountMarker = {
+  resumeStep?: OnboardingReplyResumeStep;
   userId: string;
 };
+
+export type OnboardingReplyResumeStep = "rating" | "testimonials";
 
 async function getDefaultStorage(): Promise<OnboardingProgressStorage> {
   if (typeof localStorage !== "undefined") {
@@ -47,24 +50,58 @@ async function hasAccountMarker(
 async function setAccountMarker(
   key: string,
   userId: string,
+  marker: Omit<AccountMarker, "userId"> = {},
   storage?: OnboardingProgressStorage,
 ) {
   const resolvedStorage = storage ?? (await getDefaultStorage());
-  await resolvedStorage.setItem(key, JSON.stringify({ userId }));
+  await resolvedStorage.setItem(key, JSON.stringify({ ...marker, userId }));
 }
 
-export function hasDisplayedOnboardingReply(
+export async function getOnboardingReplyResumeStep(
   userId: string,
   storage?: OnboardingProgressStorage,
 ) {
-  return hasAccountMarker(ONBOARDING_REPLY_DISPLAYED_KEY, userId, storage);
+  const resolvedStorage = storage ?? (await getDefaultStorage());
+  const stored = await resolvedStorage.getItem(ONBOARDING_REPLY_DISPLAYED_KEY);
+  if (!stored) return null;
+  try {
+    const marker = JSON.parse(stored) as Partial<AccountMarker>;
+    if (marker.userId !== userId) return null;
+    return marker.resumeStep === "rating" ? "rating" : "testimonials";
+  } catch {
+    return null;
+  }
+}
+
+export async function hasDisplayedOnboardingReply(
+  userId: string,
+  storage?: OnboardingProgressStorage,
+) {
+  return (await getOnboardingReplyResumeStep(userId, storage)) !== null;
 }
 
 export function markOnboardingReplyDisplayed(
   userId: string,
   storage?: OnboardingProgressStorage,
 ) {
-  return setAccountMarker(ONBOARDING_REPLY_DISPLAYED_KEY, userId, storage);
+  return setAccountMarker(
+    ONBOARDING_REPLY_DISPLAYED_KEY,
+    userId,
+    { resumeStep: "testimonials" },
+    storage,
+  );
+}
+
+export function markOnboardingClaimRecovered(
+  userId: string,
+  storage?: OnboardingProgressStorage,
+) {
+  return setAccountMarker(
+    ONBOARDING_REPLY_DISPLAYED_KEY,
+    userId,
+    { resumeStep: "rating" },
+    storage,
+  );
 }
 
 export function hasCompletedOnboarding(
@@ -78,7 +115,7 @@ export function markOnboardingCompleted(
   userId: string,
   storage?: OnboardingProgressStorage,
 ) {
-  return setAccountMarker(ONBOARDING_COMPLETED_KEY, userId, storage);
+  return setAccountMarker(ONBOARDING_COMPLETED_KEY, userId, {}, storage);
 }
 
 export async function clearOnboardingReplyProgress(

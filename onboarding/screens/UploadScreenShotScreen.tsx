@@ -4,6 +4,7 @@ import { Image, StyleSheet, View } from "react-native";
 import Animated, { Easing, FadeInDown } from "react-native-reanimated";
 import { CTAButton } from "../components/CTAButton";
 import type { OnboardingScreenProps } from "../types/onboarding";
+import { createOnboardingUploadActions } from "../upload-actions";
 import { OnboardingScreenScaffold } from "./OnboardingScreenScaffold";
 
 const GRAPHIC_ENTRANCE = FadeInDown.duration(350)
@@ -11,29 +12,40 @@ const GRAPHIC_ENTRANCE = FadeInDown.duration(350)
   .easing(Easing.out(Easing.cubic));
 
 export function UploadScreenShotScreen(props: OnboardingScreenProps) {
-  const { conversation, onScreenshotSelected } = props;
+  const { conversation, onScreenshotSelected, onSkip } = props;
+  const actions = createOnboardingUploadActions({
+    onScreenshotSelected,
+    onSkip,
+    pickScreenshot: conversation.pickScreenshot,
+  });
 
   const chooseScreenshot = async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    const screenshotUri = await conversation.pickScreenshot();
-
-    if (screenshotUri) {
-      await onScreenshotSelected?.(screenshotUri);
-    }
+    await actions.chooseScreenshot();
   };
 
   return (
     <OnboardingScreenScaffold
       {...props}
       bottomContent={
-        <CTAButton
-          icon={<GallerySend color="#FFFFFF" size={20} />}
-          label="Choose Screenshot"
-          onPress={() => {
-            void chooseScreenshot();
-          }}
-          variant="indigo"
-        />
+        <View style={styles.actions}>
+          <CTAButton
+            compact
+            containerStyle={styles.chooseButton}
+            icon={<GallerySend color="#FFFFFF" size={20} />}
+            label="Choose Screenshot"
+            onPress={() => {
+              void chooseScreenshot();
+            }}
+          />
+          <CTAButton
+            compact
+            fullWidth={false}
+            label="Skip"
+            onPress={actions.skip}
+            variant="secondary"
+          />
+        </View>
       }
     >
       <View style={styles.middleContent}>
@@ -51,6 +63,15 @@ export function UploadScreenShotScreen(props: OnboardingScreenProps) {
 }
 
 const styles = StyleSheet.create({
+  actions: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    width: "100%",
+  },
+  chooseButton: {
+    flex: 1,
+  },
   graphic: {
     aspectRatio: 924 / 909,
     height: "100%",
