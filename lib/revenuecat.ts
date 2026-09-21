@@ -30,11 +30,15 @@ const revenueCatIdentity = createRevenueCatIdentityCoordinator();
 
 function getProductionApiKey() {
   if (Platform.OS === "ios") {
-    return process?.env?.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY?.trim();
+    // Expo statically replaces direct EXPO_PUBLIC_* access in native bundles.
+    // @ts-expect-error Metro injects process.env at bundle time.
+    return process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY?.trim();
   }
 
   if (Platform.OS === "android") {
-    return process?.env?.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY?.trim();
+    // Expo statically replaces direct EXPO_PUBLIC_* access in native bundles.
+    // @ts-expect-error Metro injects process.env at bundle time.
+    return process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY?.trim();
   }
 
   return undefined;

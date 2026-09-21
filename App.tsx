@@ -3,6 +3,7 @@ import "./global.css";
 import { PostHogProvider } from "posthog-react-native";
 import { posthog } from "./lib/posthog";
 import { StatusBar } from "expo-status-bar";
+import * as SplashScreen from "expo-splash-screen";
 import { BlurView } from "expo-blur";
 import { useFonts } from "expo-font";
 import {
@@ -98,8 +99,13 @@ import {
   routeForCustomerInfo,
   type LaunchRoute,
 } from "./lib/launch-routing";
+import { LaunchSplash } from "./components/LaunchSplash";
 
 const DEBUG_BOOT_PROBE = false;
+
+if (Platform.OS === "ios") {
+  SplashScreen.preventAutoHideAsync().catch(() => {});
+}
 
 console.log("[Wingr boot] App module loaded");
 
@@ -383,9 +389,16 @@ const METRIC_VARIANTS: Record<
 };
 
 export default function App() {
+  const [showLaunchSplash, setShowLaunchSplash] = useState(
+    Platform.OS === "ios",
+  );
+
   return (
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <WingrApp />
+      {showLaunchSplash ? (
+        <LaunchSplash onFinish={() => setShowLaunchSplash(false)} />
+      ) : null}
     </SafeAreaProvider>
   );
 }

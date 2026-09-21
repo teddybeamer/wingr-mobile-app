@@ -40,6 +40,15 @@ export default {
       ],
       'expo-font',
       'expo-secure-store',
+      './plugins/withWingrSplashBackground',
+      [
+        'expo-splash-screen',
+        {
+          ios: {
+            backgroundColor: '#1970FD',
+          },
+        },
+      ],
     ],
     extra: {
       eas: {
