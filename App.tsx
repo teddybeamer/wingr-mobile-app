@@ -33,7 +33,6 @@ import {
   ShieldWarning,
   StarsMinimalistic,
 } from "@solar-icons/react-native/Linear";
-import { MenuDots } from "@solar-icons/react-native/Bold";
 import type { Icon as SolarIcon } from "@solar-icons/react-native/lib/index";
 import Svg, {
   Defs,
@@ -69,6 +68,7 @@ import type {
 } from "./types/wingr";
 import { OnboardingFlow } from "./onboarding/OnboardingFlow";
 import { BackButton } from "./components/BackButton";
+import { MoreButton } from "./components/MoreButton";
 import { HomeMoreSheet } from "./components/HomeMoreSheet";
 import {
   useConversationFlow,
@@ -414,6 +414,7 @@ function WingrApp() {
   const [launchError, setLaunchError] = useState(false);
   const [launchRevision, setLaunchRevision] = useState(0);
   const [onboardingInstance, setOnboardingInstance] = useState(0);
+  const [isPaywallMoreVisible, setIsPaywallMoreVisible] = useState(false);
   const [showDebugBootScreen, setShowDebugBootScreen] =
     useState(DEBUG_BOOT_PROBE);
   const landingRevealVersionRef = useRef(0);
@@ -655,9 +656,16 @@ function WingrApp() {
               initialStepId={onboardingInitialStep}
               key={onboardingInstance}
               onComplete={handleEnterLanding}
+              onMore={() => setIsPaywallMoreVisible(true)}
+              moreVisible={isPaywallMoreVisible}
               userId={authenticatedUserId}
             />
           ) : null}
+          <HomeMoreSheet
+            visible={isPaywallMoreVisible}
+            onClose={() => setIsPaywallMoreVisible(false)}
+            onAccountDeleted={handleAccountDeleted}
+          />
 
           {screen === "landing" ? (
             <LandingScreen
@@ -894,16 +902,10 @@ function LandingScreen({
 
       <View style={styles.landingHeader}>
         <Text style={styles.landingLogo}>Wingr</Text>
-        <TouchableOpacity
-          accessibilityLabel="More options"
-          accessibilityRole="button"
-          accessibilityState={{ expanded: isMoreVisible }}
-          activeOpacity={0.6}
+        <MoreButton
+          expanded={isMoreVisible}
           onPress={() => setIsMoreVisible(true)}
-          style={styles.landingMoreButton}
-        >
-          <MenuDots color="#A3A3A3" size={24} />
-        </TouchableOpacity>
+        />
       </View>
       <HomeMoreSheet
         visible={isMoreVisible}
@@ -2261,15 +2263,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 16,
     width: "100%",
-  },
-  landingMoreButton: {
-    alignItems: "center",
-    justifyContent: "center",
-    width: 44,
-    height: 44,
-    position: "absolute",
-    right: 6,
-    top: 8,
   },
   landingHero: {
     backgroundColor: "#0D0D0D",

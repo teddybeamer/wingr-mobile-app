@@ -10,6 +10,16 @@ endpoint with the original screenshot, tone and context. Images are not resized 
 
 - Backend secrets/configuration (see `functions/.env.example`):
   - `OPENROUTER_API_KEY`.
+  - `APPLE_DEVICECHECK_ENVIRONMENT`: `development` for development builds and
+    `production` for TestFlight and App Store builds.
+  - `APPLE_DEVICECHECK_TEAM_ID`, `APPLE_DEVICECHECK_KEY_ID`, and
+    `APPLE_DEVICECHECK_PRIVATE_KEY`: the Apple DeviceCheck key material. Keep
+    the PEM private key in a Supabase secret (including its line breaks), never
+    in app configuration.
+  - `ONBOARDING_TRIAL_RESULT_ENCRYPTION_KEY`: a unique base64-encoded 32-byte
+    AES key, for example from `openssl rand -base64 32`. It encrypts the
+    short-lived replay result and must not be changed while a 15-minute replay
+    can still be active.
   - `REVENUECAT_V2_SECRET_API_KEY`: a RevenueCat v2 secret key restricted to
     `customer_information:customers:read` and
     `customer_information:subscriptions:read`. Never expose this key to the app
@@ -36,7 +46,7 @@ function and deploy it with:
 
 ```sh
 supabase db push
-supabase secrets set REVENUECAT_V2_SECRET_API_KEY='replace-with-v2-secret' REVENUECAT_PROJECT_ID='proj_replace_me' REVENUECAT_PRO_ENTITLEMENT_RESOURCE_ID='entl_replace_me' REVENUECAT_WEEKLY_PRODUCT_RESOURCE_ID='prodcf6bb9dcdc' REVENUECAT_MONTHLY_PRODUCT_RESOURCE_ID='prodeb09795a02'
+supabase secrets set REVENUECAT_V2_SECRET_API_KEY='replace-with-v2-secret' REVENUECAT_PROJECT_ID='proj_replace_me' REVENUECAT_PRO_ENTITLEMENT_RESOURCE_ID='entl_replace_me' REVENUECAT_WEEKLY_PRODUCT_RESOURCE_ID='prodcf6bb9dcdc' REVENUECAT_MONTHLY_PRODUCT_RESOURCE_ID='prodeb09795a02' APPLE_DEVICECHECK_ENVIRONMENT='production' APPLE_DEVICECHECK_TEAM_ID='replace-me' APPLE_DEVICECHECK_KEY_ID='replace-me' APPLE_DEVICECHECK_PRIVATE_KEY='-----BEGIN PRIVATE KEY-----\nreplace-me\n-----END PRIVATE KEY-----' ONBOARDING_TRIAL_RESULT_ENCRYPTION_KEY='replace-with-32-byte-base64-key'
 supabase functions deploy ai-conversation
 ```
 
@@ -152,11 +162,25 @@ attempt. The Edge Function releases the token-matched lease in `finally`; a fail
 release cannot replace the provider response and recovers through the 60-second
 lease expiration. Database or acquisition failures fail closed before OpenRouter.
 
-The onboarding screenshot flow does not require `pro` and remains separately
-limited to one provider dispatch per anonymous user. Its atomic claim permanently
-records both the one-time onboarding marker and one normal generation attempt
-before OpenRouter is called. Repeating it returns HTTP 409 with
-`code: "onboarding_reply_used"` and never reaches Gemini.
+On iOS, onboarding uses Apple DeviceCheck bit 0 as the durable, one-preview-per-
+iPhone marker. A client-created trial ID and a hash of the one-time DeviceCheck
+token coordinate a 60-second single-flight lease; no permanent Wingr device ID
+or token hash is retained. Gemini/provider failures, invalid output, cancellation,
+and DeviceCheck lookup failures remove that lease without setting the bit or
+creating an account claim. Once a schema-valid result exists, only its AES-GCM
+encrypted derived output is retained for 15 minutes—never the screenshot—and the
+server retries DeviceCheck finalization without calling Gemini again. After Apple
+accepts bit 0, the same authenticated user and trial ID can replay that exact
+result for the remaining window without creating another allowance. A minute-level
+database cleanup job deletes expired result and transient metadata. A set device
+bit without an active matching trial returns HTTP 409 with
+`code: "onboarding_device_reply_used"`; the app explains the preview was used and
+offers WiNGR Pro. Account deletion does not reset Apple’s device bit.
+
+Android currently retains the prior account-scoped onboarding path. This DeviceCheck
+flow requires deployment of `20260921120000_devicecheck_onboarding_trials.sql`,
+the configured secrets above, the `ai-conversation` Edge Function, and a new iOS
+native build containing the DeviceCheck bridge.
 
 The provider schema omits string length bounds and the large message-array bound, and uses Gemini's supported
 nullable type form. The former bounded schema triggered Google `INVALID_ARGUMENT`

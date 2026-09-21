@@ -63,6 +63,9 @@ export type OnboardingScreenProps = {
   analysisFailureCount?: number;
   onBack: () => void;
   onComplete: () => void | Promise<void>;
+  onDevicePreviewUsed?: () => void;
+  onMore?: () => void;
+  moreVisible?: boolean;
   onNext: () => void;
   onPrimaryAction?: () => void | Promise<void>;
   onReplacementScreenshotSelected?: (

@@ -1,6 +1,13 @@
 import type { ReactNode } from "react";
 import * as Haptics from "expo-haptics";
-import { StyleSheet, Text, View } from "react-native";
+import {
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import { CTAButton } from "../components/CTAButton";
 import { ExampleChatCard } from "../components/ExampleChatCard";
 import { OnboardingHeader } from "../components/OnboardingHeader";
@@ -10,18 +17,30 @@ import type { OnboardingScreenProps } from "../types/onboarding";
 
 type OnboardingScreenScaffoldProps = OnboardingScreenProps & {
   bottomContent?: ReactNode;
+  bodyStyle?: StyleProp<TextStyle>;
   children?: ReactNode;
+  copyStyle?: StyleProp<ViewStyle>;
+  ctaHeight?: number;
+  footerContent?: ReactNode;
+  headerAppearance?: "default" | "paywall";
+  headerRight?: ReactNode;
   middleContentOffsetY?: number;
   middleContentScrollable?: boolean;
+  titleStyle?: StyleProp<TextStyle>;
 };
 
 export function OnboardingScreenScaffold({
   canGoBack,
   canContinue,
   bottomContent,
+  bodyStyle,
   children,
   content,
+  copyStyle,
+  headerAppearance,
+  headerRight,
   ctaDisabled,
+  ctaHeight,
   ctaLabel,
   ctaLoading,
   currentIndex,
@@ -34,7 +53,9 @@ export function OnboardingScreenScaffold({
   onPrimaryAction,
   onSelectChoice,
   selectedChoiceId,
+  footerContent,
   totalSteps,
+  titleStyle,
 }: OnboardingScreenScaffoldProps) {
   const primaryAction = onPrimaryAction ?? (isLastStep ? onComplete : onNext);
   const handlePrimaryAction = () => {
@@ -46,14 +67,16 @@ export function OnboardingScreenScaffold({
     <View style={styles.screen}>
       <View>
         <OnboardingHeader
+          appearance={headerAppearance}
           canGoBack={content.id !== "replies" && canGoBack}
           currentIndex={currentIndex}
           onBack={onBack}
+          rightAccessory={headerRight}
           totalSteps={totalSteps}
         />
 
-        <View style={styles.copy}>
-          <Text style={styles.title}>
+        <View style={[styles.copy, copyStyle]}>
+          <Text style={[styles.title, titleStyle]}>
             {content.titleParts
               ? content.titleParts.map((part, index) => (
                   <Text
@@ -70,7 +93,7 @@ export function OnboardingScreenScaffold({
               : content.title}
           </Text>
           {content.body ? (
-            <Text style={styles.body}>{content.body}</Text>
+            <Text style={[styles.body, bodyStyle]}>{content.body}</Text>
           ) : null}
         </View>
       </View>
@@ -112,11 +135,13 @@ export function OnboardingScreenScaffold({
         {bottomContent ?? (
           <CTAButton
             disabled={ctaDisabled ?? !canContinue}
+            height={ctaHeight}
             label={ctaLabel ?? content.ctaLabel ?? "Next"}
             loading={ctaLoading}
             onPress={handlePrimaryAction}
           />
         )}
+        {footerContent}
       </View>
     </View>
   );

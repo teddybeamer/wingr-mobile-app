@@ -9,7 +9,9 @@ export type VibeCheck = {
   summary: string;
 };
 export type ConversationRequest = {
+  deviceCheckToken?: string;
   screenshot: string;
+  onboardingTrialId?: string;
   selectedTone: ReplyTone;
   extraContext?: string;
   previousWingrSuggestions?: string[];
@@ -33,6 +35,7 @@ export const CONVERSATION_ERROR_KINDS = [
   "generation_protection_unavailable",
   "usage_limit",
   "onboarding_reply_used",
+  "onboarding_device_reply_used",
 ] as const;
 export type ConversationErrorKind = (typeof CONVERSATION_ERROR_KINDS)[number];
 
@@ -121,6 +124,8 @@ export class ConversationError extends Error {
               "You’ve reached your reply limit. Please check back later.",
             onboarding_reply_used:
               "You've already used your free onboarding reply.",
+            onboarding_device_reply_used:
+              "This iPhone has already used its free preview. Continue to WiNGR Pro for more replies.",
           }[kind],
     );
     if (kind === "usage_limit" || kind === "generation_in_progress")
@@ -144,6 +149,7 @@ export const MAX_SCREENSHOT_LENGTH = Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 32;
 export const MAX_CONTEXT_LENGTH = 4000;
 export const MAX_REPLY_LENGTH = 500;
 export const MAX_PREVIOUS_WINGR_SUGGESTIONS = 3;
+export const MAX_DEVICECHECK_TOKEN_LENGTH = 4096;
 const IMAGE_SIGNATURE_BASE64_LENGTH = 16;
 
 type SupportedImageType = "png" | "jpeg" | "webp";
@@ -199,6 +205,9 @@ function hasExpectedImageSignature(
 }
 
 export function parseConversationRequest(value: unknown): ConversationRequest {
+  const hasDeviceCheckFields =
+    isObject(value) &&
+    (value.deviceCheckToken !== undefined || value.onboardingTrialId !== undefined);
   if (
     !isObject(value) ||
     !isReplyTone(value.selectedTone) ||
@@ -216,7 +225,17 @@ export function parseConversationRequest(value: unknown): ConversationRequest {
           (suggestion) => !text(suggestion, MAX_REPLY_LENGTH),
         ))) ||
     (value.isOnboardingGeneration !== undefined &&
-      typeof value.isOnboardingGeneration !== "boolean")
+      typeof value.isOnboardingGeneration !== "boolean") ||
+    (hasDeviceCheckFields &&
+      (!value.isOnboardingGeneration ||
+        typeof value.deviceCheckToken !== "string" ||
+        value.deviceCheckToken.length === 0 ||
+        value.deviceCheckToken.length > MAX_DEVICECHECK_TOKEN_LENGTH ||
+        !/^[A-Za-z0-9+/]+={0,2}$/.test(value.deviceCheckToken) ||
+        typeof value.onboardingTrialId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          value.onboardingTrialId,
+        )))
   ) {
     throw new ConversationError("invalid_request");
   }
@@ -243,6 +262,12 @@ export function parseConversationRequest(value: unknown): ConversationRequest {
       | string[]
       | undefined,
     isOnboardingGeneration: value.isOnboardingGeneration as boolean | undefined,
+    ...(hasDeviceCheckFields
+      ? {
+          deviceCheckToken: value.deviceCheckToken as string,
+          onboardingTrialId: value.onboardingTrialId as string,
+        }
+      : {}),
   };
 }
 

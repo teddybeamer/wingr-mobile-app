@@ -9,6 +9,7 @@ import {
   ConversationError,
   type ConversationErrorKind,
 } from "../supabase/functions/_shared/conversation";
+import { getOnboardingDeviceCheck } from "../lib/devicecheck";
 import type {
   ConversationMessage,
   ReplyTone,
@@ -151,11 +152,15 @@ export function useConversationFlow() {
       append ? "reply_generation_started" : "screenshot_analysis_started",
     );
     try {
+      const onboardingDeviceCheck = isOnboardingGeneration
+        ? await getOnboardingDeviceCheck()
+        : undefined;
       const result = await requestAnalysis({
         screenshotUri: uri,
         selectedTone: tone,
         extraContext: context,
         isOnboardingGeneration,
+        onboardingDeviceCheck,
         previousWingrSuggestions,
         requestId: id,
         signal: controller.signal,

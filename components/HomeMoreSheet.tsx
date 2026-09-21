@@ -1,5 +1,6 @@
 import {
   ArrowRightUp,
+  DocumentText,
   Letter,
   Lock,
   TrashBinTrash,
@@ -19,6 +20,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BottomSheet } from "./BottomSheet";
 
 const PRIVACY_URL = "https://trywingr.com/privacy";
+const TERMS_OF_SERVICE_URL =
+  "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
 const SUPPORT_EMAIL = "try.wingr.app@gmail.com";
 
 export function HomeMoreSheet({
@@ -31,7 +34,9 @@ export function HomeMoreSheet({
   onAccountDeleted: () => Promise<void>;
 }) {
   const insets = useSafeAreaInsets();
-  const pendingDestination = useRef<"privacy" | "support" | null>(null);
+  const pendingDestination = useRef<
+    "privacy" | "terms" | "support" | null
+  >(null);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   const openDestination = async () => {
@@ -40,11 +45,20 @@ export function HomeMoreSheet({
     if (!destination) return;
     try {
       await Linking.openURL(
-        destination === "privacy" ? PRIVACY_URL : `mailto:${SUPPORT_EMAIL}`,
+        destination === "privacy"
+          ? PRIVACY_URL
+          : destination === "terms"
+            ? TERMS_OF_SERVICE_URL
+            : `mailto:${SUPPORT_EMAIL}`,
       );
     } catch {
-      if (destination === "privacy") {
-        Alert.alert("Couldn’t open privacy policy", "Please try again shortly.");
+      if (destination === "privacy" || destination === "terms") {
+        Alert.alert(
+          destination === "privacy"
+            ? "Couldn’t open privacy policy"
+            : "Couldn’t open Terms of Service",
+          "Please try again shortly.",
+        );
       } else {
         Alert.alert(
           "Couldn’t open your email app",
@@ -112,6 +126,7 @@ export function HomeMoreSheet({
       <View style={styles.options}>
         {([
           { id: "privacy", label: "Privacy", Icon: Lock },
+          { id: "terms", label: "Terms of Service", Icon: DocumentText },
           { id: "support", label: "Contact Support", Icon: Letter },
         ] as const).map(({ id, label, Icon }) => (
           <TouchableOpacity
@@ -121,6 +136,8 @@ export function HomeMoreSheet({
             accessibilityHint={
               id === "privacy"
                 ? "Opens the privacy policy in your browser"
+                : id === "terms"
+                  ? "Opens the Terms of Service in your browser"
                 : "Opens your email app"
             }
             disabled={!visible}

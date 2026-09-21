@@ -4,6 +4,7 @@ import {
   parseConversationRequest,
   parseConversationResult,
 } from "../supabase/functions/_shared/conversation";
+import type { OnboardingDeviceCheck } from "./devicecheck";
 import type {
   AnalyzeScreenshotResult,
   ReplyTone,
@@ -43,6 +44,7 @@ export async function analyzeScreenshot({
   selectedTone,
   extraContext,
   isOnboardingGeneration,
+  onboardingDeviceCheck,
   previousWingrSuggestions,
   requestId,
   signal,
@@ -51,6 +53,7 @@ export async function analyzeScreenshot({
   selectedTone: ReplyTone;
   extraContext?: string;
   isOnboardingGeneration?: boolean;
+  onboardingDeviceCheck?: OnboardingDeviceCheck;
   previousWingrSuggestions?: string[];
   requestId: number;
   signal?: AbortSignal;
@@ -63,6 +66,12 @@ export async function analyzeScreenshot({
     selectedTone,
     extraContext,
     ...(isOnboardingGeneration ? { isOnboardingGeneration: true } : {}),
+    ...(onboardingDeviceCheck
+      ? {
+          deviceCheckToken: onboardingDeviceCheck.deviceCheckToken,
+          onboardingTrialId: onboardingDeviceCheck.onboardingTrialId,
+        }
+      : {}),
     ...(previousWingrSuggestions?.length ? { previousWingrSuggestions } : {}),
   });
   if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -76,5 +85,10 @@ export async function analyzeScreenshot({
     body,
     signal,
   );
-  return toAppResult(result, selectedTone, requestId);
+  const appResult = toAppResult(result, selectedTone, requestId);
+  if (onboardingDeviceCheck) {
+    const { clearOnboardingDeviceCheckTrial } = await import("./devicecheck");
+    await clearOnboardingDeviceCheckTrial();
+  }
+  return appResult;
 }

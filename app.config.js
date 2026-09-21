@@ -41,6 +41,7 @@ export default {
       'expo-font',
       'expo-secure-store',
       './plugins/withWingrSplashBackground',
+      './plugins/withWingrDeviceCheck',
       [
         'expo-splash-screen',
         {

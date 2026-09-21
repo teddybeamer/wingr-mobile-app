@@ -13,11 +13,14 @@ export function VibecheckScreen(props: OnboardingScreenProps) {
   const {
     analysisFailureCount = 0,
     conversation,
+    onDevicePreviewUsed,
     onReplacementScreenshotSelected,
     onRetryScreenshotAnalysis,
   } = props;
   const canSkipResults =
     analysisFailureCount >= MAX_SCREENSHOT_ANALYSIS_FAILURES;
+  const devicePreviewUsed =
+    conversation.error?.code === "onboarding_device_reply_used";
 
   const chooseAnotherScreenshot = async () => {
     const screenshotUri = await conversation.pickScreenshot();
@@ -37,6 +40,10 @@ export function VibecheckScreen(props: OnboardingScreenProps) {
         <InlineErrorCard
           message={conversation.error.message}
           onPrimaryAction={() => {
+            if (devicePreviewUsed) {
+              onDevicePreviewUsed?.();
+              return;
+            }
             if (canSkipResults) {
               void chooseAnotherScreenshot();
               return;
@@ -45,15 +52,23 @@ export function VibecheckScreen(props: OnboardingScreenProps) {
             void onRetryScreenshotAnalysis?.();
           }}
           onSecondaryAction={
-            canSkipResults
+            devicePreviewUsed || canSkipResults
               ? undefined
               : () => {
                   void chooseAnotherScreenshot();
                 }
           }
-          primaryLabel={canSkipResults ? "Choose another screenshot" : "Retry"}
+          primaryLabel={
+            devicePreviewUsed
+              ? "Continue to WiNGR Pro"
+              : canSkipResults
+                ? "Choose another screenshot"
+                : "Retry"
+          }
           secondaryLabel={
-            canSkipResults ? undefined : "Choose another screenshot"
+            devicePreviewUsed || canSkipResults
+              ? undefined
+              : "Choose another screenshot"
           }
         />
       ) : null}

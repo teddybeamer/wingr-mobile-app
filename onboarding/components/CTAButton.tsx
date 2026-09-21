@@ -15,6 +15,7 @@ type CTAButtonProps = {
   containerStyle?: StyleProp<ViewStyle>;
   disabled?: boolean;
   fullWidth?: boolean;
+  height?: number;
   icon?: ReactNode;
   label: string;
   loading?: boolean;
@@ -27,6 +28,7 @@ export function CTAButton({
   containerStyle,
   disabled = false,
   fullWidth = true,
+  height,
   icon,
   label,
   loading,
@@ -52,6 +54,7 @@ export function CTAButton({
         <View
           style={[
             styles.surface,
+            height !== undefined && { height },
             compact && styles.compactSurface,
             !fullWidth && styles.fitContentSurface,
             secondary && styles.secondarySurface,

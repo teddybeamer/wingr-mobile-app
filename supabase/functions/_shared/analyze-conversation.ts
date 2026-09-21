@@ -9,6 +9,7 @@ import type {
   RevenueCatSubscriptionPlan,
 } from "./revenuecat-entitlement.ts";
 import type { GenerationLease, UsageLimiter } from "./usage-limit.ts";
+import type { OnboardingTrialManager } from "./onboarding-device-trial.ts";
 
 type GeminiOptions = NonNullable<Parameters<typeof analyzeWithGemini>[2]>;
 export type ConversationHandlerOptions = Omit<
@@ -17,6 +18,7 @@ export type ConversationHandlerOptions = Omit<
 > & {
   entitlementVerifier?: RevenueCatEntitlementVerifier;
   getVerifiedUserId?: (accessToken: string) => Promise<string | null>;
+  onboardingTrialManager?: OnboardingTrialManager;
   usageLimiter?: UsageLimiter;
 };
 
@@ -122,6 +124,45 @@ function retryAfterHeader(retryAt: string | undefined) {
   return { "retry-after": String(Math.max(1, Math.ceil(milliseconds / 1000))) };
 }
 
+async function handleDeviceCheckOnboardingRequest({
+  apiKey,
+  authenticatedUserId,
+  input,
+  manager,
+  options,
+  request,
+}: {
+  apiKey: string;
+  authenticatedUserId: string;
+  input: ReturnType<typeof parseConversationRequest>;
+  manager: OnboardingTrialManager;
+  options: GeminiOptions;
+  request: Request;
+}) {
+  if (!input.deviceCheckToken || !input.onboardingTrialId)
+    throw new ConversationError("generation_protection_unavailable");
+
+  const trial = await manager.prepare({
+    deviceToken: input.deviceCheckToken,
+    trialId: input.onboardingTrialId,
+    userId: authenticatedUserId,
+  });
+  if (trial.kind === "replay") return json(trial.replay);
+
+  try {
+    const result = await analyzeWithGemini(input, apiKey, {
+      ...options,
+      signal: request.signal,
+    });
+    if (!result.replyable || !result.messages.length || !result.vibeCheck)
+      throw new ConversationError("unusable_screenshot");
+    return json(await trial.complete(result));
+  } catch (failure) {
+    await trial.abandon();
+    throw failure;
+  }
+}
+
 export async function handleConversationRequest(
   request: Request,
   apiKey: string,
@@ -134,6 +175,7 @@ export async function handleConversationRequest(
   const {
     entitlementVerifier,
     getVerifiedUserId,
+    onboardingTrialManager,
     usageLimiter,
     ...geminiOptions
   } = options;
@@ -162,6 +204,19 @@ export async function handleConversationRequest(
       throw new ConversationError("invalid_request");
     }
     const input = parseConversationRequest(value);
+
+    if (input.isOnboardingGeneration && input.deviceCheckToken) {
+      if (!onboardingTrialManager)
+        throw new ConversationError("generation_protection_unavailable");
+      return await handleDeviceCheckOnboardingRequest({
+        apiKey,
+        authenticatedUserId,
+        input,
+        manager: onboardingTrialManager,
+        options: geminiOptions,
+        request,
+      });
+    }
 
     let subscriptionPlan: RevenueCatSubscriptionPlan | null = null;
     if (!input.isOnboardingGeneration) {
@@ -257,6 +312,7 @@ export async function handleConversationRequest(
       generation_protection_unavailable: 503,
       usage_limit: 429,
       onboarding_reply_used: 409,
+      onboarding_device_reply_used: 409,
     }[safeError.kind];
     const diagnostics = {
       code: safeError.kind,

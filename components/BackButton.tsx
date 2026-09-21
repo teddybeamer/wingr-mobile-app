@@ -13,6 +13,7 @@ const BACK_BUTTON_RADIUS = BACK_BUTTON_SIZE / 2;
 type BackButtonProps = {
   accessibilityLabel?: string;
   disabled?: boolean;
+  minimal?: boolean;
   onPress: () => void;
   style?: StyleProp<ViewStyle>;
 };
@@ -20,6 +21,7 @@ type BackButtonProps = {
 export function BackButton({
   accessibilityLabel = "Go back",
   disabled = false,
+  minimal = false,
   onPress,
   style,
 }: BackButtonProps) {
@@ -32,38 +34,40 @@ export function BackButton({
       disabled={disabled}
       hitSlop={8}
       onPress={onPress}
-      style={[styles.button, style]}
+      style={[styles.button, minimal && styles.minimalButton, style]}
     >
-      <Svg
-        height={BACK_BUTTON_SIZE}
-        pointerEvents="none"
-        style={styles.gradientBorder}
-        width={BACK_BUTTON_SIZE}
-      >
-        <Defs>
-          <LinearGradient
-            id="back-button-gradient"
-            x1="0%"
-            x2="0%"
-            y1="0%"
-            y2="100%"
-          >
-            <Stop offset="0%" stopColor="#525252" />
-            <Stop offset="100%" stopColor="#525252" stopOpacity="0" />
-          </LinearGradient>
-        </Defs>
-        <Rect
-          fill="none"
-          height={BACK_BUTTON_SIZE - 1}
-          rx={BACK_BUTTON_RADIUS}
-          ry={BACK_BUTTON_RADIUS}
-          stroke="url(#back-button-gradient)"
-          strokeWidth="1"
-          width={BACK_BUTTON_SIZE - 1}
-          x="0.5"
-          y="0.5"
-        />
-      </Svg>
+      {!minimal ? (
+        <Svg
+          height={BACK_BUTTON_SIZE}
+          pointerEvents="none"
+          style={styles.gradientBorder}
+          width={BACK_BUTTON_SIZE}
+        >
+          <Defs>
+            <LinearGradient
+              id="back-button-gradient"
+              x1="0%"
+              x2="0%"
+              y1="0%"
+              y2="100%"
+            >
+              <Stop offset="0%" stopColor="#525252" />
+              <Stop offset="100%" stopColor="#525252" stopOpacity="0" />
+            </LinearGradient>
+          </Defs>
+          <Rect
+            fill="none"
+            height={BACK_BUTTON_SIZE - 1}
+            rx={BACK_BUTTON_RADIUS}
+            ry={BACK_BUTTON_RADIUS}
+            stroke="url(#back-button-gradient)"
+            strokeWidth="1"
+            width={BACK_BUTTON_SIZE - 1}
+            x="0.5"
+            y="0.5"
+          />
+        </Svg>
+      ) : null}
       <ArrowLeft color="#F5F5F5" size={24} />
     </TouchableOpacity>
   );
@@ -84,5 +88,12 @@ const styles = StyleSheet.create({
     left: 0,
     position: "absolute",
     top: 0,
+  },
+  minimalButton: {
+    backgroundColor: "transparent",
+    borderRadius: 0,
+    height: 24,
+    overflow: "visible",
+    width: 24,
   },
 });

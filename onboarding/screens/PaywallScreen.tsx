@@ -13,6 +13,7 @@ import {
   purchaseRevenueCatPackage,
   restoreRevenueCatPurchases,
 } from "../../lib/revenuecat";
+import { MoreButton } from "../../components/MoreButton";
 import type { PurchasesOffering } from "react-native-purchases";
 import { OnboardingScreenScaffold } from "./OnboardingScreenScaffold";
 import type { OnboardingScreenProps } from "../types/onboarding";
@@ -137,9 +138,45 @@ export function PaywallScreen(props: OnboardingScreenProps) {
   return (
     <OnboardingScreenScaffold
       {...props}
+      bodyStyle={styles.bodyCopy}
+      copyStyle={styles.copy}
       ctaDisabled={offeringsLoading || !selectedPackage || busy}
+      ctaHeight={44}
       ctaLoading={action === "purchasing"}
+      footerContent={
+        <View style={styles.footerContent}>
+          <View style={styles.footerRow}>
+            <Text style={styles.footerText}>No commitment</Text>
+            <View style={styles.footerDot} />
+            <Text style={styles.footerText}>Cancel anytime</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            disabled={busy}
+            hitSlop={8}
+            onPress={() => void handleRestore()}
+            style={styles.restoreButton}
+          >
+            <Text
+              style={[styles.restoreText, busy && styles.disabledRestoreText]}
+            >
+              {action === "restoring" ? "Restoring…" : "Restore purchase"}
+            </Text>
+          </Pressable>
+        </View>
+      }
+      headerAppearance="paywall"
+      headerRight={
+        props.onMore ? (
+          <MoreButton
+            expanded={Boolean(props.moreVisible)}
+            onPress={props.onMore}
+            style={styles.moreButton}
+          />
+        ) : undefined
+      }
       onPrimaryAction={handlePurchase}
+      titleStyle={styles.title}
     >
       <View style={styles.plans}>
         <Pressable
@@ -155,7 +192,12 @@ export function PaywallScreen(props: OnboardingScreenProps) {
             selectedPlan === "weekly" && styles.selectedPlan,
           ]}
         >
-          <Text style={styles.planName}>Weekly Plan</Text>
+          <View style={styles.planCopy}>
+            <Text style={styles.planName}>Weekly Plan</Text>
+            <Text style={styles.planAllowance}>
+              125 replies + vibechecks
+            </Text>
+          </View>
           <View style={styles.priceCopy}>
             <Text style={styles.price}>
               {weeklyPackage
@@ -177,12 +219,14 @@ export function PaywallScreen(props: OnboardingScreenProps) {
           }}
           style={[
             styles.planCard,
-            styles.monthlyPlan,
             selectedPlan === "monthly" && styles.selectedPlan,
           ]}
         >
-          <View>
+          <View style={styles.planCopy}>
             <Text style={styles.planName}>Monthly Plan</Text>
+            <Text style={styles.planAllowance}>
+              500 replies + vibechecks
+            </Text>
           </View>
           <View style={styles.priceCopy}>
             <Text style={styles.price}>
@@ -197,45 +241,68 @@ export function PaywallScreen(props: OnboardingScreenProps) {
         </Pressable>
       </View>
 
-      <Text style={styles.footer}>No Commitment • Cancel anytime</Text>
-      <Pressable
-        accessibilityRole="button"
-        disabled={busy}
-        onPress={() => void handleRestore()}
-        style={styles.restoreButton}
-      >
-        <Text style={[styles.restoreText, busy && styles.disabledRestoreText]}>
-          {action === "restoring" ? "Restoring…" : "Restore Purchases"}
-        </Text>
-      </Pressable>
     </OnboardingScreenScaffold>
   );
 }
 
 const styles = StyleSheet.create({
-  footer: {
-    color: "#9B9B9B",
-    fontFamily: "ClashGroteskRegular",
+  bodyCopy: {
+    color: "#FFFFFF",
     fontSize: 14,
-    fontWeight: "400",
-    lineHeight: 18,
-    marginTop: 0,
-    textAlign: "center",
+    lineHeight: 17,
+  },
+  copy: {
+    gap: 8,
+  },
+  footerContent: {
+    alignItems: "center",
+    gap: 6,
+    marginTop: 18,
+  },
+  footerDot: {
+    backgroundColor: "#D4D4D4",
+    borderRadius: 2,
+    height: 4,
+    width: 4,
+  },
+  footerRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
+  },
+  footerText: {
+    color: "#D4D4D4",
+    fontFamily: "ClashGrotesk",
+    fontSize: 14,
+    fontWeight: "500",
+    lineHeight: 17,
   },
   planCard: {
     alignItems: "center",
-    backgroundColor: "#252525",
+    backgroundColor: "#262626",
     borderColor: "transparent",
     borderWidth: 1,
     borderRadius: 10,
     flexDirection: "row",
     justifyContent: "space-between",
-    minHeight: 72,
-    paddingHorizontal: 20,
+    paddingHorizontal: 30,
+    paddingVertical: 16,
+  },
+  planAllowance: {
+    color: "#D4D4D4",
+    fontFamily: "ClashGrotesk",
+    fontSize: 14,
+    fontWeight: "500",
+    lineHeight: 17,
+  },
+  planCopy: {
+    flex: 1,
+    gap: 4,
+    paddingRight: 8,
   },
   planName: {
     color: "#FFFFFF",
-    fontFamily: "ClashGrotesk",
+    fontFamily: "ClashDisplay",
     fontSize: 16,
     fontWeight: "600",
     lineHeight: 20,
@@ -243,8 +310,9 @@ const styles = StyleSheet.create({
   plans: {
     gap: 10,
   },
-  monthlyPlan: {
-    minHeight: 78,
+  moreButton: {
+    right: -10,
+    top: 0,
   },
   price: {
     color: "#FFFFFF",
@@ -260,16 +328,14 @@ const styles = StyleSheet.create({
   },
   restoreButton: {
     alignItems: "center",
-    minHeight: 36,
     justifyContent: "center",
   },
   restoreText: {
-    color: "#FFFFFF",
+    color: "#A3A3A3",
     fontFamily: "ClashGrotesk",
     fontSize: 14,
-    fontWeight: "600",
-    lineHeight: 18,
-    textDecorationLine: "underline",
+    fontWeight: "500",
+    lineHeight: 17,
   },
   disabledRestoreText: {
     opacity: 0.5,
@@ -288,5 +354,9 @@ const styles = StyleSheet.create({
   },
   selectedPlan: {
     borderColor: "#1970FD",
+  },
+  title: {
+    fontSize: 24,
+    lineHeight: 29,
   },
 });

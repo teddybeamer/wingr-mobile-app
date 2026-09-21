@@ -27,7 +27,9 @@ import type {
 
 type OnboardingFlowProps = {
   initialStepId?: OnboardingStepId;
+  moreVisible?: boolean;
   onComplete: () => void | Promise<void>;
+  onMore?: () => void;
   userId: string;
 };
 
@@ -50,7 +52,9 @@ const screenMap: Record<
 
 export function OnboardingFlow({
   initialStepId,
+  moreVisible,
   onComplete,
+  onMore,
   userId,
 }: OnboardingFlowProps) {
   const [restoredInitialStep, setRestoredInitialStep] = useState<{
@@ -77,7 +81,9 @@ export function OnboardingFlow({
   return (
     <OnboardingFlowContent
       initialStepId={restoredInitialStep.step}
+      moreVisible={moreVisible}
       onComplete={onComplete}
+      onMore={onMore}
       userId={userId}
     />
   );
@@ -85,7 +91,9 @@ export function OnboardingFlow({
 
 function OnboardingFlowContent({
   initialStepId,
+  moreVisible,
   onComplete,
+  onMore,
   userId,
 }: OnboardingFlowProps & { initialStepId?: OnboardingStepId }) {
   const conversation = useConversationFlow();
@@ -187,6 +195,7 @@ function OnboardingFlowContent({
     const result = await analyzeScreenshotForOnboarding(screenshotUri);
 
     if (typeof result === "object" && result.status === "error") {
+      if (result.error.code === "onboarding_device_reply_used") return;
       Alert.alert("Could not read screenshot", result.error.message);
       goBack();
     }
@@ -222,8 +231,14 @@ function OnboardingFlowContent({
       ctaLoading={ctaLoading}
       currentIndex={currentIndex}
       isLastStep={isLastStep}
+      moreVisible={moreVisible}
       onBack={goBack}
       onComplete={completeOnboarding}
+      onDevicePreviewUsed={() => {
+        setAnalysisFailureCount(0);
+        goToStep("paywall", { resetHistory: true });
+      }}
+      onMore={onMore}
       onNext={goNext}
       onPrimaryAction={handlePrimaryAction}
       onReplacementScreenshotSelected={analyzeReplacementScreenshot}
