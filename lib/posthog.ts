@@ -9,8 +9,12 @@ const projectToken = Constants.expoConfig?.extra?.posthogProjectToken as
 const host = Constants.expoConfig?.extra?.posthogHost as string | undefined;
 const isPostHogConfigured =
   Boolean(projectToken) && projectToken !== "phc_your_project_token_here";
+// The local staging wrapper intentionally does not load the repository's
+// production .env file. Keep staging development traffic out of production
+// analytics while allowing the SDK to remain safely disabled.
+const isStagingDevelopment = process.env.EXPO_PUBLIC_WINGR_STAGING === "1";
 
-if (__DEV__ && !isPostHogConfigured) {
+if (__DEV__ && !isStagingDevelopment && !isPostHogConfigured) {
   throw new Error(
     "POSTHOG_PROJECT_TOKEN variable required by PostHog is missing or un-configured, " +
       "this causes events to be silently missed. " +
@@ -18,7 +22,7 @@ if (__DEV__ && !isPostHogConfigured) {
   );
 }
 
-if (__DEV__ && !host) {
+if (__DEV__ && !isStagingDevelopment && !host) {
   throw new Error(
     "POSTHOG_HOST variable required by PostHog is missing or un-configured, " +
       "this causes events to be silently missed. " +

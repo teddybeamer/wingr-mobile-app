@@ -40,12 +40,15 @@
     "typescript": "~5.9.2"
   },
   "scripts": {
-    "start": "expo start",
-    "start:dev-client": "expo start --dev-client",
+    "start": "node scripts/with-staging-env.js start --dev-client --clear",
+    "start:dev-client": "node scripts/with-staging-env.js start --dev-client --clear",
+    "start:staging": "node scripts/with-staging-env.js start --dev-client --clear",
     "android": "expo run:android",
-    "ios": "expo run:ios",
+    "ios": "node scripts/with-staging-env.js run:ios --device",
+    "ios:staging": "node scripts/with-staging-env.js run:ios --device",
+    "staging:check": "node scripts/with-staging-env.js --check",
     "web": "expo start --web",
-    "test": "tsx --test lib/*.test.ts supabase/functions/_shared/*.test.ts",
+    "test": "tsx --test lib/*.test.ts supabase/functions/_shared/*.test.ts scripts/*.test.js",
     "test:db-concurrency": "bash supabase/tests/database/ai_generation_concurrency.integration.sh",
     "typecheck": "node --stack-size=8192 node_modules/typescript/bin/tsc --noEmit && tsc -p supabase/tsconfig.json"
   },
