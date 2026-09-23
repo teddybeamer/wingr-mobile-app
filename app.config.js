@@ -33,7 +33,7 @@ export default {
         'expo-image-picker',
         {
           photosPermission:
-            'Wingr needs access to your photos so you can upload text screenshots.',
+            'WiNGR needs access to your photos so you can upload text screenshots.',
           cameraPermission: false,
           microphonePermission: false,
         },

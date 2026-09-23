@@ -12,7 +12,7 @@ export const onboardingContent: Record<
       { color: "blue", text: "overthink" },
       { text: " a reply again" },
     ],
-    body: "Wingr helps you turn awkward, dry, or flirty moments into replies that actually sound like you.",
+    body: "WiNGR helps you turn awkward, dry, or flirty moments into replies that actually sound like you.",
     ctaLabel: "Get Started",
   },
   problem: {
@@ -73,7 +73,7 @@ export const onboardingContent: Record<
       { text: "Your conversations " },
       { color: "blue", text: "stay private" },
     ],
-    body: "Your screenshot is securely processed to analyze your conversation and generate replies. Wingr doesn’t save your screenshots or conversations, and they’re not used to train AI models.",
+    body: "Your screenshot is securely processed to analyze your conversation and generate replies. WiNGR doesn’t save your screenshots or conversations, and they’re not used to train AI models.",
     ctaLabel: "Continue with WiNGR",
   },
   uploadScreenshot: {
@@ -83,7 +83,7 @@ export const onboardingContent: Record<
       { text: "Try WiNGR on " },
       { color: "blue", text: "a real chat" },
     ],
-    body: "Upload a screenshot and Wingr will read the vibe, spot what’s really going on, and suggest replies you can actually send. Your chats stay private.",
+    body: "Upload a screenshot and WiNGR will read the vibe, spot what’s really going on, and suggest replies you can actually send. Your chats stay private.",
     ctaLabel: "Next",
   },
   vibecheck: {
@@ -99,13 +99,6 @@ export const onboardingContent: Record<
     titleParts: [{ color: "blue", text: "Your" }, { text: " reply" }],
     body: "Based on the vibe, these are your best next moves.",
     ctaLabel: "Next",
-  },
-  rating: {
-    id: "rating",
-    title: "Give us a rating",
-    titleParts: [{ text: "Give us a " }, { color: "blue", text: "rating" }],
-    body: "We’re a small team, so giving us a rating really goes a long way!",
-    ctaLabel: "Give us a rating",
   },
   testimonials: {
     id: "testimonials",

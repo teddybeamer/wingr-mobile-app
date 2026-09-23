@@ -50,15 +50,15 @@ function validProviderStatus(status: unknown): status is number {
 
 function providerErrorMessage(status: number) {
   const descriptions: Record<number, string> = {
-    400: "The AI service rejected Wingr's request configuration or image input.",
-    401: "Wingr's OpenRouter API key was rejected.",
-    402: "Wingr's OpenRouter account or API key has insufficient credits.",
+    400: "The AI service rejected WiNGR's request configuration or image input.",
+    401: "WiNGR's OpenRouter API key was rejected.",
+    402: "WiNGR's OpenRouter account or API key has insufficient credits.",
     403: "OpenRouter blocked access to this request.",
     404: "The requested AI model or provider route is unavailable.",
-    429: "Wingr's AI service is rate-limited. Please try again shortly.",
-    503: "No AI provider is currently available for Wingr's request.",
+    429: "WiNGR's AI service is rate-limited. Please try again shortly.",
+    503: "No AI provider is currently available for WiNGR's request.",
   };
-  return `${descriptions[status] ?? "Wingr's AI provider could not complete the request."} (OpenRouter ${status})`;
+  return `${descriptions[status] ?? "WiNGR's AI provider could not complete the request."} (OpenRouter ${status})`;
 }
 
 export const PROVIDER_ERROR_REASONS = {
@@ -109,17 +109,17 @@ export class ConversationError extends Error {
               "Choose a PNG, JPEG, or WebP screenshot under 10 MB and a valid tone.",
             payload_too_large: "The request payload is too large.",
             invalid_output:
-              "Wingr could not create a reliable reply. Please try again.",
+              "WiNGR could not create a reliable reply. Please try again.",
             unusable_screenshot:
-              "Wingr could not find a readable conversation to reply to. Try another screenshot.",
+              "WiNGR could not find a readable conversation to reply to. Try another screenshot.",
             provider:
-              "Wingr could not analyze that screenshot right now. Please try again.",
+              "WiNGR could not analyze that screenshot right now. Please try again.",
             timeout:
-              "Wingr took too long to analyze that screenshot. Please try again.",
+              "WiNGR took too long to analyze that screenshot. Please try again.",
             generation_in_progress:
               "A reply is already being generated. Please wait a moment.",
             generation_protection_unavailable:
-              "Wingr could not safely start a reply right now. Please try again.",
+              "WiNGR could not safely start a reply right now. Please try again.",
             usage_limit:
               "You’ve reached your reply limit. Please check back later.",
             onboarding_reply_used:

@@ -108,7 +108,7 @@ export function useConversationFlow() {
         message:
           failure instanceof Error
             ? failure.message
-            : "Wingr could not open your photo library.",
+            : "WiNGR could not open your photo library.",
       });
       return null;
     }
@@ -201,7 +201,7 @@ export function useConversationFlow() {
         message:
           failure instanceof Error
             ? failure.message
-            : "Wingr could not analyze that screenshot. Please try again.",
+            : "WiNGR could not analyze that screenshot. Please try again.",
       };
       setError(error);
       posthog.capture(

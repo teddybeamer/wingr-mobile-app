@@ -135,7 +135,7 @@ export function WelcomeScreen({ content, onNext }: OnboardingScreenProps) {
   return (
     <View style={styles.screen}>
       <View style={styles.topSection}>
-        <Text style={styles.logo}>Wingr</Text>
+        <Text style={styles.logo}>WiNGR</Text>
 
         <Animated.View style={[styles.copy, titleAnimatedStyle]}>
           <Text accessibilityLabel={fullTitle} style={styles.title}>

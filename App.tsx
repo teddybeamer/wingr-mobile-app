@@ -86,8 +86,10 @@ import {
   getRevenueCatCustomerInfo,
   hasProEntitlement,
   initializeRevenueCat,
+  restoreRevenueCatPurchases,
   subscribeToRevenueCatCustomerInfo,
 } from "./lib/revenuecat";
+import { restoreAndComplete } from "./lib/revenuecat-core";
 import { clearAccountLocalState } from "./lib/account-local-state";
 import { getSupabaseRequestAuthentication } from "./lib/supabase-auth";
 import {
@@ -595,6 +597,34 @@ function WingrApp() {
     setScreen("landing");
   };
 
+  const handlePaywallRestorePurchases = async () => {
+    posthog.capture("paywall_restore_started");
+
+    try {
+      const unlocked = await restoreAndComplete({
+        onComplete: async () => {
+          setIsPaywallMoreVisible(false);
+          await handleEnterLanding();
+        },
+        restorePurchases: restoreRevenueCatPurchases,
+      });
+
+      if (!unlocked) {
+        posthog.capture("paywall_restore_missing_entitlement");
+        Alert.alert(
+          "No active subscription",
+          "We could not find an active WiNGR Pro purchase to restore.",
+        );
+      }
+    } catch {
+      posthog.capture("paywall_restore_failed");
+      Alert.alert(
+        "Restore failed",
+        "WiNGR could not restore your purchases. Please try again.",
+      );
+    }
+  };
+
   const handleCheckSelectedScreenshot = async () => {
     if (__DEV__) {
       console.info("[Wingr flow] check vibe pressed", {
@@ -665,6 +695,7 @@ function WingrApp() {
             visible={isPaywallMoreVisible}
             onClose={() => setIsPaywallMoreVisible(false)}
             onAccountDeleted={handleAccountDeleted}
+            onRestorePurchases={handlePaywallRestorePurchases}
           />
 
           {screen === "landing" ? (

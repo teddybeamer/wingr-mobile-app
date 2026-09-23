@@ -16,6 +16,20 @@ test("generated reply history returns from Testimonials to Your Reply", () => {
   assert.equal(goBackInOnboarding(navigation).currentStepId, "vibecheck");
 });
 
+test("generated reply path advances from Testimonials directly to Paywall and back", () => {
+  let navigation = createOnboardingNavigation("uploadScreenshot");
+  navigation = advanceOnboardingNavigation(navigation);
+  navigation = advanceOnboardingNavigation(navigation);
+  assert.equal(navigation.currentStepId, "testimonials");
+
+  navigation = advanceOnboardingNavigation(navigation);
+  assert.equal(navigation.currentStepId, "paywall");
+
+  navigation = goBackInOnboarding(navigation);
+  assert.equal(navigation.currentStepId, "testimonials");
+  assert.equal(goBackInOnboarding(navigation).currentStepId, "vibecheck");
+});
+
 test("Skip history returns from Testimonials to Choose Screenshot", () => {
   let navigation = createOnboardingNavigation("uploadScreenshot");
   navigation = goToOnboardingStep(navigation, "testimonials");
@@ -33,6 +47,23 @@ test("Skip history never visits Your Reply", () => {
   );
   assert.equal(navigation.history.includes("vibecheck"), false);
   assert.equal(navigation.currentStepId === "vibecheck", false);
+});
+
+test("Skip path advances from Testimonials directly to Paywall and back", () => {
+  let navigation = goToOnboardingStep(
+    createOnboardingNavigation("uploadScreenshot"),
+    "testimonials",
+  );
+
+  navigation = advanceOnboardingNavigation(navigation);
+  assert.equal(navigation.currentStepId, "paywall");
+
+  navigation = goBackInOnboarding(navigation);
+  assert.equal(navigation.currentStepId, "testimonials");
+  assert.equal(
+    goBackInOnboarding(navigation).currentStepId,
+    "uploadScreenshot",
+  );
 });
 
 test("recovery cannot navigate back to Your Reply without a usable local reply", () => {

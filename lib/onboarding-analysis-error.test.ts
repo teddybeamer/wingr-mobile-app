@@ -33,7 +33,7 @@ test("generic onboarding analysis failures use concise retry copy", () => {
   assert.deepEqual(
     getOnboardingAnalysisFailureAlert({
       code: "invalid_output",
-      message: "Wingr could not create a reliable reply. Please try again.",
+      message: "WiNGR could not create a reliable reply. Please try again.",
     }),
     { title: "Something went wrong", message: "Please try again." },
   );
@@ -48,7 +48,7 @@ test("generic onboarding analysis failures use concise retry copy", () => {
 
 test("screenshot-specific failures retain their useful explanation", () => {
   const message =
-    "Wingr could not find a readable conversation to reply to. Try another screenshot.";
+    "WiNGR could not find a readable conversation to reply to. Try another screenshot.";
   assert.deepEqual(
     getOnboardingAnalysisFailureAlert({
       code: "unusable_screenshot",

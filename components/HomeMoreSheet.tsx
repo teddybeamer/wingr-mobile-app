@@ -1,5 +1,6 @@
 import {
   ArrowRightUp,
+  BillCheck,
   DocumentText,
   Letter,
   Lock,
@@ -28,16 +29,37 @@ export function HomeMoreSheet({
   visible,
   onClose,
   onAccountDeleted,
+  onRestorePurchases,
 }: {
   visible: boolean;
   onClose: () => void;
   onAccountDeleted: () => Promise<void>;
+  onRestorePurchases?: () => Promise<void>;
 }) {
   const insets = useSafeAreaInsets();
   const pendingDestination = useRef<
     "privacy" | "terms" | "support" | null
   >(null);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [isRestoringPurchases, setIsRestoringPurchases] = useState(false);
+  const restoreInFlight = useRef(false);
+
+  const closeSheet = () => {
+    if (!restoreInFlight.current) onClose();
+  };
+
+  const restorePurchases = async () => {
+    if (!onRestorePurchases || restoreInFlight.current) return;
+
+    restoreInFlight.current = true;
+    setIsRestoringPurchases(true);
+    try {
+      await onRestorePurchases();
+    } finally {
+      restoreInFlight.current = false;
+      setIsRestoringPurchases(false);
+    }
+  };
 
   const openDestination = async () => {
     const destination = pendingDestination.current;
@@ -83,7 +105,7 @@ export function HomeMoreSheet({
     if (isDeletingAccount) return;
     Alert.alert(
       "Are you sure you want to delete your account?",
-      "This will permanently delete your Wingr account and associated account data.",
+      "This will permanently delete your WiNGR account and associated account data.",
       [
         { text: "No", style: "cancel" },
         {
@@ -117,7 +139,7 @@ export function HomeMoreSheet({
       title="More"
       titleColor="#D4D4D4"
       visible={visible}
-      onClose={onClose}
+      onClose={closeSheet}
       onClosed={() => {
         void openDestination();
       }}
@@ -154,10 +176,29 @@ export function HomeMoreSheet({
             <ArrowRightUp color="#A3A3A3" size={24} />
           </TouchableOpacity>
         ))}
+        {onRestorePurchases ? (
+          <TouchableOpacity
+            accessibilityLabel="Restore Purchases"
+            accessibilityRole="button"
+            accessibilityHint="Restores an existing WiNGR Pro purchase"
+            activeOpacity={0.7}
+            disabled={!visible || isRestoringPurchases}
+            onPress={() => void restorePurchases()}
+            style={[styles.row, isRestoringPurchases && styles.rowDisabled]}
+          >
+            <BillCheck color="#A3A3A3" size={24} />
+            <Text style={styles.label}>
+              {isRestoringPurchases
+                ? "Restoring Purchases…"
+                : "Restore Purchases"}
+            </Text>
+            <ArrowRightUp color="#A3A3A3" size={24} />
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity
           accessibilityLabel="Delete account"
           accessibilityRole="button"
-          accessibilityHint="Permanently deletes your Wingr account"
+          accessibilityHint="Permanently deletes your WiNGR account"
           disabled={!visible || isDeletingAccount}
           activeOpacity={0.7}
           onPress={confirmAccountDeletion}

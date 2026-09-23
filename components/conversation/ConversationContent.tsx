@@ -415,7 +415,7 @@ export function VibeCheckCard({
     <View style={styles.vibeCard}>
       <Text style={styles.vibeCardTitle}>Vibe check</Text>
       <Text style={styles.vibeSummaryText}>
-        {vibeCheck.summary || "Wingr read the vibe."}
+        {vibeCheck.summary || "WiNGR read the vibe."}
       </Text>
       <VibeMetric
         icon={Heart}
@@ -561,7 +561,7 @@ function InlineExpandableVibeCheckCard({
             </View>
           </View>
           <Text style={styles.inlineVibeSummary}>
-            {vibeCheck.summary || "Wingr read the vibe."}
+            {vibeCheck.summary || "WiNGR read the vibe."}
           </Text>
 
           {isExpanded ? (
@@ -1815,7 +1815,7 @@ function TypingBubble({
   return (
     <View
       accessible
-      accessibilityLabel="Wingr is typing"
+      accessibilityLabel="WiNGR is typing"
       onLayout={onLayout}
       style={[
         styles.typingBubble,

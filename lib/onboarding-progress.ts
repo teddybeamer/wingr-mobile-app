@@ -9,11 +9,13 @@ export type OnboardingProgressStorage = {
 };
 
 type AccountMarker = {
-  resumeStep?: OnboardingReplyResumeStep;
+  resumeStep?: PersistedOnboardingReplyResumeStep;
   userId: string;
 };
 
-export type OnboardingReplyResumeStep = "rating" | "testimonials";
+type PersistedOnboardingReplyResumeStep = "rating" | "testimonials";
+
+export type OnboardingReplyResumeStep = "testimonials";
 
 async function getDefaultStorage(): Promise<OnboardingProgressStorage> {
   if (typeof localStorage !== "undefined") {
@@ -60,7 +62,7 @@ async function setAccountMarker(
 export async function getOnboardingReplyResumeStep(
   userId: string,
   storage?: OnboardingProgressStorage,
-) {
+): Promise<OnboardingReplyResumeStep | null> {
   const resolvedStorage = storage ?? (await getDefaultStorage());
   const stored = await resolvedStorage.getItem(ONBOARDING_REPLY_DISPLAYED_KEY);
   if (!stored) return null;

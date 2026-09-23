@@ -1,9 +1,8 @@
-import { ArrowLeft } from "@solar-icons/react-native/Linear";
 import * as Haptics from "expo-haptics";
-import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Image, StyleSheet, Text, View } from "react-native";
 import Animated, { Easing, FadeInLeft } from "react-native-reanimated";
 import { CTAButton } from "../components/CTAButton";
-import { ProgressIndicator } from "../components/ProgressIndicator";
+import { OnboardingHeader } from "../components/OnboardingHeader";
 import type { OnboardingScreenProps } from "../types/onboarding";
 
 const STAR_ENTRANCE = FadeInLeft.duration(350)
@@ -31,23 +30,12 @@ export function PrivacyScreen({
   return (
     <View style={styles.screen}>
       <View>
-        <View style={styles.header}>
-          <TouchableOpacity
-            accessibilityLabel="Go back"
-            accessibilityRole="button"
-            disabled={!canGoBack}
-            hitSlop={8}
-            onPress={onBack}
-            style={!canGoBack ? styles.hiddenBackButton : undefined}
-          >
-            <ArrowLeft color="#D4D4D4" size={24} />
-          </TouchableOpacity>
-          <ProgressIndicator
-            currentIndex={currentIndex}
-            totalSteps={totalSteps}
-          />
-          <View style={styles.headerSpacer} />
-        </View>
+        <OnboardingHeader
+          canGoBack={canGoBack}
+          currentIndex={currentIndex}
+          onBack={onBack}
+          totalSteps={totalSteps}
+        />
 
         <View style={styles.copy}>
           <Text style={styles.title}>
@@ -84,31 +72,19 @@ const styles = StyleSheet.create({
   },
   copy: {
     gap: 8,
-    marginTop: 16,
+    marginTop: 24,
   },
   middleContent: {
     alignItems: "center",
     flex: 1,
     justifyContent: "center",
   },
-  header: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 8,
-    height: 48,
-  },
-  headerSpacer: {
-    width: 24,
-  },
-  hiddenBackButton: {
-    opacity: 0,
-  },
   screen: {
     backgroundColor: "#080808",
     flex: 1,
     paddingBottom: 22,
     paddingHorizontal: 16,
-    paddingTop: 4,
+    paddingTop: 8,
   },
   starGraphic: {
     height: 242,

@@ -5,13 +5,11 @@ import {
   getRevenueCatPackage,
   isRevenueCatPurchaseCancelled,
   purchasePlanAndComplete,
-  restoreAndComplete,
   type RevenueCatPlan,
 } from "../../lib/revenuecat-core";
 import {
   getRevenueCatOfferings,
   purchaseRevenueCatPackage,
-  restoreRevenueCatPurchases,
 } from "../../lib/revenuecat";
 import { MoreButton } from "../../components/MoreButton";
 import type { PurchasesOffering } from "react-native-purchases";
@@ -22,9 +20,7 @@ export function PaywallScreen(props: OnboardingScreenProps) {
   const [selectedPlan, setSelectedPlan] = useState<RevenueCatPlan>("monthly");
   const [offering, setOffering] = useState<PurchasesOffering | null>(null);
   const [offeringsLoading, setOfferingsLoading] = useState(true);
-  const [action, setAction] = useState<"idle" | "purchasing" | "restoring">(
-    "idle",
-  );
+  const [action, setAction] = useState<"idle" | "purchasing">("idle");
   const actionInFlight = useRef(false);
 
   useEffect(() => {
@@ -101,40 +97,6 @@ export function PaywallScreen(props: OnboardingScreenProps) {
     }
   };
 
-  const handleRestore = async () => {
-    if (actionInFlight.current) {
-      return;
-    }
-
-    actionInFlight.current = true;
-    setAction("restoring");
-    posthog.capture("paywall_restore_started");
-
-    try {
-      const unlocked = await restoreAndComplete({
-        onComplete: props.onComplete,
-        restorePurchases: restoreRevenueCatPurchases,
-      });
-
-      if (!unlocked) {
-        posthog.capture("paywall_restore_missing_entitlement");
-        Alert.alert(
-          "No active subscription",
-          "We could not find an active WiNGR Pro purchase to restore.",
-        );
-      }
-    } catch {
-      posthog.capture("paywall_restore_failed");
-      Alert.alert(
-        "Restore failed",
-        "WiNGR could not restore your purchases. Please try again.",
-      );
-    } finally {
-      actionInFlight.current = false;
-      setAction("idle");
-    }
-  };
-
   return (
     <OnboardingScreenScaffold
       {...props}
@@ -151,24 +113,6 @@ export function PaywallScreen(props: OnboardingScreenProps) {
           </View>
         </View>
       }
-      footerContent={
-        <View style={styles.restoreFooter}>
-          <Pressable
-            accessibilityRole="button"
-            disabled={busy}
-            hitSlop={8}
-            onPress={() => void handleRestore()}
-            style={styles.restoreButton}
-          >
-            <Text
-              style={[styles.restoreText, busy && styles.disabledRestoreText]}
-            >
-              {action === "restoring" ? "Restoring…" : "Restore purchase"}
-            </Text>
-          </Pressable>
-        </View>
-      }
-      headerAppearance="paywall"
       headerRight={
         props.onMore ? (
           <MoreButton
@@ -326,24 +270,6 @@ const styles = StyleSheet.create({
   priceCopy: {
     alignItems: "flex-end",
     gap: 4,
-  },
-  restoreButton: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  restoreFooter: {
-    alignItems: "center",
-    marginTop: 20,
-  },
-  restoreText: {
-    color: "#A3A3A3",
-    fontFamily: "ClashGrotesk",
-    fontSize: 14,
-    fontWeight: "500",
-    lineHeight: 17,
-  },
-  disabledRestoreText: {
-    opacity: 0.5,
   },
   saveBadge: {
     alignSelf: "flex-end",

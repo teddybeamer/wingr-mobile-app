@@ -10,7 +10,6 @@ export const onboardingStepOrder: OnboardingStepId[] = [
   'uploadScreenshot',
   'vibecheck',
   'testimonials',
-  'rating',
   'paywall',
 ];
 

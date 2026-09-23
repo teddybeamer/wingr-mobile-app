@@ -23,7 +23,6 @@ type OnboardingScreenScaffoldProps = OnboardingScreenProps & {
   copyStyle?: StyleProp<ViewStyle>;
   ctaHeight?: number;
   footerContent?: ReactNode;
-  headerAppearance?: "default" | "paywall";
   headerRight?: ReactNode;
   middleContentOffsetY?: number;
   middleContentScrollable?: boolean;
@@ -39,7 +38,6 @@ export function OnboardingScreenScaffold({
   children,
   content,
   copyStyle,
-  headerAppearance,
   headerRight,
   ctaDisabled,
   ctaHeight,
@@ -69,7 +67,6 @@ export function OnboardingScreenScaffold({
     <View style={styles.screen}>
       <View>
         <OnboardingHeader
-          appearance={headerAppearance}
           canGoBack={content.id !== "replies" && canGoBack}
           currentIndex={currentIndex}
           onBack={onBack}
@@ -156,7 +153,7 @@ export function OnboardingScreenScaffold({
 
 const styles = StyleSheet.create({
   aboveCtaContent: {
-    marginBottom: 20,
+    marginBottom: 12,
   },
   body: {
     color: "#F1F1F1",

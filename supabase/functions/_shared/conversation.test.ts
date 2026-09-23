@@ -205,6 +205,6 @@ test("concurrency protection errors expose only safe typed messages", () => {
   assert.equal(active.retryAt, retryAt);
   assert.equal(
     new ConversationError("generation_protection_unavailable").message,
-    "Wingr could not safely start a reply right now. Please try again.",
+    "WiNGR could not safely start a reply right now. Please try again.",
   );
 });

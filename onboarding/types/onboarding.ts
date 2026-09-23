@@ -9,7 +9,6 @@ export type OnboardingStepId =
   | "uploadScreenshot"
   | "vibecheck"
   | "replies"
-  | "rating"
   | "testimonials"
   | "paywall";
 

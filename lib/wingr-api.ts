@@ -22,12 +22,12 @@ export async function postJsonToWingrBackend<T>(
     /\/$/,
     "",
   );
-  if (!baseUrl) throw new Error("Wingr backend URL is not configured.");
+  if (!baseUrl) throw new Error("WiNGR backend URL is not configured.");
   let authentication: SupabaseRequestAuthentication;
   try {
     authentication = await getAuthentication();
   } catch {
-    throw new Error("Wingr could not start a secure identity session.");
+    throw new Error("WiNGR could not start a secure identity session.");
   }
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -96,7 +96,7 @@ export async function postJsonToWingrBackend<T>(
     }
   } catch (error) {
     if (controller.signal.aborted)
-      throw new Error("Wingr took too long to respond. Please try again.");
+      throw new Error("WiNGR took too long to respond. Please try again.");
     throw error instanceof ConversationError
       ? error
       : new ConversationError("provider");

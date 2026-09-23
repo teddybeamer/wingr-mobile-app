@@ -17,7 +17,6 @@ import { ChangeScreen } from "./screens/ChangeScreen";
 import { PaywallScreen } from "./screens/PaywallScreen";
 import { ProblemScreen } from "./screens/ProblemScreen";
 import { PrivacyScreen } from "./screens/PrivacyScreen";
-import { RatingScreen } from "./screens/RatingScreen";
 import { RepliesScreen } from "./screens/RepliesScreen";
 import { TestimonialsScreen } from "./screens/TestimonialsScreen";
 import { UploadScreenShotScreen } from "./screens/UploadScreenShotScreen";
@@ -46,7 +45,6 @@ const screenMap: Record<
   paywall: PaywallScreen,
   privacy: PrivacyScreen,
   problem: ProblemScreen,
-  rating: RatingScreen,
   replies: RepliesScreen,
   testimonials: TestimonialsScreen,
   uploadScreenshot: UploadScreenShotScreen,
