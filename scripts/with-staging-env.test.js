@@ -33,6 +33,7 @@ test("staging configuration replaces inherited production values", () => {
     [
       `EXPO_PUBLIC_WINGR_API_BASE_URL=${STAGING_API_BASE_URL}`,
       "EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=staging-publishable-key",
+      "EXPO_PUBLIC_REVENUECAT_IOS_API_KEY=staging-app-key",
     ].join("\n"),
     ({ directory, stagingEnvPath }) => {
       const { environment } = resolveStagingEnvironment({
@@ -40,7 +41,8 @@ test("staging configuration replaces inherited production values", () => {
         inheritedEnv: {
           EXPO_PUBLIC_WINGR_API_BASE_URL:
             "https://production.example/functions/v1",
-          EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "production-publishable-key",
+            EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "production-publishable-key",
+            EXPO_PUBLIC_REVENUECAT_IOS_API_KEY: "production-app-key",
         },
         stagingEnvPath,
       });
@@ -55,6 +57,10 @@ test("staging configuration replaces inherited production values", () => {
         environment.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
         "staging-publishable-key",
       );
+      assert.equal(
+        environment.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY,
+        "staging-app-key",
+      );
     },
   );
 });
@@ -64,6 +70,7 @@ test("staging configuration rejects a production or otherwise wrong API URL", ()
     [
       "EXPO_PUBLIC_WINGR_API_BASE_URL=https://production.example/functions/v1",
       "EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=staging-publishable-key",
+      "EXPO_PUBLIC_REVENUECAT_IOS_API_KEY=staging-app-key",
     ].join("\n"),
     ({ directory, stagingEnvPath }) => {
       assert.throws(
@@ -72,6 +79,25 @@ test("staging configuration rejects a production or otherwise wrong API URL", ()
       );
     },
   );
+});
+
+test("staging configuration rejects a missing or placeholder RevenueCat iOS SDK key", () => {
+  for (const key of [
+    undefined,
+    "PASTE_STAGING_REVENUECAT_IOS_PUBLIC_SDK_KEY_HERE",
+  ]) {
+    const values = [
+      `EXPO_PUBLIC_WINGR_API_BASE_URL=${STAGING_API_BASE_URL}`,
+      "EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=staging-publishable-key",
+      ...(key ? [`EXPO_PUBLIC_REVENUECAT_IOS_API_KEY=${key}`] : []),
+    ];
+    withStagingFile(values.join("\n"), ({ directory, stagingEnvPath }) => {
+      assert.throws(
+        () => resolveStagingEnvironment({ cwd: directory, stagingEnvPath }),
+        /EXPO_PUBLIC_REVENUECAT_IOS_API_KEY must be set to a real staging value/,
+      );
+    });
+  }
 });
 
 test("staging configuration never falls back to inherited values when the local file is missing", () => {
@@ -86,6 +112,7 @@ test("staging configuration never falls back to inherited values when the local 
             EXPO_PUBLIC_WINGR_API_BASE_URL:
               "https://production.example/functions/v1",
             EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "production-publishable-key",
+            EXPO_PUBLIC_REVENUECAT_IOS_API_KEY: "production-app-key",
           },
         }),
       /Missing \.env\.staging\.local/,

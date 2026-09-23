@@ -5,6 +5,7 @@ import {
   isRevenueCatPurchaseCancelled,
   purchasePlanAndComplete,
   restoreAndComplete,
+  selectRevenueCatApiKey,
 } from "./revenuecat-core";
 
 const weeklyPackage = {
@@ -18,6 +19,42 @@ const monthlyPackage = {
 const offering = { monthly: monthlyPackage, weekly: weeklyPackage };
 const customerInfo = (pro: boolean) => ({
   entitlements: { active: pro ? { pro: { isActive: true } } : {} },
+});
+
+test("explicit staging iOS development uses the app-specific RevenueCat key", () => {
+  assert.equal(
+    selectRevenueCatApiKey({
+      appStoreApiKey: "staging-app-key",
+      isDevelopment: true,
+      isExplicitStagingIosBuild: true,
+      testStoreApiKey: "test_store",
+    }),
+    "staging-app-key",
+  );
+});
+
+test("ordinary development continues to use the RevenueCat Test Store", () => {
+  assert.equal(
+    selectRevenueCatApiKey({
+      appStoreApiKey: "release-app-key",
+      isDevelopment: true,
+      isExplicitStagingIosBuild: false,
+      testStoreApiKey: "test_store",
+    }),
+    "test_store",
+  );
+});
+
+test("release builds continue to use their app-specific RevenueCat key", () => {
+  assert.equal(
+    selectRevenueCatApiKey({
+      appStoreApiKey: "release-app-key",
+      isDevelopment: false,
+      isExplicitStagingIosBuild: false,
+      testStoreApiKey: "test_store",
+    }),
+    "release-app-key",
+  );
 });
 
 test("RevenueCat replaces a deleted account identity without reconfiguring the SDK", async () => {

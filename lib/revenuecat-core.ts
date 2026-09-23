@@ -2,6 +2,21 @@ export const REVENUECAT_PRO_ENTITLEMENT_ID = "pro";
 
 export type RevenueCatPlan = "weekly" | "monthly";
 
+export function selectRevenueCatApiKey({
+  appStoreApiKey,
+  isDevelopment,
+  isExplicitStagingIosBuild,
+  testStoreApiKey,
+}: {
+  appStoreApiKey: string | undefined;
+  isDevelopment: boolean;
+  isExplicitStagingIosBuild: boolean;
+  testStoreApiKey: string;
+}) {
+  if (isExplicitStagingIosBuild || !isDevelopment) return appStoreApiKey;
+  return testStoreApiKey;
+}
+
 type CustomerInfoLike = {
   entitlements: {
     active: Record<string, unknown>;

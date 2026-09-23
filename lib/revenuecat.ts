@@ -10,6 +10,7 @@ import { getSupabaseRequestAuthentication } from "./supabase-auth";
 import {
   createRevenueCatIdentityCoordinator,
   hasProEntitlement,
+  selectRevenueCatApiKey,
 } from "./revenuecat-core";
 
 export {
@@ -44,14 +45,24 @@ function getProductionApiKey() {
   return undefined;
 }
 
+function isExplicitStagingIosBuild() {
+  if (Platform.OS !== "ios") return false;
+  // Expo statically replaces direct EXPO_PUBLIC_* access in native bundles.
+  // @ts-expect-error Metro injects process.env at bundle time.
+  return process.env.EXPO_PUBLIC_WINGR_STAGING === "1";
+}
+
 function getRevenueCatApiKey() {
   if (Platform.OS === "web") {
     return undefined;
   }
 
-  return typeof __DEV__ !== "undefined" && __DEV__
-    ? REVENUECAT_TEST_STORE_API_KEY
-    : getProductionApiKey();
+  return selectRevenueCatApiKey({
+    appStoreApiKey: getProductionApiKey(),
+    isDevelopment: typeof __DEV__ !== "undefined" && __DEV__,
+    isExplicitStagingIosBuild: isExplicitStagingIosBuild(),
+    testStoreApiKey: REVENUECAT_TEST_STORE_API_KEY,
+  });
 }
 
 export function initializeRevenueCat(authenticatedUserId?: string) {

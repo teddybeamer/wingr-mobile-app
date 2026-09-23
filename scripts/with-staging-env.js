@@ -10,9 +10,11 @@ const STAGING_ENV_FILENAME = ".env.staging.local";
 const REQUIRED_VARIABLES = [
   "EXPO_PUBLIC_WINGR_API_BASE_URL",
   "EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+  "EXPO_PUBLIC_REVENUECAT_IOS_API_KEY",
 ];
 const PLACEHOLDER_VALUES = new Set([
   "PASTE_STAGING_SUPABASE_PUBLISHABLE_KEY_HERE",
+  "PASTE_STAGING_REVENUECAT_IOS_PUBLIC_SDK_KEY_HERE",
   "sb_publishable_replace_me",
 ]);
 
@@ -92,6 +94,8 @@ function resolveStagingEnvironment({
       EXPO_PUBLIC_WINGR_API_BASE_URL: STAGING_API_BASE_URL,
       EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
         localValues.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY.trim(),
+      EXPO_PUBLIC_REVENUECAT_IOS_API_KEY:
+        localValues.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY.trim(),
     },
     stagingEnvPath,
   };
@@ -106,6 +110,7 @@ function main() {
     console.log(`Config file: ${stagingEnvPath}`);
     console.log(`API base URL: ${environment.EXPO_PUBLIC_WINGR_API_BASE_URL}`);
     console.log("Supabase publishable key: configured (redacted)");
+    console.log("RevenueCat iOS SDK key: configured (redacted)");
     console.log("Expo .env auto-loading: disabled for this command");
     return;
   }

@@ -4,13 +4,13 @@ Local development uses staging by default. The normal iOS and Metro commands can
 
 ## One-time setup
 
-Copy the tracked template and add the staging project's publishable key locally:
+Copy the tracked template and add the staging project's publishable keys locally:
 
 ```sh
 cp .env.staging.example .env.staging.local
 ```
 
-Edit `.env.staging.local` and replace only `PASTE_STAGING_SUPABASE_PUBLISHABLE_KEY_HERE`. The file is ignored by Git. It intentionally contains the staging API URL:
+Edit `.env.staging.local` and replace the Supabase and RevenueCat placeholders. Use the Wingr App Store iOS public `appl_...` SDK key for RevenueCat so physical-device staging builds use Apple Sandbox StoreKit instead of the RevenueCat Test Store. The file is ignored by Git. It intentionally contains the staging API URL:
 
 ```text
 https://driytnlagwgzebnfdpcr.supabase.co/functions/v1
@@ -42,7 +42,7 @@ npm start
 
 ## Safety behavior
 
-The staging wrapper validates both required values before Expo starts. It fixes the API base URL to the staging project, requires a non-placeholder staging publishable key, disables Expo's automatic `.env` loading, and replaces any inherited values for those two variables. Therefore the repository's production `.env` cannot override a normal local command, and a missing local staging file fails before a build or Metro server begins.
+The staging wrapper validates all required values before Expo starts. It fixes the API base URL to the staging project, requires non-placeholder staging Supabase and RevenueCat iOS SDK keys, disables Expo's automatic `.env` loading, and replaces any inherited values for those variables. Therefore the repository's production `.env` cannot override a normal local command, and a missing local staging file fails before a build or Metro server begins.
 
 The wrapper applies to the normal local iOS and Metro commands. It also keeps PostHog disabled for the local staging development build rather than loading production analytics settings.
 
