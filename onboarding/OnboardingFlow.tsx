@@ -2,6 +2,11 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Alert } from "react-native";
 import { posthog } from "../lib/posthog";
+import {
+  getOnboardingAnalysisFailureAlert,
+  isOnboardingDevicePreviewUsed,
+  ONBOARDING_DEVICE_PREVIEW_USED_ALERT,
+} from "../lib/onboarding-analysis-error";
 import { markOnboardingReplyDisplayed } from "../lib/onboarding-progress";
 import {
   recoverOnboardingReplyUsed,
@@ -195,8 +200,21 @@ function OnboardingFlowContent({
     const result = await analyzeScreenshotForOnboarding(screenshotUri);
 
     if (typeof result === "object" && result.status === "error") {
-      if (result.error.code === "onboarding_device_reply_used") return;
-      Alert.alert("Could not read screenshot", result.error.message);
+      if (isOnboardingDevicePreviewUsed(result.error)) {
+        Alert.alert(
+          ONBOARDING_DEVICE_PREVIEW_USED_ALERT.title,
+          ONBOARDING_DEVICE_PREVIEW_USED_ALERT.message,
+          [
+            {
+              text: ONBOARDING_DEVICE_PREVIEW_USED_ALERT.button,
+              onPress: handleDevicePreviewUsed,
+            },
+          ],
+        );
+        return;
+      }
+      const alert = getOnboardingAnalysisFailureAlert(result.error);
+      Alert.alert(alert.title, alert.message);
       goBack();
     }
   };
@@ -208,6 +226,11 @@ function OnboardingFlowContent({
   const analyzeReplacementScreenshot = async (screenshotUri: string) => {
     setAnalysisFailureCount(0);
     await analyzeScreenshotForOnboarding(screenshotUri);
+  };
+
+  const handleDevicePreviewUsed = () => {
+    setAnalysisFailureCount(0);
+    goToStep("paywall", { resetHistory: true });
   };
 
   console.log("[Wingr boot] OnboardingFlow render", {
@@ -234,10 +257,7 @@ function OnboardingFlowContent({
       moreVisible={moreVisible}
       onBack={goBack}
       onComplete={completeOnboarding}
-      onDevicePreviewUsed={() => {
-        setAnalysisFailureCount(0);
-        goToStep("paywall", { resetHistory: true });
-      }}
+      onDevicePreviewUsed={handleDevicePreviewUsed}
       onMore={onMore}
       onNext={goNext}
       onPrimaryAction={handlePrimaryAction}
