@@ -120,7 +120,12 @@ export const onboardingContent: Record<
   },
   paywall: {
     id: "paywall",
-    title: "Unlock WiNGR to keep the chats going",
+    title: "Unlock WiNGR Pro to keep the chats going",
+    titleParts: [
+      { text: "Unlock " },
+      { color: "blue", text: "WiNGR Pro" },
+      { text: " to keep the chats going" },
+    ],
     body: "Tired of overthinking your replies? We got you. Get the vibe, find the words, and keep the conversation going.",
     ctaLabel: "Unlock WiNGR Pro",
   },

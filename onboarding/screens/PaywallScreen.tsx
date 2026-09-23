@@ -141,15 +141,18 @@ export function PaywallScreen(props: OnboardingScreenProps) {
       bodyStyle={styles.bodyCopy}
       copyStyle={styles.copy}
       ctaDisabled={offeringsLoading || !selectedPackage || busy}
-      ctaHeight={44}
       ctaLoading={action === "purchasing"}
-      footerContent={
-        <View style={styles.footerContent}>
+      aboveCtaContent={
+        <View style={styles.commitmentContent}>
           <View style={styles.footerRow}>
             <Text style={styles.footerText}>No commitment</Text>
             <View style={styles.footerDot} />
             <Text style={styles.footerText}>Cancel anytime</Text>
           </View>
+        </View>
+      }
+      footerContent={
+        <View style={styles.restoreFooter}>
           <Pressable
             accessibilityRole="button"
             disabled={busy}
@@ -254,10 +257,8 @@ const styles = StyleSheet.create({
   copy: {
     gap: 8,
   },
-  footerContent: {
+  commitmentContent: {
     alignItems: "center",
-    gap: 6,
-    marginTop: 18,
   },
   footerDot: {
     backgroundColor: "#D4D4D4",
@@ -329,6 +330,10 @@ const styles = StyleSheet.create({
   restoreButton: {
     alignItems: "center",
     justifyContent: "center",
+  },
+  restoreFooter: {
+    alignItems: "center",
+    marginTop: 20,
   },
   restoreText: {
     color: "#A3A3A3",

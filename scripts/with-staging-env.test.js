@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const packageJson = require("../package.json");
+const metroConfig = require("../metro.config");
 
 const {
   STAGING_API_BASE_URL,
@@ -100,4 +101,12 @@ test("default local iOS and Metro commands use the fail-closed staging wrapper",
   assert.equal(packageJson.scripts["start:staging"], STAGING_START_COMMAND);
   assert.equal(packageJson.scripts.ios, STAGING_IOS_COMMAND);
   assert.equal(packageJson.scripts["ios:staging"], STAGING_IOS_COMMAND);
+});
+
+test("Metro excludes the staging credential file from its module graph", () => {
+  const stagingEnvPath = path.resolve(__dirname, "../.env.staging.local");
+
+  assert.ok(
+    metroConfig.resolver.blockList.some((pattern) => pattern.test(stagingEnvPath)),
+  );
 });

@@ -16,6 +16,7 @@ import { SelectionCard } from "../components/SelectionCard";
 import type { OnboardingScreenProps } from "../types/onboarding";
 
 type OnboardingScreenScaffoldProps = OnboardingScreenProps & {
+  aboveCtaContent?: ReactNode;
   bottomContent?: ReactNode;
   bodyStyle?: StyleProp<TextStyle>;
   children?: ReactNode;
@@ -30,6 +31,7 @@ type OnboardingScreenScaffoldProps = OnboardingScreenProps & {
 };
 
 export function OnboardingScreenScaffold({
+  aboveCtaContent,
   canGoBack,
   canContinue,
   bottomContent,
@@ -133,13 +135,18 @@ export function OnboardingScreenScaffold({
 
       <View style={styles.bottomSection}>
         {bottomContent ?? (
-          <CTAButton
-            disabled={ctaDisabled ?? !canContinue}
-            height={ctaHeight}
-            label={ctaLabel ?? content.ctaLabel ?? "Next"}
-            loading={ctaLoading}
-            onPress={handlePrimaryAction}
-          />
+          <>
+            {aboveCtaContent ? (
+              <View style={styles.aboveCtaContent}>{aboveCtaContent}</View>
+            ) : null}
+            <CTAButton
+              disabled={ctaDisabled ?? !canContinue}
+              height={ctaHeight}
+              label={ctaLabel ?? content.ctaLabel ?? "Next"}
+              loading={ctaLoading}
+              onPress={handlePrimaryAction}
+            />
+          </>
         )}
         {footerContent}
       </View>
@@ -148,6 +155,9 @@ export function OnboardingScreenScaffold({
 }
 
 const styles = StyleSheet.create({
+  aboveCtaContent: {
+    marginBottom: 20,
+  },
   body: {
     color: "#F1F1F1",
     fontFamily: "ClashGroteskRegular",
