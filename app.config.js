@@ -42,6 +42,7 @@ export default {
       'expo-secure-store',
       './plugins/withWingrSplashBackground',
       './plugins/withWingrDeviceCheck',
+      './plugins/withWingrIosDeploymentTarget',
       [
         'expo-splash-screen',
         {
