@@ -4,7 +4,6 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const packageJson = require("../package.json");
-const metroConfig = require("../metro.config");
 
 const {
   STAGING_API_BASE_URL,
@@ -15,6 +14,39 @@ const STAGING_START_COMMAND =
   "node scripts/with-staging-env.js start --dev-client --clear";
 const STAGING_IOS_COMMAND =
   "node scripts/with-staging-env.js run:ios --device";
+
+function loadMetroConfig({ staging, apiBaseUrl } = {}) {
+  const metroConfigPath = require.resolve("../metro.config");
+  const previousStaging = process.env.EXPO_PUBLIC_WINGR_STAGING;
+  const previousApiBaseUrl = process.env.EXPO_PUBLIC_WINGR_API_BASE_URL;
+
+  try {
+    if (staging === undefined) delete process.env.EXPO_PUBLIC_WINGR_STAGING;
+    else process.env.EXPO_PUBLIC_WINGR_STAGING = staging;
+
+    if (apiBaseUrl === undefined) {
+      delete process.env.EXPO_PUBLIC_WINGR_API_BASE_URL;
+    } else {
+      process.env.EXPO_PUBLIC_WINGR_API_BASE_URL = apiBaseUrl;
+    }
+
+    delete require.cache[metroConfigPath];
+    return require(metroConfigPath);
+  } finally {
+    if (previousStaging === undefined) {
+      delete process.env.EXPO_PUBLIC_WINGR_STAGING;
+    } else {
+      process.env.EXPO_PUBLIC_WINGR_STAGING = previousStaging;
+    }
+
+    if (previousApiBaseUrl === undefined) {
+      delete process.env.EXPO_PUBLIC_WINGR_API_BASE_URL;
+    } else {
+      process.env.EXPO_PUBLIC_WINGR_API_BASE_URL = previousApiBaseUrl;
+    }
+    delete require.cache[metroConfigPath];
+  }
+}
 
 function withStagingFile(contents, callback) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "wingr-staging-env-"));
@@ -131,9 +163,53 @@ test("default local iOS and Metro commands use the fail-closed staging wrapper",
 });
 
 test("Metro excludes the staging credential file from its module graph", () => {
+  const metroConfig = loadMetroConfig();
   const stagingEnvPath = path.resolve(__dirname, "../.env.staging.local");
 
   assert.ok(
     metroConfig.resolver.blockList.some((pattern) => pattern.test(stagingEnvPath)),
+  );
+});
+
+test("staging Metro excludes every project-root dotenv file from expo/virtual/env", () => {
+  const metroConfig = loadMetroConfig({
+    staging: "1",
+    apiBaseUrl: STAGING_API_BASE_URL,
+  });
+
+  for (const filename of [
+    ".env",
+    ".env.local",
+    ".env.development",
+    ".env.development.local",
+    ".env.example",
+    ".env.staging.local",
+  ]) {
+    const envPath = path.resolve(__dirname, "..", filename);
+    assert.ok(
+      metroConfig.resolver.blockList.some((pattern) => pattern.test(envPath)),
+      `${filename} should be excluded from the staging Metro graph`,
+    );
+  }
+});
+
+test("non-staging Metro retains production dotenv behavior", () => {
+  const metroConfig = loadMetroConfig();
+  const productionEnvPath = path.resolve(__dirname, "../.env");
+
+  assert.equal(
+    metroConfig.resolver.blockList.some((pattern) => pattern.test(productionEnvPath)),
+    false,
+  );
+});
+
+test("staging Metro fails closed when the API URL is not staging", () => {
+  assert.throws(
+    () =>
+      loadMetroConfig({
+        staging: "1",
+        apiBaseUrl: "https://production.example/functions/v1",
+      }),
+    /Staging Metro must use EXPO_PUBLIC_WINGR_API_BASE_URL=https:\/\/driytnlagwgzebnfdpcr\.supabase\.co\/functions\/v1/,
   );
 });
