@@ -228,7 +228,9 @@ function OnboardingFlowContent({
 
   const handleDevicePreviewUsed = () => {
     setAnalysisFailureCount(0);
-    goToStep("paywall", { resetHistory: true });
+    // The failed request already advanced from Choose Screenshot to Vibe Check.
+    // Replace that no-reply step with the same Testimonials route used by Skip.
+    goToStep("testimonials", { replaceCurrent: true });
   };
 
   console.log("[Wingr boot] OnboardingFlow render", {

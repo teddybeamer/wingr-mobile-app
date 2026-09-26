@@ -27,14 +27,21 @@ export function advanceOnboardingNavigation(
 export function goToOnboardingStep(
   state: OnboardingNavigationState,
   stepId: OnboardingStepId,
-  { resetHistory = false }: { resetHistory?: boolean } = {},
+  {
+    replaceCurrent = false,
+    resetHistory = false,
+  }: { replaceCurrent?: boolean; resetHistory?: boolean } = {},
 ): OnboardingNavigationState {
   if (state.currentStepId === stepId) {
     return resetHistory ? { ...state, history: [] } : state;
   }
   return {
     currentStepId: stepId,
-    history: resetHistory ? [] : [...state.history, state.currentStepId],
+    history: resetHistory
+      ? []
+      : replaceCurrent
+        ? state.history
+        : [...state.history, state.currentStepId],
   };
 }
 

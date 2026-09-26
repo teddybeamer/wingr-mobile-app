@@ -71,16 +71,27 @@ function createStore(expectedUserId = USER_ID) {
   };
 }
 
-function createDeviceCheck({ failMarks = 0, used = false } = {}) {
+function createDeviceCheck({
+  failMarks = 0,
+  queryError,
+  used: initialUsed = false,
+}: {
+  failMarks?: number;
+  queryError?: Error;
+  used?: boolean;
+} = {}) {
   let marks = 0;
+  let used = initialUsed;
   return {
     deviceCheck: {
       async isOnboardingPreviewUsed() {
+        if (queryError) throw queryError;
         return used;
       },
       async markOnboardingPreviewUsed() {
         marks++;
         if (marks <= failMarks) throw new Error("Apple unavailable");
+        used = true;
       },
     },
     marks: () => marks,
@@ -193,6 +204,50 @@ test("a used DeviceCheck bit produces the Pro continuation without Gemini", asyn
   assert.equal((await response.json()).code, "onboarding_device_reply_used");
   assert.equal(providerCalls, 0);
   assert.equal(memory.record(), undefined);
+});
+
+test("an uninitialized DeviceCheck state permits one generation and then blocks the device", async () => {
+  const firstStore = createStore();
+  const apple = createDeviceCheck();
+  let providerCalls = 0;
+  const fetchImpl: typeof fetch = async (...args) => {
+    providerCalls++;
+    return provider(result)(...args);
+  };
+
+  const first = await call(createManager(firstStore.store, apple.deviceCheck), fetchImpl);
+  assert.equal(first.status, 200);
+  assert.equal(providerCalls, 1);
+  assert.equal(apple.marks(), 1);
+  assert.equal(firstStore.claims(), 1);
+  assert.equal(firstStore.attempts(), 1);
+
+  const laterStore = createStore();
+  const later = await call(createManager(laterStore.store, apple.deviceCheck), fetchImpl);
+  assert.equal(later.status, 409);
+  assert.equal((await later.json()).code, "onboarding_device_reply_used");
+  assert.equal(providerCalls, 1);
+  assert.equal(laterStore.record(), undefined);
+});
+
+test("a DeviceCheck query failure remains fail-closed before Gemini", async () => {
+  const memory = createStore();
+  const apple = createDeviceCheck({ queryError: new Error("Apple unavailable") });
+  let providerCalls = 0;
+
+  const response = await call(
+    createManager(memory.store, apple.deviceCheck),
+    async (...args) => {
+      providerCalls++;
+      return provider(result)(...args);
+    },
+  );
+
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "generation_protection_unavailable");
+  assert.equal(providerCalls, 0);
+  assert.equal(memory.record(), undefined);
+  assert.equal(apple.marks(), 0);
 });
 
 test("a new anonymous identity cannot bypass a DeviceCheck bit left by a deleted account", async () => {

@@ -41,7 +41,7 @@ export function useOnboardingFlow(
       },
       goToStep: (
         stepId: OnboardingStepId,
-        options?: { resetHistory?: boolean },
+        options?: { replaceCurrent?: boolean; resetHistory?: boolean },
       ) => {
         setNavigation((current) =>
           goToOnboardingStep(current, stepId, options),

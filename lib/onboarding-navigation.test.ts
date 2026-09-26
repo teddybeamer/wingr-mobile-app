@@ -66,6 +66,24 @@ test("Skip path advances from Testimonials directly to Paywall and back", () => 
   );
 });
 
+test("DeviceCheck-blocked onboarding replaces the no-reply Vibe Check with Testimonials", () => {
+  let navigation = createOnboardingNavigation("uploadScreenshot");
+  navigation = advanceOnboardingNavigation(navigation);
+  assert.equal(navigation.currentStepId, "vibecheck");
+
+  navigation = goToOnboardingStep(navigation, "testimonials", {
+    replaceCurrent: true,
+  });
+  assert.equal(navigation.currentStepId, "testimonials");
+  assert.deepEqual(navigation.history, ["uploadScreenshot"]);
+  assert.equal(navigation.history.includes("vibecheck"), false);
+  assert.equal(goBackInOnboarding(navigation).currentStepId, "uploadScreenshot");
+
+  navigation = advanceOnboardingNavigation(navigation);
+  assert.equal(navigation.currentStepId, "paywall");
+  assert.equal(goBackInOnboarding(navigation).currentStepId, "testimonials");
+});
+
 test("recovery cannot navigate back to Your Reply without a usable local reply", () => {
   const restoredClaim = createOnboardingNavigation("testimonials");
   assert.deepEqual(goBackInOnboarding(restoredClaim), restoredClaim);

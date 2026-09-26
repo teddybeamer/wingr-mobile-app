@@ -15,6 +15,20 @@ export type DeviceCheckClient = {
   markOnboardingPreviewUsed(deviceToken: string): Promise<void>;
 };
 
+export type DeviceCheckResponseClassification =
+  | "bits_json"
+  | "bit_state_not_found"
+  | "apple_4xx"
+  | "apple_5xx"
+  | "network"
+  | "unexpected_response";
+
+export type DeviceCheckDiagnostic = {
+  classification: DeviceCheckResponseClassification;
+  contentType: string | null;
+  status: number | null;
+};
+
 function base64Url(value: Uint8Array | string) {
   const bytes =
     typeof value === "string" ? new TextEncoder().encode(value) : value;
@@ -83,12 +97,15 @@ export function createAppleDeviceCheckClient({
   environment,
   fetchImpl = fetch,
   keyId,
+  onDiagnostic = (diagnostic: DeviceCheckDiagnostic) =>
+    console.warn("[Wingr DeviceCheck] response", diagnostic),
   privateKey,
   teamId,
 }: {
   environment: "development" | "production";
   fetchImpl?: typeof fetch;
   keyId: string;
+  onDiagnostic?: (diagnostic: DeviceCheckDiagnostic) => void;
   privateKey: string;
   teamId: string;
 }): DeviceCheckClient {
@@ -97,6 +114,34 @@ export function createAppleDeviceCheckClient({
       ? APPLE_DEVICECHECK_PRODUCTION_URL
       : APPLE_DEVICECHECK_DEVELOPMENT_URL;
   if (!keyId || !privateKey || !teamId) throw new DeviceCheckError();
+
+  // Diagnostics must never affect the DeviceCheck decision or expose Apple
+  // response bodies, request data, or credentials.
+  const diagnose = (diagnostic: DeviceCheckDiagnostic) => {
+    try {
+      onDiagnostic(diagnostic);
+    } catch {
+      // Logging is strictly best-effort.
+    }
+  };
+  const responseMetadata = (response: Response) => ({
+    contentType: response.headers.get("content-type"),
+    status: response.status,
+  });
+  const responseFailureClassification = (
+    status: number,
+  ): DeviceCheckResponseClassification => {
+    if (status >= 400 && status < 500) return "apple_4xx";
+    if (status >= 500 && status < 600) return "apple_5xx";
+    return "unexpected_response";
+  };
+  const isBitStateNotFound = (body: string) => {
+    const normalized = body.trim().toLowerCase();
+    return (
+      normalized === "bit state not found" ||
+      normalized === "failed to find bit state"
+    );
+  };
 
   const request = async (path: string, body: Record<string, unknown>) => {
     const token = await createAppleJwt({ keyId, privateKey, teamId });
@@ -115,9 +160,20 @@ export function createAppleDeviceCheckClient({
         }),
       });
     } catch {
+      diagnose({
+        classification: "network",
+        contentType: null,
+        status: null,
+      });
       throw new DeviceCheckError();
     }
-    if (!response.ok) throw new DeviceCheckError();
+    if (!response.ok) {
+      diagnose({
+        ...responseMetadata(response),
+        classification: responseFailureClassification(response.status),
+      });
+      throw new DeviceCheckError();
+    }
     return response;
   };
 
@@ -126,14 +182,33 @@ export function createAppleDeviceCheckClient({
       const response = await request("query_two_bits", {
         device_token: deviceToken,
       });
+      const metadata = responseMetadata(response);
+      let body: string;
+      try {
+        body = await response.text();
+      } catch {
+        diagnose({ ...metadata, classification: "network" });
+        throw new DeviceCheckError();
+      }
+      if (isBitStateNotFound(body)) {
+        diagnose({ ...metadata, classification: "bit_state_not_found" });
+        // Apple has no bit record until the first update. Treat that as both
+        // bits being false; this method only needs bit0's used state.
+        return false;
+      }
       let payload: unknown;
       try {
-        payload = await response.json();
+        payload = JSON.parse(body);
       } catch {
+        diagnose({ ...metadata, classification: "unexpected_response" });
         throw new DeviceCheckError();
       }
       const bit = (payload as { bit0?: unknown } | null)?.bit0;
-      if (typeof bit !== "boolean") throw new DeviceCheckError();
+      if (typeof bit !== "boolean") {
+        diagnose({ ...metadata, classification: "unexpected_response" });
+        throw new DeviceCheckError();
+      }
+      diagnose({ ...metadata, classification: "bits_json" });
       return bit;
     },
     async markOnboardingPreviewUsed(deviceToken) {
