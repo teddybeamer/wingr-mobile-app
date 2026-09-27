@@ -59,7 +59,6 @@ export function CTAButton({
             !fullWidth && styles.fitContentSurface,
             secondary && styles.secondarySurface,
             indigo && styles.indigoSurface,
-            compact && !secondary && !indigo && styles.compactPrimarySurface,
             compact && secondary && styles.compactSecondarySurface,
             disabled && styles.inactiveSurface,
             pressed && !inactive && styles.pressedSurface,
@@ -143,9 +142,6 @@ const styles = StyleSheet.create({
   },
   loadingSurface: {
     opacity: 0.72,
-  },
-  compactPrimarySurface: {
-    backgroundColor: "#1970FD",
   },
   compactSecondarySurface: {
     backgroundColor: "#525252",
