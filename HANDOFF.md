@@ -284,3 +284,26 @@ added self-aware humor and stayed punchy; Low answered correctly but more logist
 Planned blinded A/B (not run): A = medium + current prompt, B = low + flirt-tone, English
 fixtures 1,3,4,6,8,10,11 x 2 runs = 28 paid calls (about $0.08), 14 pairs. Both arms include
 the Task 2 vibe rule, so voice shares are measured in the same run.
+
+## Blinded A/B: Medium + current prompt vs Low + flirt-tone prompt (owner, 2026-10-12)
+
+English fixtures 1,3,4,6,8,10,11 x 2 runs, 28 paid staging calls, 13 complete pairs (one
+Medium validation error). Both arms include the personal-vibe rule. Owner scores (1-5):
+flirt Medium 4.62 / Low 3.69 (Medium better in 8 pairs, tie 4, Low 1); naturalness 4.77 /
+4.77; context 4.92 / 5.00; vibe check quality 4.62 / 4.92; ME/THEM errors 0/0; invented facts
+0/0; vibe checks that speak directly to the reader 13/13 in BOTH arms; ME/THEM labels or
+report tone 0/0. Choices: Medium 9, Low 2, tie 2.
+Conclusion: the flirt-tone prompt did NOT recover flirt under Low (on fixtures 4,6,8,10,11 the
+gap is about 0.9 now vs 0.4 for Low + old prompt in round two - not a controlled comparison:
+different generations, old prompt had no vibe rule, n about 9-10 per cell). Low replies tended
+to end in a plain logistical question instead of a teasing hook. The personal-vibe prompt works
+(direct address 26/26 outputs, no internal labels).
+Speed: median 8,964 ms Medium vs 3,979 ms Low (-56%); median input tokens 2,230 vs 2,325
+(+95 for the longer Low prompt, negligible prefill); Low output tokens unchanged (about 145).
+Low P90 was 24.7 s (two slow outliers) vs 12.6 s Medium; earlier Low rounds had P90 about 5 s, so
+this looks like provider tail variance rather than the prompt, but it is unverified. Medium
+produced 1 validation error in this round (2 of 37 Medium vs 0 of 37 Low across three rounds).
+One Medium vibe check was written in Danish for a conversation whose latest exchange was English
+(rated 1): a mixed-language edge case.
+Next candidates: Low + existing prompt as a control on the same fixtures; choose effort by
+selected tone (Medium for playful, Low for direct/casualSmallTalk) after testing those tones.
