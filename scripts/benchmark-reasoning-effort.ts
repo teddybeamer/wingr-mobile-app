@@ -168,6 +168,8 @@ export function buildReport(
     addressesReaderShare: share(variant, (q) => q.addressesReader === true),
     outputsWithVoiceIssues: share(variant, (q) => (q.voiceIssueFields ?? 0) > 0),
   });
+  const summaryChars = (variant: Effort) =>
+    median(valid(variant).map((run) => run.quality!.summaryChars ?? 0));
   const replyChars = (variant: Effort) => median(valid(variant).map((run) => run.quality!.replyChars));
   return {
     changePercentLowVsMedium: {
@@ -184,6 +186,7 @@ export function buildReport(
       voice: { low: voice("low"), medium: voice("medium") },
       agreement: { bestTone: field("bestTone"), interestLevel: field("interestLevel"), replyable: field("replyable") },
       medianReplyChars: { low: replyChars("low"), medium: replyChars("medium") },
+      medianSummaryChars: { low: summaryChars("low"), medium: summaryChars("medium") },
       unreplyableShare: {
         low: share("low", (q) => q.replyable === "false"),
         medium: share("medium", (q) => q.replyable === "false"),
@@ -193,6 +196,15 @@ export function buildReport(
     summaries: { low, medium },
   };
 }
+
+// Earlier Low + CURRENT prompt results, kept only as context. NOT a controlled comparison:
+// different fixtures and run counts, earlier prompt without the personal-vibe rule, and
+// a different time. Do not read differences against this block as an effect of the prompt.
+const REFERENCE_NOTE =
+  `\n## Reference: earlier Low + existing prompt (NOT a controlled comparison)\n\n` +
+  `Round 1 (3 fixtures incl. 1 Danish) and round 2 (7 fixtures incl. 2 Danish): Low median latency 3,289 ms and 3,733 ms; ` +
+  `human scores in round 2 (1-5): Low flirt 4.36, naturalness 4.93, context 4.93 vs Medium flirt 4.79, naturalness 5.00, context 4.86. ` +
+  `Those prompts had no personal-vibe rule and different fixtures, runs and timing, so they are context only.\n`;
 
 function markdown(report: ReturnType<typeof buildReport>) {
   const { low, medium } = report.summaries;
@@ -216,7 +228,9 @@ function markdown(report: ReturnType<typeof buildReport>) {
     `\n\nChange (low vs medium, %): ${JSON.stringify(report.changePercentLowVsMedium)}\n` +
     `Unreplyable share: ${JSON.stringify(report.quality.unreplyableShare)}\n` +
     `Median reply length (chars): ${JSON.stringify(report.quality.medianReplyChars)}\n` +
+    `Median vibe summary length (chars): ${JSON.stringify(report.quality.medianSummaryChars)}\n` +
     `Vibe check voice (share of outputs): ${JSON.stringify(report.quality.voice)}\n` +
+    (report.lowPrompt === "flirt-tone" ? REFERENCE_NOTE : "") +
     `Enum agreement (within-medium is the noise floor): ${JSON.stringify(report.quality.agreement)}\n\n` +
     `Automatic agreement cannot judge ME/THEM, context or naturalness. Do the blinded manual review BEFORE reading this report.\n`
   );
@@ -240,12 +254,22 @@ function seededRandom(seed: number) {
 }
 
 export const HARD_CRITERIA = ["ownership", "noInventedFacts", "language"] as const;
-export const SCALE_CRITERIA = ["hook", "natural", "flirt"] as const;
+export const SCALE_CRITERIA = ["hook", "natural", "flirt", "vibe"] as const;
+export const VIBE_FLAGS = ["vibeDirect", "vibeReportTone"] as const;
 type Labelled = "A" | "B";
 export type ReviewKey = Record<string, Record<Labelled, Effort>>;
 type OutputScore = Partial<Record<(typeof HARD_CRITERIA)[number], boolean | null>> &
+  Partial<Record<(typeof VIBE_FLAGS)[number], boolean | null>> &
   Partial<Record<(typeof SCALE_CRITERIA)[number], number | null>>;
 export type ReviewScores = Record<string, { A: OutputScore; B: OutputScore; preferred?: Labelled | "tie" | null }>;
+
+function reviewLine(
+  label: Labelled,
+  review: NonNullable<Run["review"]>,
+) {
+  // One line per output; the page parser splits on these fixed labels.
+  return `- ${label}: summary: ${review.summary} | energy: ${review.conversationEnergy ?? ""} | risk: ${review.risk ?? ""} | reply: ${review.reply}`;
+}
 
 /** Pairs the n-th medium and low run of each fixture and hides which is which. */
 export function buildBlindedReview(runs: Run[], seed: number) {
@@ -259,6 +283,8 @@ export function buildBlindedReview(runs: Run[], seed: number) {
     "Hard criteria (true/false): ownership = latest message owner and ME/THEM perspective are correct;",
     "noInventedFacts = no invented facts or unseen text; language = same language as the conversation.",
     "Scale (1-5): hook = uses the latest relevant hook and context; natural = sounds like a short, natural, sendable text.",
+    "Vibe check (summary, energy, risk): vibe = personal, natural and accurate (1-5); vibeDirect = it speaks directly to you;",
+    "vibeReportTone = it uses ME/THEM or sounds like an objective report.",
     "Also check small messages (haha, emoji) and a cropped bottom bubble. Fill the scores template, then run --score.",
     "",
   ];
@@ -277,8 +303,8 @@ export function buildBlindedReview(runs: Run[], seed: number) {
       scores[id] = { A: {}, B: {}, preferred: null };
       lines.push(
         `## ${id}`,
-        `- A: summary: ${A.review!.summary} | reply: ${A.review!.reply}`,
-        `- B: summary: ${B.review!.summary} | reply: ${B.review!.reply}`,
+        reviewLine("A", A.review!),
+        reviewLine("B", B.review!),
         "",
       );
     }
@@ -288,9 +314,9 @@ export function buildBlindedReview(runs: Run[], seed: number) {
 
 /** Unblinds scores into per-variant totals. Contains no model text. */
 export function scoreReview(key: ReviewKey, scores: ReviewScores) {
-  const totals: Record<Effort, { count: number; hardFailures: Record<string, number>; scaleSums: Record<string, number>; scaleCounts: Record<string, number> }> = {
-    low: { count: 0, hardFailures: {}, scaleCounts: {}, scaleSums: {} },
-    medium: { count: 0, hardFailures: {}, scaleCounts: {}, scaleSums: {} },
+  const totals: Record<Effort, { count: number; flags: Record<string, number>; hardFailures: Record<string, number>; scaleSums: Record<string, number>; scaleCounts: Record<string, number> }> = {
+    low: { count: 0, flags: {}, hardFailures: {}, scaleCounts: {}, scaleSums: {} },
+    medium: { count: 0, flags: {}, hardFailures: {}, scaleCounts: {}, scaleSums: {} },
   };
   const preferences = { low: 0, medium: 0, tie: 0 };
   for (const [id, mapping] of Object.entries(key)) {
@@ -303,6 +329,8 @@ export function scoreReview(key: ReviewKey, scores: ReviewScores) {
       for (const criterion of HARD_CRITERIA)
         if (score[criterion] === false)
           totals[variant].hardFailures[criterion] = (totals[variant].hardFailures[criterion] ?? 0) + 1;
+      for (const flag of VIBE_FLAGS)
+        if (score[flag] === true) totals[variant].flags[flag] = (totals[variant].flags[flag] ?? 0) + 1;
       for (const criterion of SCALE_CRITERIA) {
         const value = score[criterion];
         if (typeof value === "number" && value >= 1 && value <= 5) {
@@ -315,6 +343,7 @@ export function scoreReview(key: ReviewKey, scores: ReviewScores) {
     else if (entry.preferred === "A" || entry.preferred === "B") preferences[mapping[entry.preferred]]++;
   }
   const summary = (variant: Effort) => ({
+    flagCounts: totals[variant].flags,
     hardFailures: totals[variant].hardFailures,
     outputs: totals[variant].count,
     scaleMeans: Object.fromEntries(

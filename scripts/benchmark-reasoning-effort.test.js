@@ -145,3 +145,20 @@ test("the report includes vibe voice shares without any text", async () => {
   assert.equal(report.quality.voice.medium.outputsWithVoiceIssues, 1);
   assert.equal(report.quality.voice.low.addressesReaderShare, 1);
 });
+
+test("scoring unblinds vibe ratings and direct-address flags per variant", async () => {
+  const { scoreReview } = await load();
+  const key = { "F1-1": { A: "low", B: "medium" }, "F1-2": { A: "medium", B: "low" } };
+  const score = (vibe, direct, report) => ({ ownership: true, noInventedFacts: true, language: true, hook: 5, natural: 5, flirt: 4, vibe, vibeDirect: direct, vibeReportTone: report });
+  const result = scoreReview(key, {
+    "F1-1": { A: score(5, true, false), B: score(3, false, true), preferred: "A" },
+    "F1-2": { A: score(4, true, false), B: score(5, true, false), preferred: "B" },
+  });
+  assert.equal(result.low.scaleMeans.vibe, 5);
+  assert.equal(result.medium.scaleMeans.vibe, 3.5);
+  assert.equal(result.low.flagCounts.vibeDirect, 2);
+  assert.equal(result.medium.flagCounts.vibeDirect, 1);
+  assert.equal(result.medium.flagCounts.vibeReportTone, 1);
+  assert.equal(result.low.flagCounts.vibeReportTone, undefined);
+  assert.equal(result.preferences.low, 2);
+});

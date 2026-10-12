@@ -52,6 +52,7 @@ export const QUALITY_FIELDS = [
 export type Quality = Record<(typeof QUALITY_FIELDS)[number], string> & {
   addressesReader: boolean;
   replyChars: number;
+  summaryChars: number;
   // Number of user-facing vibe text fields with an internal label or report-style opening.
   voiceIssueFields: number;
 };
@@ -62,7 +63,12 @@ export type Run = {
   outputTokens: number | null;
   quality: Quality | null;
   reasoningTokens: number | null;
-  review: { reply: string; summary: string } | null;
+  review: {
+    conversationEnergy?: string;
+    reply: string;
+    risk?: string;
+    summary: string;
+  } | null;
   status: "valid" | "request_error" | "validation_error";
   variant: string;
 };
@@ -124,6 +130,7 @@ export function qualityOf(result: unknown): Quality | null {
     vibe && typeof vibe[field] === "string" ? (vibe[field] as string) : "none";
   return {
     addressesReader: addressesReader(text("summary")),
+    summaryChars: text("summary") === "none" ? 0 : text("summary").length,
     voiceIssueFields: Object.keys(lintVibeCheck((vibe ?? null) as never)).length,
     bestTone: text("bestTone"),
     conversationEnergy: text("conversationEnergy"),
@@ -428,7 +435,11 @@ export async function runOnce(
           : null;
       const typed = result as {
         replies?: string[];
-        vibeCheck?: { summary?: string } | null;
+        vibeCheck?: {
+          conversationEnergy?: string;
+          risk?: string;
+          summary?: string;
+        } | null;
       };
       return {
         ...base,
@@ -441,7 +452,9 @@ export async function runOnce(
           count(usage?.completion_tokens_details?.reasoning_tokens),
         review: keepReview
           ? {
+              conversationEnergy: typed.vibeCheck?.conversationEnergy ?? "",
               reply: typed.replies?.[0] ?? "",
+              risk: typed.vibeCheck?.risk ?? "",
               summary: typed.vibeCheck?.summary ?? "",
             }
           : null,

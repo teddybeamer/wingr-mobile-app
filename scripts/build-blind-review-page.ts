@@ -14,9 +14,15 @@ const ROOT = resolve(process.cwd());
 const RESULTS = join(ROOT, "benchmarks/results");
 const SCREENSHOTS = join(ROOT, "benchmarks/screenshots");
 
+export type ReviewOutput = {
+  energy?: string;
+  reply: string;
+  risk?: string;
+  summary: string;
+};
 export type ReviewPair = {
-  A: { reply: string; summary: string };
-  B: { reply: string; summary: string };
+  A: ReviewOutput;
+  B: ReviewOutput;
   fixture: number;
   id: string;
 };
@@ -31,9 +37,14 @@ export function parseReview(markdown: string): ReviewPair[] {
       current = { fixture: Number(heading[2]), id: heading[1] };
       continue;
     }
-    const output = /^- ([AB]): summary: (.*?) \| reply: (.*)$/.exec(line);
+    // Current format: summary | energy | risk | reply. Older reviews: summary | reply.
+    const full = /^- ([AB]): summary: (.*?) \| energy: (.*?) \| risk: (.*?) \| reply: (.*)$/.exec(line);
+    const legacy = /^- ([AB]): summary: (.*?) \| reply: (.*)$/.exec(line);
+    const output = full ?? legacy;
     if (output && current) {
-      (current as Record<string, unknown>)[output[1]] = { reply: output[3], summary: output[2] };
+      (current as Record<string, unknown>)[output[1]] = full
+        ? { energy: full[3], reply: full[5], risk: full[4], summary: full[2] }
+        : { reply: legacy![3], summary: legacy![2] };
       if (current.A && current.B) {
         pairs.push(current as ReviewPair);
         current = null;
@@ -53,7 +64,7 @@ export function scriptSafeJson(value: unknown) {
     .replace(new RegExp("\\u2029", "g"), "\\u2029");
 }
 
-export function renderPage(pairs: ReviewPair[], images: Record<number, string>) {
+export function renderPage(pairs: ReviewPair[], images: Record<number, string>, pageId = "default") {
   return `<!doctype html>
 <html lang="da">
 <head>
@@ -78,6 +89,7 @@ button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
 .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0}.row label{min-width:92px;color:var(--muted);font-size:.9rem}
 .stars button{padding:2px 9px}.stars button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .flags label{min-width:0;color:var(--text)}details{margin-top:6px;color:var(--muted);font-size:.9rem}
+.vibe{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}.vline{margin:4px 0;font-size:.95rem}
 .pick{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}.pick button.on{background:var(--ok);color:#fff;border-color:var(--ok)}
 dialog{border:0;padding:0;background:transparent;max-width:95vw}dialog img{max-height:92vh;max-width:95vw;border-radius:8px}
 </style>
@@ -85,7 +97,7 @@ dialog{border:0;padding:0;background:transparent;max-width:95vw}dialog img{max-h
 <body>
 <main>
 <h1>Blindet sammenligning</h1>
-<p class="muted">Du ved ikke, hvilken model der skrev A eller B. Kig på skærmbilledet, og vælg, hvilket svar du ville sende. Vurder derefter hvert svar. Dine valg gemmes i browseren, og du eksporterer dem nederst.</p>
+<p class="muted">Du ved ikke, hvilken model der skrev A eller B. Kig på skærmbilledet, og vælg, hvilket svar du ville sende. Vurder både svaret og vibe checket (er det personligt, og taler det direkte til dig?). Dine valg gemmes i browseren, og du eksporterer dem øverst.</p>
 <div class="bar"><span id="progress" class="muted"></span><button class="primary" id="export">Eksportér scores (JSON)</button></div>
 <div id="pairs"></div>
 <dialog id="zoom"><img id="zoomImg" alt=""></dialog>
@@ -93,7 +105,7 @@ dialog{border:0;padding:0;background:transparent;max-width:95vw}dialog img{max-h
 <script>
 const PAIRS = ${scriptSafeJson(pairs)};
 const IMAGES = ${scriptSafeJson(images)};
-const KEY = "wingr-blind-review-v1";
+const KEY = "wingr-blind-review-" + ${scriptSafeJson(pageId)};
 let state = {};
 try { state = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { state = {}; }
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} progress(); };
@@ -123,8 +135,16 @@ function output(pair, label){
   const flags = document.createElement("div"); flags.className = "row flags";
   flags.append(flag(pair.id, label, "meThemError", "Fejl i ME/THEM"), flag(pair.id, label, "invents", "Opfinder oplysninger"));
   box.append(flags);
-  const d = document.createElement("details"); const s = document.createElement("summary"); s.textContent = "Vis vibe check";
-  const p = document.createElement("p"); p.textContent = pair[label].summary; d.append(s, p); box.append(d);
+  const vibe = document.createElement("div"); vibe.className = "vibe";
+  const vt = document.createElement("strong"); vt.textContent = "Vibe check"; vibe.append(vt);
+  [["summary", pair[label].summary], ["Energi", pair[label].energy], ["Risiko", pair[label].risk]].forEach(([name, value]) => {
+    if (!value) return; const line = document.createElement("div"); line.className = "vline";
+    line.textContent = (name === "summary" ? "" : name + ": ") + value; vibe.append(line);
+  });
+  vibe.append(stars(pair.id, label, "vibe", "Vibe check"));
+  const vflags = document.createElement("div"); vflags.className = "row flags";
+  vflags.append(flag(pair.id, label, "vibeDirect", "Taler direkte til mig"), flag(pair.id, label, "vibeReportTone", "Bruger ME/THEM eller lyder som en rapport"));
+  vibe.append(vflags); box.append(vibe);
   return box;
 }
 function render(){
@@ -158,7 +178,7 @@ document.getElementById("export").onclick = () => {
   const out = {};
   PAIRS.forEach(p => {
     const s = state[p.id] || {};
-    const one = l => { const v = s[l] || {}; return { ownership: !v.meThemError, noInventedFacts: !v.invents, language: true, hook: v.hook ?? null, natural: v.natural ?? null, flirt: v.flirt ?? null }; };
+    const one = l => { const v = s[l] || {}; return { ownership: !v.meThemError, noInventedFacts: !v.invents, language: true, hook: v.hook ?? null, natural: v.natural ?? null, flirt: v.flirt ?? null, vibe: v.vibe ?? null, vibeDirect: !!v.vibeDirect, vibeReportTone: !!v.vibeReportTone }; };
     out[p.id] = { A: one("A"), B: one("B"), preferred: s.preferred === "none" ? null : (s.preferred ?? null) };
   });
   const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
@@ -195,8 +215,9 @@ function main() {
       images[fixture] = `data:image/png;base64,${readFileSync(join(SCREENSHOTS, name)).toString("base64")}`;
   }
   mkdirSync(RESULTS, { recursive: true });
-  const output = join(RESULTS, `blind-review-${new Date().toISOString().replace(/[:.]/g, "-")}.local.html`);
-  writeFileSync(output, renderPage(pairs, images), { mode: 0o600 });
+  const pageId = new Date().toISOString().replace(/[:.]/g, "-");
+  const output = join(RESULTS, `blind-review-${pageId}.local.html`);
+  writeFileSync(output, renderPage(pairs, images, pageId), { mode: 0o600 });
   console.log(`Built ${pairs.length} blinded pairs. Open locally (not shared): ${output}`);
 }
 
