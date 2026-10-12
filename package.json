@@ -48,6 +48,7 @@
     "ios:staging": "node scripts/with-staging-env.js run:ios --device",
     "staging:check": "node scripts/with-staging-env.js --check",
     "benchmark:ai": "node --import tsx scripts/benchmark-ai-output.ts",
+    "benchmark:image-resolution": "node --import tsx scripts/benchmark-image-resolution.ts",
     "experiment:image-resolution": "node --import tsx scripts/image-resolution-experiment.ts",
     "staging:latency": "node --import tsx scripts/staging-latency-report.ts",
     "web": "expo start --web",

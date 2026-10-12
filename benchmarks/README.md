@@ -82,3 +82,17 @@ below 10 samples. Only allowlisted numeric/enum fields are read; the script
 refuses input that references a Supabase project other than the staging ref.
 Keep exports and reports out of Git (they are not under `benchmarks/results/`
 unless you put them there).
+
+## Image-resolution A/B (original vs 1280 px)
+
+`npm run benchmark:image-resolution` is a dry run: it resizes the ignored fixtures to
+a 1280 px long edge in a temporary directory (aspect ratio verified, no cropping),
+prints payload and pixel reduction, and makes no network request or credential read.
+A live run needs `-- --execute` and `BENCHMARK_CONFIRM_LIVE_API=yes` plus the ignored
+staging-only key, and makes 3 fixtures x 3 runs x 2 variants = 18 paid calls
+(`--runs N`, 1-5). The request is built by the same production code for both variants,
+so only the image differs. The aggregate report compares latency, tokens and
+structured-output agreement (within-original agreement is the noise floor).
+Add `--write-review` to also write an ignored, local-only side-by-side file of model
+output for the manual checklist (ME/THEM ownership, short messages and emoji, cropped
+bottom bubbles, language). Never share or commit it.

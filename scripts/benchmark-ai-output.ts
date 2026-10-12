@@ -93,7 +93,7 @@ function parseLocalEnv(contents: string) {
   return values;
 }
 
-function stagingCredentials() {
+export function stagingCredentials() {
   if (!existsSync(STAGING_ENV_FILE))
     fail("Missing benchmarks/.env.staging.local.");
   const values = parseLocalEnv(readFileSync(STAGING_ENV_FILE, "utf8"));
