@@ -188,7 +188,9 @@ function main() {
   const images: Record<number, string> = {};
   const files = readdirSync(SCREENSHOTS);
   for (const fixture of new Set(pairs.map((pair) => pair.fixture))) {
-    const name = files.find((file) => file.toLowerCase() === `fixture-0${fixture}.png`);
+    const name = files.find((file) =>
+      new RegExp(`^fixture-${String(fixture).padStart(2, "0")}\\.png$`, "i").test(file),
+    );
     if (name)
       images[fixture] = `data:image/png;base64,${readFileSync(join(SCREENSHOTS, name)).toString("base64")}`;
   }

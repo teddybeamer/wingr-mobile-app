@@ -148,9 +148,11 @@ export function readFixtures() {
     ".webp": "image/webp",
   };
   const files = readdirSync(SCREENSHOT_DIRECTORY, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
+    .filter((entry) => entry.isFile() && /^fixture-0[1-3]\./i.test(entry.name))
     .map((entry) => entry.name)
     .sort();
+  // This original benchmark is pinned to fixtures 01-03; later numbered fixtures
+  // are used by the reasoning-effort benchmark through scripts/fixture-set.ts.
   validateFixtureNames(files);
   return files.map((filename) => {
     const mimeType = mimeTypes[extname(filename).toLowerCase()];

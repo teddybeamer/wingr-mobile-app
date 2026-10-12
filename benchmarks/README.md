@@ -126,3 +126,13 @@ invented-facts flags, "which would you send"). It contains no variant key, makes
 network request and embeds consented screenshots and model output, so never share or
 commit it. Export the scores from the page, then unblind with
 `npm run benchmark:reasoning-effort -- --score <key.local.json> <exported-scores.json>`.
+
+### Larger fixture sets (reasoning-effort benchmark)
+
+The reasoning-effort benchmark accepts numbered fixtures `fixture-NN.png` (also jpg, jpeg,
+webp). Byte-identical duplicates are skipped and reported by name, so a repeated screenshot
+is never paid for twice. Use `--fixtures 4,6,8` to test a subset (for example only new
+ones) and `--runs N` for runs per variant. The dry run prints the unique fixture numbers,
+the number of paid calls, the blinded pairs to review and a rough cost estimate. Review
+ids read `F<fixture number>-<run>`. The original compact-output and image-resolution
+benchmarks stay pinned to fixtures 01-03.

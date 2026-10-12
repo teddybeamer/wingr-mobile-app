@@ -3,11 +3,8 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  loadCompact,
-  readFixtures,
-  stagingCredentials,
-} from "./benchmark-ai-output";
+import { loadCompact, stagingCredentials } from "./benchmark-ai-output";
+import { parseFixtureSelection, readFixtureSet } from "./fixture-set";
 import {
   agreement,
   median,
@@ -31,6 +28,10 @@ import {
 
 const ROOT = resolve(process.cwd());
 const RESULT_DIRECTORY = join(ROOT, "benchmarks/results");
+const SCREENSHOT_DIRECTORY = join(ROOT, "benchmarks/screenshots");
+// Rough per-call cost from OpenRouter list prices and the medians measured so far
+// (USD). An estimate for budgeting only, not a billing figure.
+const ESTIMATED_COST_PER_CALL = { low: 0.0021, medium: 0.0039 };
 const DEFAULT_RUNS = 3;
 const MAX_RUNS = 5;
 const EXPECTED_PROVIDER = {
@@ -304,21 +305,36 @@ async function main() {
   const runsPerVariant = runsFlag >= 0 ? Number(args[runsFlag + 1]) : DEFAULT_RUNS;
   if (!Number.isInteger(runsPerVariant) || runsPerVariant < 1 || runsPerVariant > MAX_RUNS)
     fail(`--runs must be an integer from 1 to ${MAX_RUNS}.`);
-  const fixtures = readFixtures();
+  const selectionFlag = args.indexOf("--fixtures");
+  const selection =
+    selectionFlag >= 0 ? parseFixtureSelection(args[selectionFlag + 1] ?? "") : undefined;
+  const { duplicates, fixtures: fixtureSet } = readFixtureSet(SCREENSHOT_DIRECTORY, selection);
+  // The fixture NUMBER is the identity: fixtureIndex = number - 1, so review ids read F<number>-<run>.
+  // `position` (not the number) drives the medium/low ordering so it stays balanced for any selection.
+  const fixtures = fixtureSet.map((fixture, position) => ({
+    index: fixture.number - 1,
+    position,
+    screenshot: fixture.dataUrl,
+  }));
   const implementation = await loadCompact();
   try {
-    const sample = implementation.buildRequest({ screenshot: fixtures[0], selectedTone: "playful" });
+    const sample = implementation.buildRequest({ screenshot: fixtures[0].screenshot, selectedTone: "playful" });
     const medium = withReasoningEffort(sample, "medium");
     const low = withReasoningEffort(sample, "low");
     assertRequestContract(medium, "medium");
     assertRequestContract(low, "low");
     assertOnlyEffortDiffers(medium, low);
-    const planned = fixtures.flatMap((_, index) => plannedRuns(index, runsPerVariant));
+    const planned = fixtures.flatMap((fixture) => plannedRuns(fixture.position, runsPerVariant));
     if (!execute) {
+      const cost = planned.reduce((sum, variant) => sum + ESTIMATED_COST_PER_CALL[variant], 0);
       console.log(
-        `Dry run ready: ${fixtures.length} fixtures at original resolution, ${planned.length} paid OpenRouter calls after --execute ` +
-          `(${runsPerVariant} per variant per fixture). Requests differ only in reasoning.effort (medium vs low); ` +
-          `Vertex-only, ZDR, model and JSON contract verified.`,
+        `Dry run ready: ${fixtures.length} unique fixtures (${fixtureSet.map((f) => f.number).join(", ")}) at original resolution, ` +
+          `${planned.length} paid OpenRouter calls after --execute (${runsPerVariant} per variant per fixture), ` +
+          `${fixtures.length * runsPerVariant} blinded pairs to review, estimated cost about $${cost.toFixed(2)} (estimate). ` +
+          (duplicates.length
+            ? `Skipped byte-identical duplicates: ${duplicates.map((d) => `${d.duplicate}=${d.of}`).join(", ")}. `
+            : "") +
+          `Requests differ only in reasoning.effort (medium vs low); Vertex-only, ZDR, model and JSON contract verified.`,
       );
       return;
     }
@@ -327,8 +343,8 @@ async function main() {
     const apiKey = stagingCredentials();
     const runs: Run[] = [];
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    for (const [index, screenshot] of fixtures.entries()) {
-      for (const variant of plannedRuns(index, runsPerVariant)) {
+    for (const { index, position, screenshot } of fixtures) {
+      for (const variant of plannedRuns(position, runsPerVariant)) {
         runs.push(
           await runOnce(implementation, apiKey, screenshot, variant, index, keepReview, (request) => {
             const adjusted = withReasoningEffort(request, variant);

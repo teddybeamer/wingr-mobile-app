@@ -318,7 +318,7 @@ function sipsDimensions(path: string) {
 
 function prepareFixtures(directory: string) {
   const files = readdirSync(SCREENSHOT_DIRECTORY, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
+    .filter((entry) => entry.isFile() && /^fixture-0[1-3]\./i.test(entry.name))
     .map((entry) => entry.name)
     .sort();
   validateFixtureNames(files);
