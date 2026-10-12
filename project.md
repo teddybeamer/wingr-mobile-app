@@ -292,7 +292,7 @@ Do not hardcode all app logic inside one large UI file.
 
 `lib/wingr-ai.ts` sends the original screenshot, selected tone and optional context
 through `POST /ai-conversation` to one Gemini 3.8 Flash call via OpenRouter.
-The response supplies ordered ME/THEM messages, the five UI vibe fields and one reply.
+The response supplies the five UI vibe fields and one reply. Screenshot messages are reconstructed internally and are not returned.
 Explicit refreshes reuse that endpoint. See [the backend guide](supabase/README.md)
 for the contract, privacy settings, validation and evaluation instructions.
 

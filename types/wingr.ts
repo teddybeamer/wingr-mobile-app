@@ -1,9 +1,8 @@
 import type {
-  ConversationMessage,
   ReplyTone,
   VibeCheck,
 } from "../supabase/functions/_shared/conversation";
-export type { ConversationMessage, ReplyTone, VibeCheck };
+export type { ReplyTone, VibeCheck };
 export type RecommendedReplyTone = ReplyTone;
 export type ToneOption = { emoji: string; value: ReplyTone; label: string };
 export type SuggestedReply = {
@@ -13,7 +12,6 @@ export type SuggestedReply = {
   whyItWorks?: string;
 };
 export type AnalyzeScreenshotResult = {
-  messages: ConversationMessage[];
   vibeCheck: VibeCheck;
   replies: SuggestedReply[];
 };

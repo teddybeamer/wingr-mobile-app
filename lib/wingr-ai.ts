@@ -18,10 +18,9 @@ export function toAppResult(
   requestId: number,
 ): AnalyzeScreenshotResult {
   const result = parseConversationResult(value);
-  if (!result.replyable || !result.vibeCheck || !result.messages.length)
+  if (!result.replyable || !result.vibeCheck)
     throw new ConversationError("unusable_screenshot");
   return {
-    messages: result.messages,
     vibeCheck: result.vibeCheck,
     replies: result.replies.map((text, index) => ({
       id: `${requestId}-${index}`,

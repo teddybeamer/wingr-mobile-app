@@ -1,0 +1,4 @@
+{
+  "baselineGitRef": "49e4c3f6eda4c5643a69bf08418a77f5a989c455",
+  "description": "Pre-compact structured-output implementation. The benchmark loads this exact Git revision at runtime."
+}

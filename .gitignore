@@ -40,3 +40,9 @@ yarn-error.*
 /ios
 /android
 .env
+
+# Private, consented local AI-benchmark fixtures and generated aggregate reports.
+/benchmarks/screenshots/*
+!/benchmarks/screenshots/.gitkeep
+/benchmarks/results/*
+!/benchmarks/results/.gitkeep

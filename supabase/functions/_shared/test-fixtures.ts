@@ -3,10 +3,6 @@ export const input = {
   selectedTone: "playful" as const,
 };
 export const result = {
-  messages: [
-    { speaker: "ME" as const, text: "Kaffe på fredag?" },
-    { speaker: "THEM" as const, text: "Haha ja, hvor?" },
-  ],
   replyable: true,
   vibeCheck: {
     interestLevel: "High" as const,

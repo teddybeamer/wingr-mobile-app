@@ -1,7 +1,10 @@
 import { ConversationError, parseConversationRequest } from "./conversation.ts";
 import { handleCors } from "./cors.ts";
 import { error, json } from "./http.ts";
-import { analyzeWithGemini } from "./openrouter.ts";
+import {
+  analyzeWithGemini,
+  type ProviderLatencyMeasurement,
+} from "./openrouter.ts";
 import { RevenueCatVerificationError } from "./revenuecat-entitlement.ts";
 import type {
   RevenueCatAccess,
@@ -14,13 +17,28 @@ import type { OnboardingTrialManager } from "./onboarding-device-trial.ts";
 type GeminiOptions = NonNullable<Parameters<typeof analyzeWithGemini>[2]>;
 export type ConversationHandlerOptions = Omit<
   GeminiOptions,
-  "onProviderDispatch" | "signal"
+  "onProviderDispatch" | "onProviderLatency" | "signal"
 > & {
   entitlementVerifier?: RevenueCatEntitlementVerifier;
   getVerifiedUserId?: (accessToken: string) => Promise<string | null>;
   onboardingTrialManager?: OnboardingTrialManager;
   usageLimiter?: UsageLimiter;
 };
+
+function recordProviderLatency(
+  generation: "onboarding" | "subscription",
+  measurement: ProviderLatencyMeasurement,
+) {
+  // Fixed labels and a duration only. Never log image, transcript, reply,
+  // prompt, user ID, authorization, API key, or provider response.
+  console.info("[Wingr AI] provider latency", {
+    durationMs: measurement.durationMs,
+    event: "ai_generation_provider_latency",
+    generation,
+    outcome: measurement.outcome,
+    outputContract: measurement.outputContract,
+  });
+}
 
 // A 10 MiB image expands to a 13,981,048-character data URL. 14 MiB leaves
 // 692,492 bytes beyond the maximum valid screenshot-and-metadata payload.
@@ -152,9 +170,11 @@ async function handleDeviceCheckOnboardingRequest({
   try {
     const result = await analyzeWithGemini(input, apiKey, {
       ...options,
+      onProviderLatency: (measurement) =>
+        recordProviderLatency("onboarding", measurement),
       signal: request.signal,
     });
-    if (!result.replyable || !result.messages.length || !result.vibeCheck)
+    if (!result.replyable || !result.vibeCheck)
       throw new ConversationError("unusable_screenshot");
     return json(await trial.complete(result));
   } catch (failure) {
@@ -262,6 +282,11 @@ export async function handleConversationRequest(
       const result = await analyzeWithGemini(input, apiKey, {
         ...geminiOptions,
         signal: request.signal,
+        onProviderLatency: (measurement) =>
+          recordProviderLatency(
+            input.isOnboardingGeneration ? "onboarding" : "subscription",
+            measurement,
+          ),
         onProviderDispatch: async () => {
           if (!usageLimiter)
             throw new ConversationError("generation_protection_unavailable");
@@ -278,7 +303,7 @@ export async function handleConversationRequest(
           }
         },
       });
-      if (!result.replyable || !result.messages.length || !result.vibeCheck)
+      if (!result.replyable || !result.vibeCheck)
         throw new ConversationError("unusable_screenshot");
       return json(result);
     } finally {

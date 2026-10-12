@@ -135,7 +135,7 @@ const provider =
         { finish_reason: "stop", message: { content: JSON.stringify(value) } },
       ],
     });
-test("endpoint returns messages, vibe and reply from one call compatible with the app", async () => {
+test("endpoint returns a compact vibe and reply from one call compatible with the app", async () => {
   let calls = 0;
   const response = await handleConversationRequest(
     request({
@@ -601,7 +601,7 @@ test("CORS and invalid requests never call the provider", async () => {
 });
 test("unusable screenshot, invalid structured output and provider error are terminal errors", async () => {
   for (const [value, status] of [
-    [{ messages: [], replyable: false, vibeCheck: null, replies: [] }, 422],
+    [{ replyable: false, vibeCheck: null, replies: [] }, 422],
     [{ ...result, replies: [] }, 502],
   ] as const)
     assert.equal(
@@ -618,7 +618,7 @@ test("unusable screenshot, invalid structured output and provider error are term
   assert.equal(response.status, 502);
   assert.ok(!(await response.text()).includes("sensitive"));
 });
-test("technically valid replies and attribution pass through unchanged with one provider call", async () => {
+test("technically valid replies pass through unchanged with one provider call", async () => {
   // These fixtures test the transport boundary, not the quality of Gemini's grounding.
   for (const text of [
     "Should we meet at the cafe?",
@@ -628,33 +628,27 @@ test("technically valid replies and attribution pass through unchanged with one 
     "Jeg bor i København.",
     "How about coffee, Alex?",
   ]) {
-    for (const speaker of ["ME", "THEM"]) {
-      for (const extraContext of [
-        undefined,
-        "",
-        "Keep it playful",
-        "ME: I have two rescue dogs.",
-      ]) {
-        const value = {
-          ...result,
-          messages: [{ speaker, text: "I have two rescue dogs." }],
-          replies: [text],
-        };
-        let calls = 0;
-        const response = await handleConversationRequest(
-          request({ ...input, extraContext }),
-          "key",
-          {
-            fetchImpl: async (...args) => {
-              calls++;
-              return provider(value)(...args);
-            },
+    for (const extraContext of [
+      undefined,
+      "",
+      "Keep it playful",
+      "ME: I have two rescue dogs.",
+    ]) {
+      const value = { ...result, replies: [text] };
+      let calls = 0;
+      const response = await handleConversationRequest(
+        request({ ...input, extraContext }),
+        "key",
+        {
+          fetchImpl: async (...args) => {
+            calls++;
+            return provider(value)(...args);
           },
-        );
-        assert.equal(response.status, 200);
-        assert.deepEqual(await response.json(), value);
-        assert.equal(calls, 1);
-      }
+        },
+      );
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), value);
+      assert.equal(calls, 1);
     }
   }
 });
@@ -680,7 +674,7 @@ test("endpoint exposes and logs only safe error codes and provider status", asyn
 test("provider dispatch permanently claims usage for successful and unusable model results", async () => {
   for (const value of [
     result,
-    { messages: [], replyable: false, vibeCheck: null, replies: [] },
+    { replyable: false, vibeCheck: null, replies: [] },
     { ...result, replies: [] },
   ]) {
     let claims = 0;
@@ -927,7 +921,6 @@ test("an unusable onboarding completion and concurrent requests still consume on
     fetchImpl: async (...args) => {
       calls++;
       return provider({
-        messages: [],
         replyable: false,
         vibeCheck: null,
         replies: [],

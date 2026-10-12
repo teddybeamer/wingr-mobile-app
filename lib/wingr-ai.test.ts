@@ -6,7 +6,6 @@ import { result } from "../supabase/functions/_shared/test-fixtures";
 test("maps the combined response to existing vibe and reply card fields without another request", () => {
   const value = toAppResult(result, "playful", 12);
   assert.deepEqual(value.vibeCheck, result.vibeCheck);
-  assert.deepEqual(value.messages, result.messages);
   assert.deepEqual(value.replies, [
     { id: "12-0", tone: "playful", text: result.replies[0] },
   ]);
@@ -18,7 +17,7 @@ test("maps the combined response to existing vibe and reply card fields without 
 test("does not manufacture replies or vibes for unusable or malformed results", () => {
   assert.throws(() =>
     toAppResult(
-      { messages: [], replyable: false, vibeCheck: null, replies: [] },
+      { replyable: false, vibeCheck: null, replies: [] },
       "direct",
       1,
     ),

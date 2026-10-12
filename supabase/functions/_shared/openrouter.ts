@@ -1,4 +1,5 @@
 import {
+  AI_OUTPUT_CONTRACT,
   ConversationError,
   conversationSchema,
   parseConversationResult,
@@ -10,6 +11,11 @@ import { buildConversationPrompt, SYSTEM_PROMPT } from "./prompting.ts";
 export const GEMINI_MODEL = "google/gemini-3.8-flash";
 export const AI_TIMEOUT_MS = 25_000;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+export type ProviderLatencyMeasurement = {
+  durationMs: number;
+  outcome: "success" | "provider" | "invalid_output" | "timeout";
+  outputContract: typeof AI_OUTPUT_CONTRACT;
+};
 
 export function buildOpenRouterRequest(request: ConversationRequest) {
   return {
@@ -92,11 +98,13 @@ export async function analyzeWithGemini(
   {
     fetchImpl = fetch,
     onProviderDispatch,
+    onProviderLatency,
     timeoutMs = AI_TIMEOUT_MS,
     signal,
   }: {
     fetchImpl?: typeof fetch;
     onProviderDispatch?: () => Promise<void>;
+    onProviderLatency?: (measurement: ProviderLatencyMeasurement) => void;
     timeoutMs?: number;
     signal?: AbortSignal;
   } = {},
@@ -107,11 +115,14 @@ export async function analyzeWithGemini(
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
   const body = JSON.stringify(buildOpenRouterRequest(request));
+  let providerStartedAt: number | null = null;
+  let providerOutcome: ProviderLatencyMeasurement["outcome"] = "provider";
   // Includes response body consumption, not just response headers.
   const timer = setTimeout(abort, timeoutMs);
   try {
     if (controller.signal.aborted) throw new ConversationError("timeout");
     await onProviderDispatch?.();
+    providerStartedAt = Date.now();
     const response = await fetchImpl(OPENROUTER_URL, {
       method: "POST",
       signal: controller.signal,
@@ -155,15 +166,35 @@ export async function analyzeWithGemini(
     } catch {
       throw new ConversationError("invalid_output");
     }
-    return parseConversationResult(result);
+    const parsed = parseConversationResult(result);
+    providerOutcome = "success";
+    return parsed;
   } catch (error) {
-    if (controller.signal.aborted) throw new ConversationError("timeout");
+    if (controller.signal.aborted) {
+      providerOutcome = "timeout";
+      throw new ConversationError("timeout");
+    }
     // Never expose upstream bodies, messages, or request content in logs/errors.
-    throw error instanceof ConversationError
+    const safeError = error instanceof ConversationError
       ? error
       : new ConversationError("provider");
+    if (safeError.kind === "invalid_output") providerOutcome = "invalid_output";
+    else if (safeError.kind === "timeout") providerOutcome = "timeout";
+    else providerOutcome = "provider";
+    throw safeError;
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", abort);
+    if (providerStartedAt !== null) {
+      try {
+        onProviderLatency?.({
+          durationMs: Date.now() - providerStartedAt,
+          outcome: providerOutcome,
+          outputContract: AI_OUTPUT_CONTRACT,
+        });
+      } catch {
+        // Observability must never affect an AI request.
+      }
+    }
   }
 }

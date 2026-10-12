@@ -1,6 +1,8 @@
 export const REPLY_TONES = ["playful", "direct", "casualSmallTalk"] as const;
 export type ReplyTone = (typeof REPLY_TONES)[number];
-export type ConversationMessage = { speaker: "ME" | "THEM"; text: string };
+// Lets latency dashboards compare this compact response shape without recording
+// any screenshot, transcript, reply text, account identifier, or request body.
+export const AI_OUTPUT_CONTRACT = "vibe_reply_no_transcript_v1";
 export type VibeCheck = {
   interestLevel: "Low" | "Medium" | "High" | "Unclear";
   conversationEnergy: string;
@@ -18,7 +20,6 @@ export type ConversationRequest = {
   isOnboardingGeneration?: boolean;
 };
 export type ConversationResult = {
-  messages: ConversationMessage[];
   replyable: boolean;
   vibeCheck: VibeCheck | null;
   replies: string[];
@@ -272,33 +273,22 @@ export function parseConversationRequest(value: unknown): ConversationRequest {
 }
 
 // The same strict contract is checked at both network boundaries. No coercion,
-// invented defaults, speaker repair, or markdown/JSON recovery is performed.
+// invented defaults, or markdown/JSON recovery is performed.
 export function parseConversationResult(value: unknown): ConversationResult {
   const invalid = () => {
     throw new ConversationError("invalid_output");
   };
   if (
     !isObject(value) ||
-    !hasKeys(value, ["messages", "replyable", "vibeCheck", "replies"])
+    !hasKeys(value, ["replyable", "vibeCheck", "replies"])
   )
     return invalid();
   if (
     typeof value.replyable !== "boolean" ||
-    !Array.isArray(value.messages) ||
-    value.messages.length > 200 ||
     !Array.isArray(value.replies) ||
     value.replies.length > 1
   )
     return invalid();
-  for (const message of value.messages) {
-    if (
-      !isObject(message) ||
-      !hasKeys(message, ["speaker", "text"]) ||
-      !["ME", "THEM"].includes(message.speaker as string) ||
-      !text(message.text, 12000)
-    )
-      return invalid();
-  }
   for (const reply of value.replies)
     if (!text(reply, MAX_REPLY_LENGTH)) return invalid();
   if (value.vibeCheck !== null) {
@@ -324,36 +314,19 @@ export function parseConversationResult(value: unknown): ConversationResult {
   }
   if (!value.replyable) {
     if (value.replies.length !== 0) return invalid();
-  } else if (
-    !value.messages.length ||
-    !value.vibeCheck ||
-    value.replies.length !== 1
-  )
+  } else if (!value.vibeCheck || value.replies.length !== 1)
     return invalid();
   return value as ConversationResult;
 }
 
 // Keep the provider schema within Gemini's supported JSON Schema subset.
-// Large array bounds caused Google INVALID_ARGUMENT errors on the live route.
 // Length, item-count and nonempty limits remain enforced by parseConversationResult.
 const shortText = { type: "string" };
 export const conversationSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["messages", "replyable", "vibeCheck", "replies"],
+  required: ["replyable", "vibeCheck", "replies"],
   properties: {
-    messages: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["speaker", "text"],
-        properties: {
-          speaker: { type: "string", enum: ["ME", "THEM"] },
-          text: { type: "string" },
-        },
-      },
-    },
     replyable: { type: "boolean" },
     vibeCheck: {
       type: ["object", "null"],

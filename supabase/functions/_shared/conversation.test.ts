@@ -117,21 +117,9 @@ test("rejects missing image, URLs, malformed base64, unsupported types, excessiv
   ])
     invalid(() => parseConversationRequest(value), "invalid_request");
 });
-test("preserves message order, short and partially cropped text, and uppercase ME/THEM", () => {
-  const value = {
-    ...result,
-    messages: [
-      { speaker: "THEM", text: "haha" },
-      { speaker: "ME", text: "Den café ved" },
-    ],
-  };
-  assert.deepEqual(parseConversationResult(value), value);
-});
-test("rejects unknown/lowercase speakers, blank messages, extra derived fields and incomplete vibe fields", () => {
+test("rejects a transcript, extra derived fields and incomplete vibe fields", () => {
   for (const value of [
-    { ...result, messages: [{ speaker: "unknown", text: "hi" }] },
-    { ...result, messages: [{ speaker: "me", text: "hi" }] },
-    { ...result, messages: [{ speaker: "ME", text: " " }] },
+    { ...result, messages: [{ speaker: "THEM", text: "haha" }] },
     { ...result, latestSpeaker: "THEM" },
     { ...result, vibeCheck: { ...result.vibeCheck, bestTone: "flirty" } },
     { ...result, vibeCheck: { interestLevel: "High" } },
@@ -141,15 +129,13 @@ test("rejects unknown/lowercase speakers, blank messages, extra derived fields a
 test("accepts a clearly unusable result, rejects contradictions and missing/empty replies", () => {
   assert.deepEqual(
     parseConversationResult({
-      messages: [],
       replyable: false,
       vibeCheck: null,
       replies: [],
     }),
-    { messages: [], replyable: false, vibeCheck: null, replies: [] },
+    { replyable: false, vibeCheck: null, replies: [] },
   );
   for (const value of [
-    { ...result, messages: [] },
     { ...result, replies: [] },
     { ...result, replies: [" "] },
     { ...result, vibeCheck: null },
@@ -159,22 +145,13 @@ test("accepts a clearly unusable result, rejects contradictions and missing/empt
     invalid(() => parseConversationResult(value));
 });
 
-test("Gemini wire schema uses its supported nullable type and keeps string limits in runtime validation", async () => {
+test("Gemini wire schema omits the transcript and keeps string limits in runtime validation", async () => {
   const { conversationSchema } = await import("./conversation.ts");
   assert.deepEqual(conversationSchema.properties.vibeCheck.type, [
     "object",
     "null",
   ]);
-  assert.throws(() =>
-    parseConversationResult({
-      ...result,
-      messages: Array.from({ length: 201 }, () => ({
-        speaker: "ME",
-        text: "haha",
-      })),
-    }),
-  );
-  assert.ok(!("maxItems" in conversationSchema.properties.messages));
+  assert.equal(Object.hasOwn(conversationSchema.properties, "messages"), false);
   assert.equal(conversationSchema.properties.replies.maxItems, 1);
   const schema = JSON.stringify(conversationSchema);
   for (const unsupported of ["anyOf", "minLength", "maxLength"])

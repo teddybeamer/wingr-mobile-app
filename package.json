@@ -47,6 +47,7 @@
     "ios": "node scripts/with-staging-env.js run:ios --device",
     "ios:staging": "node scripts/with-staging-env.js run:ios --device",
     "staging:check": "node scripts/with-staging-env.js --check",
+    "benchmark:ai": "node --import tsx scripts/benchmark-ai-output.ts",
     "web": "expo start --web",
     "test": "tsx --test lib/*.test.ts supabase/functions/_shared/*.test.ts scripts/*.test.js",
     "test:db-concurrency": "bash supabase/tests/database/ai_generation_concurrency.integration.sh",

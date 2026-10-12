@@ -5,7 +5,7 @@ import {
   buildOpenRouterRequest,
   GEMINI_MODEL,
 } from "./openrouter.ts";
-import { ConversationError } from "./conversation.ts";
+import { AI_OUTPUT_CONTRACT, ConversationError } from "./conversation.ts";
 import { input, result } from "./test-fixtures.ts";
 
 function completion(
@@ -72,6 +72,29 @@ test("one multimodal request uses Gemini with medium reasoning, standard Vertex 
   assert.equal(calls, 1);
   assert.deepEqual(value, result);
 });
+test("reports a compact-contract provider duration without request content", async () => {
+  const measurements: unknown[] = [];
+  await analyzeWithGemini(input, "secret", {
+    fetchImpl: async () => completion(),
+    onProviderLatency: (measurement) => measurements.push(measurement),
+  });
+  assert.equal(measurements.length, 1);
+  assert.deepEqual(Object.keys(measurements[0] as object).sort(), [
+    "durationMs",
+    "outcome",
+    "outputContract",
+  ]);
+  assert.deepEqual(measurements[0], {
+    durationMs: (measurements[0] as { durationMs: number }).durationMs,
+    outcome: "success",
+    outputContract: AI_OUTPUT_CONTRACT,
+  });
+  assert.equal(typeof (measurements[0] as { durationMs: unknown }).durationMs, "number");
+  assert.ok((measurements[0] as { durationMs: number }).durationMs >= 0);
+  const serialized = JSON.stringify(measurements);
+  for (const privateValue of ["secret", input.screenshot])
+    assert.ok(!serialized.includes(privateValue));
+});
 test("prompt separates previous Wingr suggestions from screenshot context and asks for variation", () => {
   const prompt = buildOpenRouterRequest(input).messages[0].content as string;
   for (const term of [
@@ -107,7 +130,7 @@ test("malformed, refused, truncated and schema-invalid completions terminate wit
     completion(
       JSON.stringify({
         ...result,
-        messages: [{ speaker: "unknown", text: "Hi" }],
+        messages: [{ speaker: "THEM", text: "Hi" }],
       }),
     ),
     completion(null),

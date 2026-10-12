@@ -67,9 +67,9 @@ or native build as before.
 
 Request: `{ screenshot: "data:image/png;base64,...", selectedTone: "playful" | "direct" | "casualSmallTalk", extraContext?: string, previousWingrSuggestions?: string[] }`. On an explicit refresh, the app sends at most the three latest suggestions already shown to the user. They are separate from screenshot context and let Gemini choose a different grounded reply; they are never conversation messages or user facts.
 
-Response: `{ messages: [{ speaker: "ME" | "THEM", text: string }], replyable: true, vibeCheck: { interestLevel, conversationEnergy, bestTone, risk, summary }, replies: [string] }`.
+Response: `{ replyable: true, vibeCheck: { interestLevel, conversationEnergy, bestTone, risk, summary }, replies: [string] }`. The model reconstructs the screenshot conversation internally but never returns a transcript.
 The model can report `replyable: false` with no replies; the endpoint turns that into a terminal
-422 error. Latest speaker is simply the last message's speaker and is not duplicated in the output.
+422 error.
 Reply IDs and selected tone are attached in the app. Vibe `bestTone` is a recommendation and
 never overrides the user's selected tone. Provider/network, timeout and malformed-output errors
 end the request, without automatic retries, another model, fabricated results or repair calls.
@@ -81,8 +81,10 @@ and `require_parameters: true`. If no compatible private endpoint exists, the ca
 Keep prompt/completion logging disabled in the OpenRouter account settings; this is an
 account-level opt-in, not an invented request flag. No image, transcript, context, reply or
 upstream error body is logged or stored by this endpoint. Failures log only a closed
-error code and, when available, the numeric OpenRouter status. App analytics contain only event
-names, tone, counts and duration. The selected local image remains available for explicit refresh.
+error code and, when available, the numeric OpenRouter status. Provider-latency logs contain only
+a fixed output-contract label, generation category, closed outcome and duration. App analytics
+contain only event names, selected tone, the output-contract label and end-to-end duration. The
+selected local image remains available for explicit refresh.
 
 ## Validation and evaluation
 
