@@ -307,3 +307,11 @@ One Medium vibe check was written in Danish for a conversation whose latest exch
 (rated 1): a mixed-language edge case.
 Next candidates: Low + existing prompt as a control on the same fixtures; choose effort by
 selected tone (Medium for playful, Low for direct/casualSmallTalk) after testing those tones.
+
+## Decision: Low reasoning is the default; flirt-tone experiment dropped (2026-10-12; local, not deployed)
+
+`DEFAULT_REASONING_EFFORT` is now "low"; `AI_REASONING_EFFORT=medium` switches back, anything
+else means low (tests cover default, switch, routing/model/contract pinning and telemetry).
+The experimental flirt-tone prompt (candidate, benchmark option and tests) was removed; the
+current tone instruction is unchanged. The personal vibe check rule stays. Production, staging
+and secrets were NOT touched; nothing is deployed.

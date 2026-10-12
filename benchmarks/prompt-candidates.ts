@@ -86,34 +86,3 @@ export const FACT_GROUNDING_CHECKS: Record<string, RegExp> = {
   handBackOrStayTrue: /hand the question back to THEM|true whatever the real answer is/i,
   noCommitting: /committing ME to a fact, plan, time or place is not/i,
 };
-
-// ---- Flirt-tone candidate (Low reasoning) --------------------------------------
-// Blinded reviews of 14 English/Danish pairs showed that Medium reasoning flirts
-// better than Low mainly by (1) picking ONE specific detail THEM gave and turning it
-// into a light tease, callback or small challenge, (2) adding a touch of self-aware
-// humor, (3) staying short and punchy, and (4) leaving a light hook. Low tends to
-// answer correctly and politely but logistically. This candidate changes ONLY the
-// tone paragraph; every other rule and the output structure stay identical.
-
-export const TONE_PARAGRAPH =
-  "playful: light wit or a specific gentle tease. direct: clear, warm and confident. casualSmallTalk: relaxed, easygoing curiosity. Follow the conversation's emotional context; do not force flirting into serious or sensitive exchanges.";
-
-export const FLIRT_TONE_PARAGRAPH =
-  "playful: light, confident wit. Find one specific thing THEM actually said or did (a joke, a plan, a detail, a word) and gently tease it, call it back or turn it into a small challenge; a little self-aware humor is welcome. Keep the flirt subtle and earned by the context: no generic compliments, pickup lines, gushing or forced flirting. One or two short sentences, leaving a light hook such as a playful question when it fits. direct: clear, warm and confident. casualSmallTalk: relaxed, easygoing curiosity. Follow the conversation's emotional context; tease only when the context supports it, and do not force flirting into serious or sensitive exchanges.";
-
-export function withFlirtTone(basePrompt: string) {
-  if (!basePrompt.includes(TONE_PARAGRAPH))
-    throw new Error("Base prompt no longer contains the tone paragraph this candidate replaces.");
-  return basePrompt.replace(TONE_PARAGRAPH, FLIRT_TONE_PARAGRAPH);
-}
-
-// Rules the flirt-tone candidate adds; the production prompt must NOT match them yet.
-export const FLIRT_TONE_CHECKS: Record<string, RegExp> = {
-  oneSpecificDetail: /one specific thing THEM actually said or did/i,
-  teaseCallbackChallenge: /tease it, call it back or turn it into a small challenge/i,
-  selfAwareHumor: /self-aware humor/i,
-  subtleNoPickupLines: /no generic compliments, pickup lines, gushing or forced flirting/i,
-  shortReplies: /one or two short sentences/i,
-  lightHook: /light hook/i,
-  teaseOnlyWhenSupported: /tease only when the context supports it/i,
-};

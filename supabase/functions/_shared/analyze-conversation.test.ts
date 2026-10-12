@@ -1410,7 +1410,7 @@ test("stage latency telemetry contains only fixed performance fields", async (t)
     "reasoningEffort",
     "totalMs",
   ]);
-  assert.equal(fields.reasoningEffort, "medium");
+  assert.equal(fields.reasoningEffort, "low");
   assert.equal(fields.event, "ai_generation_stage_latency");
   assert.equal(fields.outcome, "success");
   for (const key of ["bodyMs", "claimMs", "providerMs", "totalMs"])
@@ -1430,21 +1430,24 @@ test("a failed provider call still reports stage latency with a failure outcome"
   assert.equal((call?.arguments[1] as { outcome: string }).outcome, "failure");
 });
 
-test("the configured reasoning effort reaches the provider request and the stage telemetry", async (t) => {
+test("low reasoning is the default and medium can be selected by configuration", async (t) => {
   const info = t.mock.method(console, "info", () => {});
-  let sentEffort: unknown;
-  const response = await handleConversationRequest(request(), "key", {
-    reasoningEffort: "low",
-    fetchImpl: async (_url, init) => {
-      sentEffort = JSON.parse(String(init?.body)).reasoning;
-      return provider(result)(_url, init);
-    },
+  const efforts: unknown[] = [];
+  const capture = async (_url: unknown, init?: RequestInit) => {
+    efforts.push(JSON.parse(String(init?.body)).reasoning);
+    return provider(result)(_url as never, init);
+  };
+  const byDefault = await handleConversationRequest(request(), "key", { fetchImpl: capture });
+  const medium = await handleConversationRequest(request(), "key", {
+    reasoningEffort: "medium",
+    fetchImpl: capture,
   });
 
-  assert.equal(response.status, 200);
-  assert.deepEqual(sentEffort, { effort: "low" });
-  const call = info.mock.calls.find(
-    ({ arguments: [event] }) => event === "[Wingr AI] generation stage latency",
-  );
-  assert.equal((call?.arguments[1] as { reasoningEffort: string }).reasoningEffort, "low");
+  assert.equal(byDefault.status, 200);
+  assert.equal(medium.status, 200);
+  assert.deepEqual(efforts, [{ effort: "low" }, { effort: "medium" }]);
+  const logged = info.mock.calls
+    .filter(({ arguments: [event] }) => event === "[Wingr AI] generation stage latency")
+    .map(({ arguments: [, details] }) => (details as { reasoningEffort: string }).reasoningEffort);
+  assert.deepEqual(logged, ["low", "medium"]);
 });

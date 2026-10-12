@@ -3,6 +3,7 @@ import { handleCors } from "./cors.ts";
 import { error, json } from "./http.ts";
 import {
   analyzeWithGemini,
+  DEFAULT_REASONING_EFFORT,
   type ProviderLatencyMeasurement,
 } from "./openrouter.ts";
 import { RevenueCatVerificationError } from "./revenuecat-entitlement.ts";
@@ -343,7 +344,7 @@ export async function handleConversationRequest(
       claimMs: null,
       entitlementWaitMs,
       providerMs: null,
-      reasoningEffort: geminiOptions.reasoningEffort ?? "medium",
+      reasoningEffort: geminiOptions.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
     };
     let succeeded = false;
     try {

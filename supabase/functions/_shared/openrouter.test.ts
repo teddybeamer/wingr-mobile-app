@@ -15,7 +15,7 @@ function completion(
 ) {
   return Response.json({ choices: [{ finish_reason, message: { content } }] });
 }
-test("one multimodal request uses Gemini with medium reasoning, standard Vertex only and mandatory privacy", async () => {
+test("one multimodal request uses Gemini with low reasoning by default, standard Vertex only and mandatory privacy", async () => {
   let calls = 0;
   const value = await analyzeWithGemini(
     {
@@ -39,7 +39,7 @@ test("one multimodal request uses Gemini with medium reasoning, standard Vertex 
         const body = JSON.parse(String(init?.body));
         assert.equal(body.model, GEMINI_MODEL);
         assert.equal(body.model, "google/gemini-3.8-flash");
-        assert.deepEqual(body.reasoning, { effort: "medium" });
+        assert.deepEqual(body.reasoning, { effort: "low" });
         assert.equal(body.service_tier, "default");
         assert.equal(body.max_tokens, 5000);
         assert.equal(body.max_completion_tokens, undefined);
@@ -257,21 +257,23 @@ test("configuration errors expose fixed explanations without leaking upstream te
   }
 });
 
-test("reasoning effort defaults to medium and only the exact value low changes it", () => {
-  assert.equal(parseReasoningEffort(undefined), "medium");
-  assert.equal(parseReasoningEffort(null), "medium");
-  assert.equal(parseReasoningEffort(""), "medium");
-  assert.equal(parseReasoningEffort("high"), "medium");
-  assert.equal(parseReasoningEffort("LOW"), "medium");
-  assert.equal(parseReasoningEffort("minimal"), "medium");
-  assert.equal(parseReasoningEffort(" low "), "low");
-  assert.equal(buildOpenRouterRequest(input).reasoning.effort, "medium");
-  assert.equal(buildOpenRouterRequest(input, "low").reasoning.effort, "low");
+test("reasoning effort defaults to low and only the exact value medium switches back", () => {
+  assert.equal(parseReasoningEffort(undefined), "low");
+  assert.equal(parseReasoningEffort(null), "low");
+  assert.equal(parseReasoningEffort(""), "low");
+  assert.equal(parseReasoningEffort("high"), "low");
+  assert.equal(parseReasoningEffort("MEDIUM"), "low");
+  assert.equal(parseReasoningEffort("minimal"), "low");
+  assert.equal(parseReasoningEffort(" medium "), "medium");
+  assert.equal(buildOpenRouterRequest(input).reasoning.effort, "low");
+  assert.equal(buildOpenRouterRequest(input, "medium").reasoning.effort, "medium");
 });
 
-test("low reasoning changes nothing but the effort: routing, model and contract stay pinned", () => {
-  const medium = buildOpenRouterRequest(input);
-  const low = buildOpenRouterRequest(input, "low");
+test("the effort setting changes nothing but the effort: routing, model and contract stay pinned", () => {
+  const medium = buildOpenRouterRequest(input, "medium");
+  const low = buildOpenRouterRequest(input);
+  assert.equal(medium.reasoning.effort, "medium");
+  assert.equal(low.reasoning.effort, "low");
   assert.deepEqual({ ...low, reasoning: medium.reasoning }, medium);
   assert.deepEqual(low.provider, {
     only: ["google-vertex/global"],

@@ -17,13 +17,14 @@ export type ProviderLatencyMeasurement = {
   outputContract: typeof AI_OUTPUT_CONTRACT;
 };
 
-// Production default stays "medium". "low" is only reachable through the explicit
-// AI_REASONING_EFFORT setting; any other value falls back to medium (fail safe).
+// Owner decision 2026-10-12 (speed priority): the default is "low". "medium" is one
+// secret away (AI_REASONING_EFFORT=medium); any other value or no secret means the
+// default. Only reasoning.effort changes; routing, model and contract stay pinned.
 export type ReasoningEffort = "low" | "medium";
-export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "low";
 
 export function parseReasoningEffort(value: string | null | undefined): ReasoningEffort {
-  return value?.trim() === "low" ? "low" : DEFAULT_REASONING_EFFORT;
+  return value?.trim() === "medium" ? "medium" : DEFAULT_REASONING_EFFORT;
 }
 
 export function buildOpenRouterRequest(

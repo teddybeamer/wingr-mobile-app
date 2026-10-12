@@ -34,7 +34,7 @@ endpoint with the original screenshot, tone and context. Images are not resized 
 - App: `EXPO_PUBLIC_WINGR_API_BASE_URL=https://YOUR_PROJECT_REF.supabase.co/functions/v1`.
 - App identity: `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Enable Anonymous Sign-Ins in Supabase Auth before deploying; the app creates and securely persists an anonymous session per installation.
 - Model and 25-second provider deadline: `functions/_shared/openrouter.ts`.
-- Reasoning: `reasoning: { effort: "medium" }` by default. The optional secret `AI_REASONING_EFFORT=low` switches only the effort (routing, model and contract are unchanged); any other value, or no secret, means medium. Production stays on medium until a controlled evaluation approves otherwise; the stage-latency log records the effort used.
+- Reasoning: `reasoning: { effort: "low" }` by default (owner decision 2026-10-12, speed priority; blinded reviews showed near-identical context and naturalness, about 0.4 lower flirt scores and a 54-66% faster median). The optional secret `AI_REASONING_EFFORT=medium` switches back; any other value or no secret means low. Only the effort changes: routing, model and JSON contract stay pinned. The stage-latency log records the effort used.
 - Provider: standard Google Vertex only (`provider.only: ["google-vertex/global"]`,
   `service_tier: "default"`). Priority, Flex and other providers are excluded; no fallbacks.
 - App network deadline: 35 seconds, including response body reads.

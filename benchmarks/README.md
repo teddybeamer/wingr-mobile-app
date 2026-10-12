@@ -104,8 +104,8 @@ production code, asserts they differ only in `reasoning.effort`, and re-checks t
 model, Vertex-only/ZDR routing and no-fallback settings (the same check runs before
 every live request). It makes no network request. A live run needs `-- --execute`,
 `BENCHMARK_CONFIRM_LIVE_API=yes` and the ignored staging-only key, and makes 3
-fixtures x 3 runs x 2 variants = 18 paid calls (`--runs N`, 1-5). Production stays
-on medium; a previous low-reasoning experiment regressed quality.
+fixtures x 3 runs x 2 variants = 18 paid calls (`--runs N`, 1-5). Production now defaults to low (owner decision, speed priority); medium is selectable with
+the `AI_REASONING_EFFORT=medium` secret.
 
 Add `--write-review` for a **blinded** manual review: it writes three ignored,
 local-only files in `benchmarks/results/`: a review file with each medium/low pair
@@ -137,11 +137,3 @@ the number of paid calls, the blinded pairs to review and a rough cost estimate.
 ids read `F<fixture number>-<run>`. The original compact-output and image-resolution
 benchmarks stay pinned to fixtures 01-03.
 
-### Flirt-tone candidate (Low reasoning)
-
-`npm run benchmark:reasoning-effort -- --low-prompt flirt-tone` gives ONLY the Low variant the
-flirt-adjusted tone paragraph from `benchmarks/prompt-candidates.ts` (Medium keeps the current
-prompt). The dry run and every live request assert that the two requests differ in nothing but
-`reasoning.effort` and that tone paragraph. The report adds the share of outputs with internal
-`ME`/`THEM` labels or report-style openings (`scripts/vibe-voice-lint.ts`) and the share whose
-summary addresses the reader.

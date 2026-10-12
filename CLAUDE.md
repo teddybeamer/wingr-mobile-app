@@ -69,8 +69,11 @@ deno check supabase/functions/ai-conversation/index.ts
 - Provider routing is intentionally pinned to Google Vertex through OpenRouter,
   with ZDR/data-collection protections and no fallback. Do not loosen those
   settings to diagnose latency or availability.
-- Keep reasoning at `medium` unless a controlled quality evaluation proves a
-  different setting safe. A prior low-reasoning experiment regressed quality.
+- Reasoning defaults to `low` (owner decision 2026-10-12, speed priority, backed by
+  blinded benchmarks: near-identical context/naturalness, about 0.4 lower flirt, 54-66%
+  faster). `AI_REASONING_EFFORT=medium` switches back. Do not change the default or add
+  other effort levels without a controlled blinded evaluation. An early low-reasoning
+  experiment (before the benchmark harness) had regressed quality.
 - Screenshot ownership (ME vs THEM), cropped bottom bubbles, language and
   grounded replies are quality-critical. Do not add heuristic speaker
   reassignment or automatic screenshot cropping without fixture-based review.
