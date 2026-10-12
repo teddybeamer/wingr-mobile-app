@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCompact, stagingCredentials } from "./benchmark-ai-output";
 import { parseFixtureSelection, readFixtureSet } from "./fixture-set";
+import { withFlirtTone } from "../benchmarks/prompt-candidates";
 import {
   agreement,
   median,
@@ -43,6 +44,9 @@ const EXPECTED_PROVIDER = {
 };
 
 export type Effort = "medium" | "low";
+// "existing" keeps the current prompt for both variants; "flirt-tone" gives the LOW
+// variant the flirt-adjusted tone paragraph (see benchmarks/prompt-candidates.ts).
+export type LowPrompt = "existing" | "flirt-tone";
 const EFFORTS: Effort[] = ["medium", "low"];
 
 type Request = Record<string, unknown> & {
@@ -90,6 +94,36 @@ export function assertOnlyEffortDiffers(medium: unknown, low: unknown) {
     fail("Variants differ in more than reasoning effort.");
 }
 
+type Message = { content?: unknown; role?: string };
+
+/** Replaces the system prompt of an already built request (messages[0]). */
+export function withSystemPrompt(request: unknown, transform: (prompt: string) => string) {
+  const value = request as { messages: Message[] };
+  const [system, ...rest] = value.messages;
+  if (system?.role !== "system" || typeof system.content !== "string")
+    fail("Unexpected request shape: no system prompt.");
+  return { ...value, messages: [{ ...system, content: transform(system.content) }, ...rest] };
+}
+
+/**
+ * Low may differ from medium in reasoning effort AND, when a prompt candidate is
+ * used, in exactly that candidate's system prompt - nothing else.
+ */
+export function assertOnlyPlannedDifferences(
+  medium: unknown,
+  low: unknown,
+  lowPrompt: LowPrompt,
+) {
+  const mediumSystem = (medium as { messages: Message[] }).messages[0].content;
+  if (lowPrompt === "flirt-tone") {
+    const lowSystem = (low as { messages: Message[] }).messages[0].content;
+    if (lowSystem !== withFlirtTone(String(mediumSystem)))
+      fail("Low system prompt must equal the medium prompt with only the flirt-tone paragraph changed.");
+    return assertOnlyEffortDiffers(medium, withSystemPrompt(low, () => String(mediumSystem)));
+  }
+  assertOnlyEffortDiffers(medium, low);
+}
+
 export function plannedRuns(fixtureIndex: number, runs = DEFAULT_RUNS): Effort[] {
   const first = EFFORTS[fixtureIndex % 2];
   const second = EFFORTS[(fixtureIndex + 1) % 2];
@@ -101,7 +135,12 @@ function percentChange(from: number | null, to: number | null) {
   return Number((((to - from) / from) * 100).toFixed(2));
 }
 
-export function buildReport(runs: Run[], fixtureCount: number, runsPerVariant: number) {
+export function buildReport(
+  runs: Run[],
+  fixtureCount: number,
+  runsPerVariant: number,
+  lowPrompt: LowPrompt = "existing",
+) {
   const of = (variant: Effort) => runs.filter((run) => run.variant === variant);
   const medium = summarizeVariant(of("medium"));
   const low = summarizeVariant(of("low"));
@@ -125,6 +164,10 @@ export function buildReport(runs: Run[], fixtureCount: number, runsPerVariant: n
       withinMedium: mean(fixtures.map((i) => agreement(values("medium", i)))),
     };
   };
+  const voice = (variant: Effort) => ({
+    addressesReaderShare: share(variant, (q) => q.addressesReader === true),
+    outputsWithVoiceIssues: share(variant, (q) => (q.voiceIssueFields ?? 0) > 0),
+  });
   const replyChars = (variant: Effort) => median(valid(variant).map((run) => run.quality!.replyChars));
   return {
     changePercentLowVsMedium: {
@@ -136,7 +179,9 @@ export function buildReport(runs: Run[], fixtureCount: number, runsPerVariant: n
     fixtureCount,
     latencyDefinition:
       "Client-side wall-clock time from OpenRouter fetch dispatch until the complete non-streaming response is parsed.",
+    lowPrompt,
     quality: {
+      voice: { low: voice("low"), medium: voice("medium") },
       agreement: { bestTone: field("bestTone"), interestLevel: field("interestLevel"), replyable: field("replyable") },
       medianReplyChars: { low: replyChars("low"), medium: replyChars("medium") },
       unreplyableShare: {
@@ -153,7 +198,7 @@ function markdown(report: ReturnType<typeof buildReport>) {
   const { low, medium } = report.summaries;
   const row = (name: string, a: unknown, b: unknown) => `| ${name} | ${String(a)} | ${String(b)} |`;
   return (
-    `# WiNGR reasoning-effort A/B (medium vs low)\n\n` +
+    `# WiNGR reasoning-effort A/B (medium vs low${report.lowPrompt === "flirt-tone" ? " + flirt-tone prompt" : ""})\n\n` +
     `Aggregate-only report. No screenshots, prompts, AI output, credentials, or user identifiers are included.\n\n` +
     `- Runs: ${report.fixtureCount} fixtures × ${report.runsPerVariantPerFixture} runs per variant\n` +
     `- Latency: ${report.latencyDefinition}\n\n` +
@@ -171,9 +216,14 @@ function markdown(report: ReturnType<typeof buildReport>) {
     `\n\nChange (low vs medium, %): ${JSON.stringify(report.changePercentLowVsMedium)}\n` +
     `Unreplyable share: ${JSON.stringify(report.quality.unreplyableShare)}\n` +
     `Median reply length (chars): ${JSON.stringify(report.quality.medianReplyChars)}\n` +
+    `Vibe check voice (share of outputs): ${JSON.stringify(report.quality.voice)}\n` +
     `Enum agreement (within-medium is the noise floor): ${JSON.stringify(report.quality.agreement)}\n\n` +
     `Automatic agreement cannot judge ME/THEM, context or naturalness. Do the blinded manual review BEFORE reading this report.\n`
   );
+}
+
+function lowRequest(request: unknown, lowPrompt: LowPrompt) {
+  return lowPrompt === "flirt-tone" ? withSystemPrompt(request, withFlirtTone) : request;
 }
 
 // ---- Blinded manual review ------------------------------------------------
@@ -305,6 +355,11 @@ async function main() {
   const runsPerVariant = runsFlag >= 0 ? Number(args[runsFlag + 1]) : DEFAULT_RUNS;
   if (!Number.isInteger(runsPerVariant) || runsPerVariant < 1 || runsPerVariant > MAX_RUNS)
     fail(`--runs must be an integer from 1 to ${MAX_RUNS}.`);
+  const lowPromptFlag = args.indexOf("--low-prompt");
+  const lowPromptValue = lowPromptFlag >= 0 ? args[lowPromptFlag + 1] : "existing";
+  if (lowPromptValue !== "existing" && lowPromptValue !== "flirt-tone")
+    fail('--low-prompt must be "existing" or "flirt-tone".');
+  const lowPrompt: LowPrompt = lowPromptValue;
   const selectionFlag = args.indexOf("--fixtures");
   const selection =
     selectionFlag >= 0 ? parseFixtureSelection(args[selectionFlag + 1] ?? "") : undefined;
@@ -320,10 +375,10 @@ async function main() {
   try {
     const sample = implementation.buildRequest({ screenshot: fixtures[0].screenshot, selectedTone: "playful" });
     const medium = withReasoningEffort(sample, "medium");
-    const low = withReasoningEffort(sample, "low");
+    const low = lowRequest(withReasoningEffort(sample, "low"), lowPrompt);
     assertRequestContract(medium, "medium");
     assertRequestContract(low, "low");
-    assertOnlyEffortDiffers(medium, low);
+    assertOnlyPlannedDifferences(medium, low, lowPrompt);
     const planned = fixtures.flatMap((fixture) => plannedRuns(fixture.position, runsPerVariant));
     if (!execute) {
       const cost = planned.reduce((sum, variant) => sum + ESTIMATED_COST_PER_CALL[variant], 0);
@@ -334,7 +389,10 @@ async function main() {
           (duplicates.length
             ? `Skipped byte-identical duplicates: ${duplicates.map((d) => `${d.duplicate}=${d.of}`).join(", ")}. `
             : "") +
-          `Requests differ only in reasoning.effort (medium vs low); Vertex-only, ZDR, model and JSON contract verified.`,
+          (lowPrompt === "flirt-tone"
+            ? `Requests differ in reasoning.effort and ONLY the tone paragraph of the system prompt (low gets the flirt-tone candidate); `
+            : `Requests differ only in reasoning.effort (medium vs low); `) +
+          `Vertex-only, ZDR, model and JSON contract verified.`,
       );
       return;
     }
@@ -347,18 +405,19 @@ async function main() {
       for (const variant of plannedRuns(position, runsPerVariant)) {
         runs.push(
           await runOnce(implementation, apiKey, screenshot, variant, index, keepReview, (request) => {
-            const adjusted = withReasoningEffort(request, variant);
+            const withEffort = withReasoningEffort(request, variant);
+            const adjusted = variant === "low" ? lowRequest(withEffort, lowPrompt) : withEffort;
             assertRequestContract(adjusted, variant);
             return adjusted;
           }),
         );
         writePrivate(
           `reasoning-effort-${timestamp}.partial.json`,
-          `${JSON.stringify(buildReport(runs, fixtures.length, runsPerVariant), null, 2)}\n`,
+          `${JSON.stringify(buildReport(runs, fixtures.length, runsPerVariant, lowPrompt), null, 2)}\n`,
         );
       }
     }
-    const report = buildReport(runs, fixtures.length, runsPerVariant);
+    const report = buildReport(runs, fixtures.length, runsPerVariant, lowPrompt);
     writePrivate(`reasoning-effort-${timestamp}.json`, `${JSON.stringify(report, null, 2)}\n`);
     writePrivate(`reasoning-effort-${timestamp}.md`, markdown(report));
     rmSync(join(RESULT_DIRECTORY, `reasoning-effort-${timestamp}.partial.json`), { force: true });

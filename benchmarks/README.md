@@ -136,3 +136,12 @@ ones) and `--runs N` for runs per variant. The dry run prints the unique fixture
 the number of paid calls, the blinded pairs to review and a rough cost estimate. Review
 ids read `F<fixture number>-<run>`. The original compact-output and image-resolution
 benchmarks stay pinned to fixtures 01-03.
+
+### Flirt-tone candidate (Low reasoning)
+
+`npm run benchmark:reasoning-effort -- --low-prompt flirt-tone` gives ONLY the Low variant the
+flirt-adjusted tone paragraph from `benchmarks/prompt-candidates.ts` (Medium keeps the current
+prompt). The dry run and every live request assert that the two requests differ in nothing but
+`reasoning.effort` and that tone paragraph. The report adds the share of outputs with internal
+`ME`/`THEM` labels or report-style openings (`scripts/vibe-voice-lint.ts`) and the share whose
+summary addresses the reader.

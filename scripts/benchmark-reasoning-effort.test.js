@@ -109,3 +109,39 @@ test("dry run verifies the contract and makes no network request", async () => {
   }).toString();
   assert.match(output, /Dry run ready: \d+ unique fixtures .* at original resolution, \d+ paid OpenRouter calls/);
 });
+
+test("with the flirt-tone candidate low may differ only in effort and the tone paragraph", async () => {
+  const { assertOnlyPlannedDifferences, withReasoningEffort, withSystemPrompt } = await load();
+  const candidates = await import("../benchmarks/prompt-candidates.ts");
+  const { withFlirtTone, TONE_PARAGRAPH } = candidates.default ?? candidates;
+  const base = request("medium", {
+    messages: [
+      { role: "system", content: `intro. ${TONE_PARAGRAPH} outro.` },
+      { role: "user", content: "same" },
+    ],
+  });
+  const low = withSystemPrompt(withReasoningEffort(base, "low"), withFlirtTone);
+  assert.doesNotThrow(() => assertOnlyPlannedDifferences(base, low, "flirt-tone"));
+  // Any other prompt edit, or a changed user message, is rejected.
+  assert.throws(
+    () => assertOnlyPlannedDifferences(base, withSystemPrompt(withReasoningEffort(base, "low"), (p) => `${p} extra`), "flirt-tone"),
+    /only the flirt-tone paragraph/,
+  );
+  const changedUser = { ...low, messages: [low.messages[0], { role: "user", content: "other" }] };
+  assert.throws(() => assertOnlyPlannedDifferences(base, changedUser, "flirt-tone"), /more than reasoning effort/);
+  // Without the candidate the original strict check still applies.
+  assert.throws(() => assertOnlyPlannedDifferences(base, low, "existing"), /more than reasoning effort/);
+});
+
+test("the report includes vibe voice shares without any text", async () => {
+  const { buildReport } = await load();
+  const quality = (voiceIssueFields, addressesReader) => ({
+    replyable: "true", interestLevel: "High", conversationEnergy: "x", bestTone: "playful", risk: "y",
+    replyChars: 40, voiceIssueFields, addressesReader,
+  });
+  const run = (variant, q) => ({ fixtureIndex: 0, inputTokens: 2000, latencyMs: 5000, outputTokens: 100, quality: q, reasoningTokens: 0, review: null, status: "valid", variant });
+  const report = buildReport([run("medium", quality(1, false)), run("low", quality(0, true))], 1, 1, "flirt-tone");
+  assert.equal(report.lowPrompt, "flirt-tone");
+  assert.equal(report.quality.voice.medium.outputsWithVoiceIssues, 1);
+  assert.equal(report.quality.voice.low.addressesReaderShare, 1);
+});

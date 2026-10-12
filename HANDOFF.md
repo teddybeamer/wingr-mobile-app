@@ -262,3 +262,25 @@ routing, model and contract identical). Stage telemetry records `reasoningEffort
 `AI_REASONING_EFFORT=low` on staging only (needs owner approval), use the app on a phone
 for real flows, compare stage latency by effort and re-review replies; roll back by
 unsetting the secret. Do not set it on production without a separate decision.
+
+## Tasks 1 and 2 of the quality/performance plan (Claude, 2026-10-12; local only, not deployed)
+
+**Task 2 (implemented locally):** `SYSTEM_PROMPT` now asks for the vibeCheck text fields
+(conversationEnergy, risk, summary) to be written directly to the user in second person, like
+a short note from a friend (you/your/you both; they/their/THEM's name), never using ME, THEM,
+"the user" or report openings ("Both agreed...", "The conversation shows..."), without
+overstating interest or inventing details; the reply stays in ME's voice. One paragraph added;
+JSON schema, parser and sender-identification rules are unchanged (`prompting.test.ts`,
+`scripts/vibe-voice-lint.ts` + tests; the lint is offline-only and never alters a response).
+Previously 0/28 summaries in round two used ME/THEM labels, 16/28 addressed the reader.
+
+**Task 1 (candidate only):** `withFlirtTone` in `benchmarks/prompt-candidates.ts` rewrites only
+the tone paragraph (one specific detail THEM gave -> gentle tease/callback/small challenge,
+self-aware humor, subtle, no generic compliments/pickup lines, one or two short sentences,
+light hook; direct and casualSmallTalk unchanged). Basis: the six pairs where Medium scored
+higher on flirt (F4-2, F6-1, F10-2, F11-1 English; F12-1/F12-2 are Danish - fixtures 12 and 13
+are Danish, not English). Medium turned a concrete detail into a tease or small challenge,
+added self-aware humor and stayed punchy; Low answered correctly but more logistically.
+Planned blinded A/B (not run): A = medium + current prompt, B = low + flirt-tone, English
+fixtures 1,3,4,6,8,10,11 x 2 runs = 28 paid calls (about $0.08), 14 pairs. Both arms include
+the Task 2 vibe rule, so voice shares are measured in the same run.

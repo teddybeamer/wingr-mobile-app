@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { addressesReader, lintVibeCheck } from "./vibe-voice-lint";
 import {
   completedResponseContent,
   loadCompact,
@@ -49,7 +50,10 @@ export const QUALITY_FIELDS = [
   "risk",
 ] as const;
 export type Quality = Record<(typeof QUALITY_FIELDS)[number], string> & {
+  addressesReader: boolean;
   replyChars: number;
+  // Number of user-facing vibe text fields with an internal label or report-style opening.
+  voiceIssueFields: number;
 };
 export type Run = {
   fixtureIndex: number;
@@ -119,6 +123,8 @@ export function qualityOf(result: unknown): Quality | null {
   const text = (field: string) =>
     vibe && typeof vibe[field] === "string" ? (vibe[field] as string) : "none";
   return {
+    addressesReader: addressesReader(text("summary")),
+    voiceIssueFields: Object.keys(lintVibeCheck((vibe ?? null) as never)).length,
     bestTone: text("bestTone"),
     conversationEnergy: text("conversationEnergy"),
     interestLevel: text("interestLevel"),
