@@ -315,3 +315,33 @@ else means low (tests cover default, switch, routing/model/contract pinning and 
 The experimental flirt-tone prompt (candidate, benchmark option and tests) was removed; the
 current tone instruction is unchanged. The personal vibe check rule stays. Production, staging
 and secrets were NOT touched; nothing is deployed.
+
+## Investigations (Claude, 2026-10-12; no new paid calls, nothing deployed)
+
+**Slow Low calls (P90 24.7 s, round three).** Raw per-run data was never stored, so the cause cannot
+be identified from existing logs. What the aggregates show: P90 of 14 = the 13th value, so at least
+2 of 14 Low runs took 24.7 s or more; Low P90 was about 5 s in the two earlier rounds; the same round's
+Low median output tokens (144.5) and reasoning tokens (0) were normal. Slow tails also appear
+with Medium (benchmark P90 33.4 s in round one, app traffic max 23.2 s of 12 calls). So roughly 3-4%
+of about 110 calls across both efforts exceeded 23 s: this looks like provider/queue tail variance
+rather than an effort or prompt effect (unverified). Diagnostics added: the reasoning benchmark JSON now
+records per-run numbers only (latency, tokens, finish reason, start time, status). Mitigation to
+discuss (not implemented): a hedged retry after about 10 s inside the same lease (no extra quota).
+
+**Language mix.** Across all 70 benchmark outputs only 1 mixed English reply with Danish vibe
+fields (fixture 1, Medium: Danish opener and Danish app UI, latest exchange English). The current
+prompt handles reply and vibe text in separate sentences. Candidate (not in production):
+`withUnifiedLanguage` in benchmarks/prompt-candidates.ts - ONE language per response from the latest
+meaningful exchange, applied to the reply and conversationEnergy, risk and summary. The benchmark
+now reports a heuristic `mixedLanguageShare`. The review page showed "Energi"/"Risiko" because those
+were my hard-coded Danish labels in the page; the app itself uses "Conversation energy" and "Risk".
+Fixed to the app's English labels.
+
+**Fixture coverage.** Seven English fixtures are only four distinct conversations (1, 6, 8 are one
+Alex chat at three scroll positions; 10 and 11 are one Kevin chat; 3 is Erik; 4 is Alex drinks);
+2, 12 and 13 are Danish; 5, 7 and 9 are byte-identical duplicates. Covered: cropped bottom bubble
+(1, 10), teasing/indirect flirt, clear interest, ME-latest message (10). Missing: unclear ownership,
+same-coloured bubbles, other apps and dark mode, sarcasm, very short/ambiguous replies, low or mixed
+interest, sensitive/negative messages, image/GIF/voice-only last item, reply threads, unreadable
+screenshot. Proposed new fixtures are listed in the owner conversation; see also
+STAGING_VALIDATION_LOW_REASONING.md for the staging plan and the local environment verification.
