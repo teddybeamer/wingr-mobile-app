@@ -1,7 +1,8 @@
-# Staging validation plan: Low reasoning on the iPhone (not executed)
+# Staging validation plan: Low reasoning on the iPhone
 
-Nothing below has been run against Supabase. Every step that deploys, changes a secret or makes
-paid calls needs the owner's explicit approval at the time. Staging project ref:
+Status 2026-10-12: the Low-by-default code (commit d40abc4) was DEPLOYED to staging only (function
+version 10); sections 3-4 (the measurements) have not been run. Every further deployment, secret
+change or paid call needs the owner's explicit approval at the time. Staging project ref:
 `driytnlagwgzebnfdpcr` ("WiNGR Mobile Staging"). **Never rely on the CLI link** in
 `supabase/.temp`: it points to the production-labelled project `ogypfpwbeeelyxqcyjle`. Always
 pass `--project-ref driytnlagwgzebnfdpcr`, and never run `supabase link`.

@@ -345,3 +345,34 @@ same-coloured bubbles, other apps and dark mode, sarcasm, very short/ambiguous r
 interest, sensitive/negative messages, image/GIF/voice-only last item, reply threads, unreadable
 screenshot. Proposed new fixtures are listed in the owner conversation; see also
 STAGING_VALIDATION_LOW_REASONING.md for the staging plan and the local environment verification.
+
+## Staging deployment of Low-by-default (owner-approved, 2026-10-12)
+
+Deployed commit d40abc4 (`ai-conversation`, function version 10) to the STAGING project
+`driytnlagwgzebnfdpcr` ("WiNGR Mobile Staging") only, with an explicit `--project-ref`. Verified
+before: project list names the ref as staging; the staging secret list has NO `AI_REASONING_EFFORT`
+override (default applies). Verified after: the source read back from staging contains
+`DEFAULT_REASONING_EFFORT = "low"` and `medium` only for the exact value; the CLI link still points
+to the production-labelled project and nothing was set or changed in any secret. The served Metro
+bundle (npm start) still contains only the staging functions URL and zero production refs, and the
+iPhone app is a Debug build that loads its JS from that Metro. Not yet verified at runtime: a
+generation from the phone should show `reasoningEffort: low` in the stage-latency log (Edge Functions
+> ai-conversation > Logs, search `stage latency`); that needs one paid staging generation.
+(The CLI secret listing printed secret digests, not values, once in the terminal.)
+
+## Unified language rule (implemented locally, NOT deployed)
+
+The two language sentences in `SYSTEM_PROMPT` were replaced by one rule: choose ONE output language per
+response from the latest meaningful exchange (THEM's most recent meaningful messages and ME's latest
+replies), ignore UI language, user-context language, older messages, names and language-neutral messages,
+and use it for the reply and conversationEnergy, risk and summary; never mix. Tests in
+`prompting.test.ts` cover the rule, removal of the old split rule, and that the personal vibe tone, ME/THEM
+and sender rules and the JSON schema are unchanged. The staging deployment above does NOT include it.
+
+## Decisions
+
+Hedged retry is postponed: timeout and retry behaviour are unchanged. The missing-fixture overview
+(unclear ownership, same-coloured bubbles, other apps and dark mode, sarcasm, very short replies, low or
+mixed interest, sensitive/negative messages, image/GIF-only or voice-only last item, reply threads,
+unreadable screenshot; plus the finding that the 7 English fixtures are 4 conversations and 5/7/9 are
+duplicates) is saved above; the benchmark will be extended later. Priority now: staging test on the iPhone.

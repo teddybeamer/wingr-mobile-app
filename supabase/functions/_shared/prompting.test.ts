@@ -33,7 +33,30 @@ test("sender identification and language rules are untouched", () => {
   assert.match(SYSTEM_PROMPT, /Infer ME\/THEM primarily from the whole visual structure/);
   assert.match(SYSTEM_PROMPT, /alignment alone is not ownership/);
   assert.match(SYSTEM_PROMPT, /facts stated by ME belong to ME/i);
-  assert.match(SYSTEM_PROMPT, /Write free-text vibe fields in that language too; keep schema enums exactly as specified/);
+  assert.match(SYSTEM_PROMPT, /Keep schema enums exactly as specified/);
+});
+
+test("one language is chosen per response and applies to every user-facing AI text field", () => {
+  assert.match(SYSTEM_PROMPT, /Choose ONE output language per response, including English and Danish/);
+  assert.match(SYSTEM_PROMPT, /latest meaningful exchange, meaning THEM's most recent meaningful messages and ME's latest replies/);
+  assert.match(
+    SYSTEM_PROMPT,
+    /Write the reply and every user-facing vibeCheck text field \(conversationEnergy, risk, summary\) in that same language, and never mix languages within one response/,
+  );
+  for (const ignored of ["the app's UI language", "the language of the user context", "older messages", "names", "haha or emoji"])
+    assert.ok(SYSTEM_PROMPT.includes(ignored), ignored);
+  // The old split rule (reply language vs separate vibe-field sentence) is gone.
+  assert.doesNotMatch(SYSTEM_PROMPT, /Write free-text vibe fields in that language too/);
+  assert.doesNotMatch(SYSTEM_PROMPT, /Match the actual conversation language/);
+  // It names exactly the user-facing text fields; enums and the JSON contract are not language-dependent.
+  assert.equal(SYSTEM_PROMPT.match(/Choose ONE output language/g)?.length, 1);
+});
+
+test("the language rule leaves the personal vibe tone and sender rules in place", () => {
+  assert.match(SYSTEM_PROMPT, /directly to the user, as a short, personal observation from a friend/);
+  assert.match(SYSTEM_PROMPT, /ME and THEM are internal labels/);
+  assert.match(SYSTEM_PROMPT, /Infer ME\/THEM primarily from the whole visual structure/);
+  assert.match(SYSTEM_PROMPT, /The reply itself stays in ME's own voice/);
 });
 
 test("the JSON contract and the user prompt are unchanged", () => {
