@@ -165,3 +165,15 @@ never deploy without an explicit ref).
   65 tokens) guarded by a 37-rule checklist that the production prompt also
   passes (`scripts/prompt-candidates.test.js`). Not wired into production or the
   benchmark; any live comparison needs approval and fixture-based review.
+
+## Image-resolution A/B result (staging key, 18 paid calls, 2026-10-12)
+
+Original (1170x2532 PNG) vs 1280 px long edge, 3 fixtures x 3 runs each, compact
+baseline, everything else identical. Input tokens were exactly 2,062 for every
+run of both variants: Gemini 3 allocates a fixed per-image budget (1,120 tokens
+by default), so resizing does not reduce billed or processed image tokens.
+Median latency 8,136 -> 7,248 ms (-10.9%) but P90 9,503 -> 10,521 ms (+10.7%);
+output/reasoning-token differences are within run-to-run noise at n=9 per arm.
+Conclusion: no evidence of benefit; do not add a client resize dependency on
+this basis. A local-only review file with model output (ignored by Git) exists in
+benchmarks/results/ and was NOT read; delete it when no longer needed.
