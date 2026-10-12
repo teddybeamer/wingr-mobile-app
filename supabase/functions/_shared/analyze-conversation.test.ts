@@ -1386,3 +1386,44 @@ test("a failing deferred release never rejects and is logged with fixed fields",
   );
   assert.equal((latency?.arguments[1] as { outcome: string }).outcome, "failure");
 });
+
+test("stage latency telemetry contains only fixed performance fields", async (t) => {
+  const info = t.mock.method(console, "info", () => {});
+  const response = await handleConversationRequest(request(), "key", {
+    fetchImpl: provider(result),
+  });
+
+  assert.equal(response.status, 200);
+  const call = info.mock.calls.find(
+    ({ arguments: [event] }) => event === "[Wingr AI] generation stage latency",
+  );
+  assert.ok(call);
+  const fields = call.arguments[1] as Record<string, unknown>;
+  assert.deepEqual(Object.keys(fields).sort(), [
+    "bodyMs",
+    "claimMs",
+    "entitlementWaitMs",
+    "event",
+    "generation",
+    "outcome",
+    "providerMs",
+    "totalMs",
+  ]);
+  assert.equal(fields.event, "ai_generation_stage_latency");
+  assert.equal(fields.outcome, "success");
+  for (const key of ["bodyMs", "claimMs", "providerMs", "totalMs"])
+    assert.equal(typeof fields[key], "number");
+});
+
+test("a failed provider call still reports stage latency with a failure outcome", async (t) => {
+  const info = t.mock.method(console, "info", () => {});
+  const response = await handleConversationRequest(request(), "key", {
+    fetchImpl: async () => new Response(null, { status: 503 }),
+  });
+
+  assert.equal(response.status, 502);
+  const call = info.mock.calls.find(
+    ({ arguments: [event] }) => event === "[Wingr AI] generation stage latency",
+  );
+  assert.equal((call?.arguments[1] as { outcome: string }).outcome, "failure");
+});

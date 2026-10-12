@@ -130,3 +130,13 @@ test("parses Supabase CSV exports with multi-line quoted console messages", asyn
   const report = reportFromLogs(records);
   assert.equal(report.lease["subscription/success"].medianMs, 101);
 });
+
+test("summarizes per-stage timings of successful subscription requests", async () => {
+  const { reportFromLogs } = await reportModule();
+  const stage = (totalMs, outcome = "success") =>
+    `ai_generation_stage_latency { bodyMs: 300, claimMs: 90, entitlementWaitMs: null, event: 'ai_generation_stage_latency', generation: 'subscription', outcome: '${outcome}', providerMs: 8000, totalMs: ${totalMs} }`;
+  const report = reportFromLogs([stage(9000), stage(9200), stage(1, "failure")]);
+  assert.equal(report.stages.totalMs.count, 2);
+  assert.equal(report.stages.claimMs.medianMs, 90);
+  assert.equal(report.stages.entitlementWaitMs, undefined);
+});

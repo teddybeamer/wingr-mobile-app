@@ -62,6 +62,35 @@ function recordLeaseReleaseLatency({
   });
 }
 
+type StageTimings = {
+  bodyMs: number;
+  claimMs: number | null;
+  entitlementWaitMs: number | null;
+  providerMs: number | null;
+};
+
+function recordStageLatency({
+  generation,
+  outcome,
+  timings,
+  totalMs,
+}: {
+  generation: "onboarding" | "subscription";
+  outcome: "success" | "failure";
+  timings: StageTimings;
+  totalMs: number;
+}) {
+  // Fixed labels and durations only. Never log image, transcript, reply,
+  // prompt, user ID, authorization, API key, or provider response.
+  console.info("[Wingr AI] generation stage latency", {
+    ...timings,
+    event: "ai_generation_stage_latency",
+    generation,
+    outcome,
+    totalMs,
+  });
+}
+
 // A 10 MiB image expands to a 13,981,048-character data URL. 14 MiB leaves
 // 692,492 bytes beyond the maximum valid screenshot-and-metadata payload.
 export const MAX_REQUEST_BODY_BYTES = 14 * 1024 * 1024;
@@ -237,6 +266,8 @@ export async function handleConversationRequest(
   const authenticatedUserId = userId?.trim() ?? "";
   if (!isUuid(authenticatedUserId)) return accessError("unauthorized");
 
+  const requestStartedAt = Date.now();
+
   try {
     let value;
     try {
@@ -247,6 +278,7 @@ export async function handleConversationRequest(
       throw new ConversationError("invalid_request");
     }
     const input = parseConversationRequest(value);
+    const bodyMs = Date.now() - requestStartedAt;
 
     if (input.isOnboardingGeneration && input.deviceCheckToken) {
       if (!onboardingTrialManager)
@@ -262,16 +294,19 @@ export async function handleConversationRequest(
     }
 
     let subscriptionPlan: RevenueCatSubscriptionPlan | null = null;
+    let entitlementWaitMs: number | null = null;
     if (!input.isOnboardingGeneration) {
       if (!entitlementVerifier) {
         return accessError("subscription_verification_unavailable");
       }
       let access: RevenueCatAccess;
+      const entitlementWaitStartedAt = Date.now();
       try {
         access = await entitlementVerifier.verifyAccess(
           authenticatedUserId,
           request.signal,
         );
+        entitlementWaitMs = Date.now() - entitlementWaitStartedAt;
       } catch (failure) {
         const diagnostic =
           failure instanceof RevenueCatVerificationError
@@ -302,28 +337,44 @@ export async function handleConversationRequest(
       current: null,
     };
     let successfulSubscriptionResponse = false;
+    const timings: StageTimings = {
+      bodyMs,
+      claimMs: null,
+      entitlementWaitMs,
+      providerMs: null,
+    };
+    let succeeded = false;
     try {
       const result = await analyzeWithGemini(input, apiKey, {
         ...geminiOptions,
         signal: request.signal,
-        onProviderLatency: (measurement) =>
+        onProviderLatency: (measurement) => {
+          timings.providerMs = measurement.durationMs;
           recordProviderLatency(
             input.isOnboardingGeneration ? "onboarding" : "subscription",
             measurement,
-          ),
+          );
+        },
         onProviderDispatch: async () => {
-          if (!usageLimiter)
-            throw new ConversationError("generation_protection_unavailable");
-          if (input.isOnboardingGeneration) {
-            generationLease.current =
-              await usageLimiter.claimOnboarding(authorization);
-          } else {
-            if (!subscriptionPlan)
+          const claimStartedAt = Date.now();
+          try {
+            if (!usageLimiter)
               throw new ConversationError("generation_protection_unavailable");
-            generationLease.current = await usageLimiter.claim(
-              authorization,
-              subscriptionPlan,
-            );
+            if (input.isOnboardingGeneration) {
+              generationLease.current =
+                await usageLimiter.claimOnboarding(authorization);
+            } else {
+              if (!subscriptionPlan)
+                throw new ConversationError(
+                  "generation_protection_unavailable",
+                );
+              generationLease.current = await usageLimiter.claim(
+                authorization,
+                subscriptionPlan,
+              );
+            }
+          } finally {
+            timings.claimMs = Date.now() - claimStartedAt;
           }
         },
       });
@@ -332,8 +383,17 @@ export async function handleConversationRequest(
       // Keep onboarding cleanup on the existing synchronous path. The normal
       // subscription path may respond once its model result is fully validated.
       successfulSubscriptionResponse = !input.isOnboardingGeneration;
+      succeeded = true;
       return json(result);
     } finally {
+      recordStageLatency({
+        generation: input.isOnboardingGeneration
+          ? "onboarding"
+          : "subscription",
+        outcome: succeeded ? "success" : "failure",
+        timings,
+        totalMs: Date.now() - requestStartedAt,
+      });
       if (generationLease.current && usageLimiter) {
         const leaseId = generationLease.current.leaseId;
         const releaseLease = async () => {

@@ -15,6 +15,14 @@ import { fileURLToPath } from "node:url";
 export const STAGING_PROJECT_REF = "driytnlagwgzebnfdpcr";
 export const LEASE_EVENT = "ai_generation_lease_release_latency";
 export const PROVIDER_EVENT = "ai_generation_provider_latency";
+export const STAGE_EVENT = "ai_generation_stage_latency";
+export const STAGE_FIELDS = [
+  "bodyMs",
+  "entitlementWaitMs",
+  "claimMs",
+  "providerMs",
+  "totalMs",
+] as const;
 
 const MAX_PLAUSIBLE_MS = 600_000;
 const MIN_SAMPLES_FOR_P90 = 10;
@@ -143,6 +151,7 @@ export function assertStagingOnly(records: string[]) {
 }
 
 export type LogReport = {
+  stages: Record<string, Stats>;
   lease: Record<string, Stats>;
   provider: Record<string, Stats>;
   leaseShareOfProviderMedian: number | null;
@@ -164,11 +173,23 @@ export function reportFromLogs(records: string[]): LogReport {
   assertStagingOnly(records);
   const lease = records.flatMap((r) => parseLatencyEvent(r, LEASE_EVENT) ?? []);
   const provider = records.flatMap((r) => parseLatencyEvent(r, PROVIDER_EVENT) ?? []);
+  // Per-stage breakdown of successful subscription generations only.
+  const stageRecords = records.filter((record) => record.includes(STAGE_EVENT));
+  const stages: Record<string, Stats> = {};
+  for (const name of STAGE_FIELDS) {
+    const values = stageRecords
+      .filter((record) => field(record, "outcome") === "success" && field(record, "generation") === "subscription")
+      .map((record) => Number(field(record, name)))
+      .filter((value) => Number.isFinite(value) && value >= 0 && value <= MAX_PLAUSIBLE_MS);
+    const stats = summarizeDurations(values);
+    if (stats) stages[name] = stats;
+  }
   const leaseStats = group(lease);
   const providerStats = group(provider);
   const leaseMedian = leaseStats["subscription/success"]?.medianMs;
   const providerMedian = providerStats["subscription/success"]?.medianMs;
   return {
+    stages,
     lease: leaseStats,
     provider: providerStats,
     leaseShareOfProviderMedian:
@@ -217,6 +238,9 @@ export function formatReport(
 ) {
   const lines: string[] = ["Staging latency report (aggregate only, offline)"];
   if (logs) {
+    lines.push("", "Pipeline stages, successful subscription requests (ai_generation_stage_latency):");
+    const stages = Object.entries(logs.stages);
+    lines.push(...(stages.length ? stages.map(([k, v]) => formatStats(k, v)) : ["  no events found"]));
     lines.push("", "Lease release (ai_generation_lease_release_latency):");
     const lease = Object.entries(logs.lease);
     lines.push(...(lease.length ? lease.map(([k, v]) => formatStats(k, v)) : ["  no events found"]));

@@ -132,3 +132,19 @@ the benchmark fixtures without reading credentials or making a network request.
   (`scripts/staging-latency-report.ts`): offline, no network/credentials/quota.
   Next: export staging `function_logs` for the lease event and run it with
   `--logs`; only then consider an approved, budgeted A/B using `--samples`.
+
+## Latency investigation (Claude, 2026-10-12)
+
+Measured on staging (12 successful subscription requests): provider median
+8.9 s / P90 14.1 s; lease release median 66 ms (0.7%). Fixtures are 0.3-0.5 MB
+PNGs, so upload/compression is a minor cost and image downscaling is not worth
+its quality risk. Remaining critical path before the model call is sequential:
+auth -> body read -> RevenueCat (2 calls for subscribers) -> claim RPC.
+
+Rejected on purpose: starting RevenueCat verification before the body is read
+or fetching entitlements/subscriptions in parallel. Existing tests pin that
+invalid/oversized requests reject before RevenueCat and that subscriptions are
+not read without Pro; keep those guarantees unless the product owner decides
+otherwise. Added `ai_generation_stage_latency` telemetry (fixed numeric fields)
+so the next staging run shows body/entitlement/claim/provider/total per request;
+`npm run staging:latency` summarizes it. Deploy to staging requires approval.
