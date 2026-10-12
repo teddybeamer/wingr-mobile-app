@@ -219,3 +219,16 @@ benchmarks/results/.
 - Fact-grounding prompt candidate (`withFactGrounding` in benchmarks/prompt-candidates.ts,
   tested, NOT in production) targets replies that state ME's favorites/plans/willingness
   that the screenshot never establishes. Needs an approved live A/B before any change.
+
+## Human blinded review of medium vs low (owner, 2026-10-12)
+
+8 pairs scored blind in the local review page (15 of 16 outputs rated; pair F1-1 output
+B unrated; the "which would I send" choice was exported empty for all pairs). No
+ME/THEM errors and no invented-facts flags (this differs from Claude's first pass,
+which flagged the personal-fact answers on one fixture; the owner did not).
+Means (1-5): hook low 4.86 / medium 4.88; naturalness low 4.29 / medium 4.63; flirt low
+4.43 / medium 4.63. Pairwise on naturalness (7 comparable pairs): medium better in 3,
+low better in 1, 3 ties. All three medium wins are on the Danish-language fixture
+(naturalness low 3.3 vs medium 5.0); English fixtures were equal or favored low. Latency
+benefit of low stays -66% (median 9.7 -> 3.3 s). Next: a larger fixture set with several
+Danish conversations before any production decision.
