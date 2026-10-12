@@ -138,3 +138,18 @@ test("scoring unblinds vibe ratings and direct-address flags per variant", async
   assert.equal(result.low.flagCounts.vibeReportTone, undefined);
   assert.equal(result.preferences.low, 2);
 });
+
+test("the report keeps per-run numeric timings for slow-run diagnosis and no text", async () => {
+  const { buildReport } = await load();
+  const run = (variant, latencyMs) => ({
+    finishReason: "stop", fixtureIndex: 3, inputTokens: 2000, latencyMs, outputTokens: 140,
+    quality: { replyable: "true", interestLevel: "High", conversationEnergy: "x", bestTone: "playful", risk: "y", replyChars: 40 },
+    reasoningTokens: 0, review: { reply: "SECRET", summary: "SECRET" }, startedAt: "2026-10-12T19:00:00.000Z", status: "valid", variant,
+  });
+  const report = buildReport([run("low", 24670.4), run("medium", 9000)], 1, 1);
+  assert.deepEqual(report.runs[0], {
+    finishReason: "stop", fixture: 4, inputTokens: 2000, latencyMs: 24670, outputTokens: 140,
+    reasoningTokens: 0, startedAt: "2026-10-12T19:00:00.000Z", status: "valid", variant: "low",
+  });
+  assert.equal(JSON.stringify(report).includes("SECRET"), false);
+});

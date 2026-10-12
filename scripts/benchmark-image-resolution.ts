@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hasMixedLanguages } from "./language-consistency";
 import { addressesReader, lintVibeCheck } from "./vibe-voice-lint";
 import {
   completedResponseContent,
@@ -51,12 +52,16 @@ export const QUALITY_FIELDS = [
 ] as const;
 export type Quality = Record<(typeof QUALITY_FIELDS)[number], string> & {
   addressesReader: boolean;
+  // Heuristic: the reply and the vibe text fields clearly use different languages.
+  mixedLanguage: boolean;
   replyChars: number;
   summaryChars: number;
   // Number of user-facing vibe text fields with an internal label or report-style opening.
   voiceIssueFields: number;
 };
 export type Run = {
+  // Closed provider finish reason ("stop", "length", ...), for diagnosing slow or failed runs.
+  finishReason?: string | null;
   fixtureIndex: number;
   inputTokens: number | null;
   latencyMs: number;
@@ -69,6 +74,7 @@ export type Run = {
     risk?: string;
     summary: string;
   } | null;
+  startedAt?: string;
   status: "valid" | "request_error" | "validation_error";
   variant: string;
 };
@@ -130,6 +136,12 @@ export function qualityOf(result: unknown): Quality | null {
     vibe && typeof vibe[field] === "string" ? (vibe[field] as string) : "none";
   return {
     addressesReader: addressesReader(text("summary")),
+    mixedLanguage: hasMixedLanguages([
+      typeof value.replies?.[0] === "string" ? value.replies[0] : "",
+      text("conversationEnergy"),
+      text("risk"),
+      text("summary"),
+    ]),
     summaryChars: text("summary") === "none" ? 0 : text("summary").length,
     voiceIssueFields: Object.keys(lintVibeCheck((vibe ?? null) as never)).length,
     bestTone: text("bestTone"),
@@ -383,6 +395,7 @@ export async function runOnce(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const base = {
+    startedAt: new Date().toISOString(),
     fixtureIndex,
     inputTokens: null,
     outputTokens: null,
@@ -441,8 +454,10 @@ export async function runOnce(
           summary?: string;
         } | null;
       };
+      const finish = (payload as { choices?: { finish_reason?: unknown }[] }).choices?.[0]?.finish_reason;
       return {
         ...base,
+        finishReason: typeof finish === "string" && /^[a-z_]{1,20}$/.test(finish) ? finish : null,
         inputTokens: count(usage?.prompt_tokens),
         latencyMs,
         outputTokens: count(usage?.completion_tokens),

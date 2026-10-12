@@ -131,6 +131,7 @@ export function buildReport(
   };
   const voice = (variant: Effort) => ({
     addressesReaderShare: share(variant, (q) => q.addressesReader === true),
+    mixedLanguageShare: share(variant, (q) => q.mixedLanguage === true),
     outputsWithVoiceIssues: share(variant, (q) => (q.voiceIssueFields ?? 0) > 0),
   });
   const summaryChars = (variant: Effort) =>
@@ -146,6 +147,18 @@ export function buildReport(
     fixtureCount,
     latencyDefinition:
       "Client-side wall-clock time from OpenRouter fetch dispatch until the complete non-streaming response is parsed.",
+    // Per-run numbers only (no text), to diagnose slow runs such as a high P90.
+    runs: runs.map((run) => ({
+      finishReason: run.finishReason ?? null,
+      fixture: run.fixtureIndex + 1,
+      inputTokens: run.inputTokens,
+      latencyMs: Math.round(run.latencyMs),
+      outputTokens: run.outputTokens,
+      reasoningTokens: run.reasoningTokens,
+      startedAt: run.startedAt ?? null,
+      status: run.status,
+      variant: run.variant,
+    })),
     quality: {
       voice: { low: voice("low"), medium: voice("medium") },
       agreement: { bestTone: field("bestTone"), interestLevel: field("interestLevel"), replyable: field("replyable") },

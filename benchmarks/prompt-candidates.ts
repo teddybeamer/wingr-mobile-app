@@ -86,3 +86,30 @@ export const FACT_GROUNDING_CHECKS: Record<string, RegExp> = {
   handBackOrStayTrue: /hand the question back to THEM|true whatever the real answer is/i,
   noCommitting: /committing ME to a fact, plan, time or place is not/i,
 };
+
+// ---- Unified-language candidate ------------------------------------------------
+// One English reply with Danish vibe-check fields appeared in 1 of 70 benchmark outputs
+// (a mixed-language screenshot with a Danish opener and Danish app UI). The current rule
+// handles the reply and the vibe text in two separate sentences. This candidate makes
+// ONE language choice per response and applies it to every user-facing AI text field.
+// It replaces only the language sentences; it is NOT in production.
+
+export const LANGUAGE_SENTENCES =
+  "Match the actual conversation language, including English and Danish. For mixed-language screenshots follow the latest meaningful exchange, not UI language, user context language or brief language-neutral messages like haha. Write free-text vibe fields in that language too; keep schema enums exactly as specified.";
+
+export const UNIFIED_LANGUAGE_RULE =
+  "Choose ONE output language per response, including English and Danish: the language of the latest meaningful exchange, meaning THEM's most recent meaningful messages and ME's latest replies. Ignore the app's UI language, the language of the user context, older messages, names, and brief language-neutral messages like haha or emoji. Write the reply and every user-facing vibeCheck text field (conversationEnergy, risk, summary) in that same language, and never mix languages within one response. Keep schema enums exactly as specified.";
+
+export function withUnifiedLanguage(basePrompt: string) {
+  if (!basePrompt.includes(LANGUAGE_SENTENCES))
+    throw new Error("Base prompt no longer contains the language sentences this candidate replaces.");
+  return basePrompt.replace(LANGUAGE_SENTENCES, UNIFIED_LANGUAGE_RULE);
+}
+
+// Rules the candidate adds; the production prompt must NOT match them yet.
+export const UNIFIED_LANGUAGE_CHECKS: Record<string, RegExp> = {
+  oneLanguagePerResponse: /Choose ONE output language per response/,
+  coversEveryField: /the reply and every user-facing vibeCheck text field \(conversationEnergy, risk, summary\)/,
+  neverMix: /never mix languages within one response/i,
+  ignoresUiAndOldMessages: /Ignore the app's UI language[\s\S]*older messages/,
+};

@@ -55,3 +55,11 @@ test("parses the current format with vibe energy and risk, and still the legacy 
   assert.match(html, /wingr-blind-review-" \+ "page-1"/);
   assert.equal(html.toLowerCase().includes("medium"), false);
 });
+
+test("the review page labels vibe fields like the app (English), not in Danish", async () => {
+  const { renderPage } = await load();
+  const html = renderPage([{ A: { reply: "r", summary: "s", energy: "e", risk: "k" }, B: { reply: "r", summary: "s" }, fixture: 1, id: "F1-1" }], {}, "p");
+  assert.match(html, /Conversation energy/);
+  assert.match(html, /"Risk"/);
+  assert.doesNotMatch(html, /"Energi"|"Risiko"/);
+});

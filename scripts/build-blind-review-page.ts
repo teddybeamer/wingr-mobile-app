@@ -137,7 +137,7 @@ function output(pair, label){
   box.append(flags);
   const vibe = document.createElement("div"); vibe.className = "vibe";
   const vt = document.createElement("strong"); vt.textContent = "Vibe check"; vibe.append(vt);
-  [["summary", pair[label].summary], ["Energi", pair[label].energy], ["Risiko", pair[label].risk]].forEach(([name, value]) => {
+  [["summary", pair[label].summary], ["Conversation energy", pair[label].energy], ["Risk", pair[label].risk]].forEach(([name, value]) => {
     if (!value) return; const line = document.createElement("div"); line.className = "vline";
     line.textContent = (name === "summary" ? "" : name + ": ") + value; vibe.append(line);
   });
