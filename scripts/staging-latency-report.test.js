@@ -111,3 +111,22 @@ test("end-to-end samples group by label and drop invalid or extra fields", async
   assert.equal(text.includes("SECRET"), false);
   assert.match(text, /median\(deferred\) - median\(sync\) = -15 ms/);
 });
+
+test("parses Supabase CSV exports with multi-line quoted console messages", async () => {
+  const { exportRecords, reportFromLogs } = await reportModule();
+  const csv = [
+    "event_message,event_type,execution_id,function_id,id,level,timestamp",
+    "shutdown,Shutdown,a,b,c,log,1",
+    '"[Wingr AI] generation lease release latency {',
+    "  durationMs: 101,",
+    '  event: ""ai_generation_lease_release_latency"",',
+    '  generation: ""subscription"",',
+    '  outcome: ""success""',
+    '}',
+    '",Log,a,b,c,info,2',
+  ].join("\n");
+  const records = exportRecords(csv);
+  assert.equal(records.length, 2);
+  const report = reportFromLogs(records);
+  assert.equal(report.lease["subscription/success"].medianMs, 101);
+});

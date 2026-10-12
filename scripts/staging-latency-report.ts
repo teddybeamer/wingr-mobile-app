@@ -79,10 +79,42 @@ export function summarizeDurations(values: number[]): Stats | null {
   };
 }
 
-/** Splits an export (JSON array/object, NDJSON or plain text) into record strings. */
+// RFC 4180 parser: Supabase CSV exports put multi-line console output in quoted cells.
+function parseCsv(content: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < content.length; index++) {
+    const char = content[index];
+    if (quoted) {
+      if (char !== '"') cell += char;
+      else if (content[index + 1] === '"') (cell += '"'), index++;
+      else quoted = false;
+    } else if (char === '"') quoted = true;
+    else if (char === ",") (row.push(cell), (cell = ""));
+    else if (char === "\n" || char === "\r") {
+      if (char === "\r" && content[index + 1] === "\n") index++;
+      row.push(cell);
+      cell = "";
+      rows.push(row);
+      row = [];
+    } else cell += char;
+  }
+  if (cell || row.length) rows.push([...row, cell]);
+  return rows;
+}
+
+/** Splits an export (CSV, JSON array/object, NDJSON or plain text) into record strings. */
 export function exportRecords(content: string): string[] {
   const trimmed = content.trim();
   if (!trimmed) return [];
+  if (/^"?event_message"?,/.test(trimmed)) {
+    const [header, ...rows] = parseCsv(trimmed);
+    const column = header.indexOf("event_message");
+    // Keep only the message column; other columns are never read.
+    return rows.map((row) => row[column] ?? "").filter(Boolean);
+  }
   try {
     const parsed: unknown = JSON.parse(trimmed);
     const rows = Array.isArray(parsed)
