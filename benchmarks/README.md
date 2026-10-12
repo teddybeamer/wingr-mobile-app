@@ -29,9 +29,9 @@ benchmarks/screenshots/fixture-02.png
 benchmarks/screenshots/fixture-03.png
 ```
 
-Only PNG, JPEG, and WebP are accepted. The directory must contain exactly three
-non-hidden files; the runner stops otherwise. Do not rename fixtures after a
-baseline/compact comparison has started.
+The runner requires valid PNG bytes and these exact three non-hidden filenames;
+it stops if anything is missing, renamed, malformed, empty, or over 10 MiB. Do
+not rename fixtures after a baseline/compact comparison has started.
 
 ## Review without an API call
 
@@ -57,7 +57,28 @@ between fixtures, giving three runs per variant per screenshot while reducing
 ordering bias. It retains no generated content. The only output is an ignored,
 aggregate JSON and Markdown report under `benchmarks/results/`.
 
-The report uses median and nearest-rank P90 latency from valid responses. It
-reports median completion/output and reasoning token counts, plus compact versus
-baseline savings when that token field is supplied by the provider. Missing token
-fields are reported as `null`, never as zero.
+The report uses median and nearest-rank P90 latency from valid responses. A
+response is valid only when it has the same completed, non-refused shape that
+production accepts. It reports median input, completion/output and reasoning
+token counts, plus compact versus baseline savings when that token field is
+supplied by the provider. Missing token fields are reported as `null`, never as
+zero. Each direct request has a 45-second local timeout; the runner does not
+retry it. During a live run, it atomically refreshes an ignored aggregate-only
+`.partial` report after each completed request; a successful run replaces it
+with the final report. This preserves completed aggregate measurements if the
+process is interrupted without retaining screenshots, prompts, or model output.
+
+## Offline staging latency report
+
+`npm run staging:latency -- --logs <export> [--samples <file>]` summarizes latency
+without any network access, credentials, generation request or quota use. `--logs`
+takes a staging `function_logs` export (JSON array, `{result: []}`, NDJSON or text)
+and reports `ai_generation_lease_release_latency` and
+`ai_generation_provider_latency` as count/min/median/P90/max per generation and
+outcome, plus the lease release as a share of provider latency. `--samples` takes
+client-side NDJSON/JSON rows of `{"label": "...", "durationMs": 123}` for any
+future end-to-end experiment and compares two labels' medians. P90 is withheld
+below 10 samples. Only allowlisted numeric/enum fields are read; the script
+refuses input that references a Supabase project other than the staging ref.
+Keep exports and reports out of Git (they are not under `benchmarks/results/`
+unless you put them there).

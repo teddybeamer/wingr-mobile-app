@@ -23,6 +23,9 @@ export type ConversationHandlerOptions = Omit<
   getVerifiedUserId?: (accessToken: string) => Promise<string | null>;
   onboardingTrialManager?: OnboardingTrialManager;
   usageLimiter?: UsageLimiter;
+  // Schedules a non-critical task after the response has been handed back to
+  // the caller. The production edge handler maps this to EdgeRuntime.waitUntil.
+  defer?: (task: () => Promise<void>) => void;
 };
 
 function recordProviderLatency(
@@ -37,6 +40,25 @@ function recordProviderLatency(
     generation,
     outcome: measurement.outcome,
     outputContract: measurement.outputContract,
+  });
+}
+
+function recordLeaseReleaseLatency({
+  durationMs,
+  generation,
+  outcome,
+}: {
+  durationMs: number;
+  generation: "onboarding" | "subscription";
+  outcome: "success" | "failure";
+}) {
+  // Fixed labels and a duration only. Never log image, transcript, reply,
+  // prompt, user ID, authorization, API key, or provider response.
+  console.info("[Wingr AI] generation lease release latency", {
+    durationMs,
+    event: "ai_generation_lease_release_latency",
+    generation,
+    outcome,
   });
 }
 
@@ -197,6 +219,7 @@ export async function handleConversationRequest(
     getVerifiedUserId,
     onboardingTrialManager,
     usageLimiter,
+    defer,
     ...geminiOptions
   } = options;
 
@@ -278,6 +301,7 @@ export async function handleConversationRequest(
     const generationLease: { current: GenerationLease | null } = {
       current: null,
     };
+    let successfulSubscriptionResponse = false;
     try {
       const result = await analyzeWithGemini(input, apiKey, {
         ...geminiOptions,
@@ -305,19 +329,47 @@ export async function handleConversationRequest(
       });
       if (!result.replyable || !result.vibeCheck)
         throw new ConversationError("unusable_screenshot");
+      // Keep onboarding cleanup on the existing synchronous path. The normal
+      // subscription path may respond once its model result is fully validated.
+      successfulSubscriptionResponse = !input.isOnboardingGeneration;
       return json(result);
     } finally {
       if (generationLease.current && usageLimiter) {
-        try {
-          await usageLimiter.release(
-            authorization,
-            generationLease.current.leaseId,
-          );
-        } catch {
-          // The 60-second database TTL safely recovers a failed release.
-          console.warn("[Wingr AI] generation lease release failed", {
-            code: "generation_lease_release_failed",
-          });
+        const leaseId = generationLease.current.leaseId;
+        const releaseLease = async () => {
+          const releaseStartedAt = Date.now();
+          try {
+            await usageLimiter.release(authorization, leaseId);
+            recordLeaseReleaseLatency({
+              durationMs: Date.now() - releaseStartedAt,
+              generation: input.isOnboardingGeneration
+                ? "onboarding"
+                : "subscription",
+              outcome: "success",
+            });
+          } catch {
+            // The 60-second database TTL safely recovers a failed release.
+            console.warn("[Wingr AI] generation lease release failed", {
+              code: "generation_lease_release_failed",
+            });
+            recordLeaseReleaseLatency({
+              durationMs: Date.now() - releaseStartedAt,
+              generation: input.isOnboardingGeneration
+                ? "onboarding"
+                : "subscription",
+              outcome: "failure",
+            });
+          }
+        };
+        if (successfulSubscriptionResponse && defer) {
+          try {
+            defer(releaseLease);
+          } catch {
+            // A missing background-task runtime must not leave a lease active.
+            await releaseLease();
+          }
+        } else {
+          await releaseLease();
         }
       }
     }

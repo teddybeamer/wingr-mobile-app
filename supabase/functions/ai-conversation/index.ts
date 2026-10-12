@@ -70,6 +70,10 @@ const callerClient = createClient(supabaseUrl, publishableKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
+const edgeRuntime = (globalThis as typeof globalThis & {
+  EdgeRuntime?: { waitUntil: (promise: Promise<unknown>) => void };
+}).EdgeRuntime;
+
 Deno.serve((request) =>
   handleConversationRequest(request, Deno.env.get("OPENROUTER_API_KEY") ?? "", {
     entitlementVerifier,
@@ -80,5 +84,9 @@ Deno.serve((request) =>
     },
     onboardingTrialManager,
     usageLimiter,
+    defer(task) {
+      if (!edgeRuntime) throw new Error("EdgeRuntime is unavailable");
+      edgeRuntime.waitUntil(task());
+    },
   }),
 );

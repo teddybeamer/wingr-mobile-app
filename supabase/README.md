@@ -81,8 +81,8 @@ and `require_parameters: true`. If no compatible private endpoint exists, the ca
 Keep prompt/completion logging disabled in the OpenRouter account settings; this is an
 account-level opt-in, not an invented request flag. No image, transcript, context, reply or
 upstream error body is logged or stored by this endpoint. Failures log only a closed
-error code and, when available, the numeric OpenRouter status. Provider-latency logs contain only
-a fixed output-contract label, generation category, closed outcome and duration. App analytics
+error code and, when available, the numeric OpenRouter status. Provider-latency and lease-release-latency
+logs contain only fixed event labels, generation category, closed outcome and duration. App analytics
 contain only event names, selected tone, the output-contract label and end-to-end duration. The
 selected local image remains available for explicit refresh.
 

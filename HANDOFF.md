@@ -1,0 +1,134 @@
+# WiNGR engineering handoff
+
+Updated 2026-10-12 on `experiment/compact-ai-output`. This branch is not merged
+into `main` and contains experimental staging work. Do not treat it as a
+production-release recommendation without the follow-up evaluation below.
+
+## Current status
+
+The compact AI-output implementation is the baseline on this branch. It returns
+one `vibeCheck` and one reply rather than the prior expanded message-array
+output. The benchmark safety/measurement tooling was strengthened, and a second
+latency experiment was implemented behind the existing Edge Function behavior.
+
+Completed work in the working tree:
+
+- Hardened `scripts/benchmark-ai-output.ts`: exact fixture-name and image-signature
+  validation, 45-second no-retry request deadline, response acceptance matching
+  production (`stop`, non-refused, schema-valid JSON), input-token reporting and
+  atomically refreshed ignored aggregate-only partial reports.
+- Extended benchmark tests and `benchmarks/README.md` to describe those guards.
+- Implemented the **lease-release latency experiment** in
+  `supabase/functions/_shared/analyze-conversation.ts`. After a fully validated
+  successful subscription reply, the database lease release is deferred via
+  `EdgeRuntime.waitUntil` in `ai-conversation/index.ts`, so it is no longer on
+  the response-critical path.
+- Kept cleanup synchronous for onboarding, provider/validation failures and a
+  missing background scheduler. A release failure remains safe because the
+  existing 60-second database TTL recovers it.
+- Added narrowly scoped lease-release telemetry. It logs only a fixed event
+  name, duration, generation category and success/failure outcome—never an
+  image, prompt, transcript, reply, user ID or secret.
+- Updated backend privacy documentation accordingly.
+
+The lease experiment was deployed to the known staging project before this
+handoff; production was not deployed or modified. Manual phone smoke testing
+through the staging Metro QR flow generated replies successfully. That verifies
+the end-to-end happy path, but it is not yet a statistically useful latency
+measurement.
+
+## Measured compact-output A/B benchmark
+
+An earlier, explicitly authorized direct staging-key benchmark made 18 requests
+(three baseline and three compact requests for each of three consented fixtures).
+Reports and fixtures remain ignored; the retained measurements are:
+
+| Metric | Baseline | Compact | Change |
+| --- | ---: | ---: | ---: |
+| Median latency | 9,242.98 ms | 8,070.54 ms | **-12.68%** |
+| P90 latency | 11,239.83 ms | 9,664.31 ms | **-14.02%** |
+| Median input tokens | 2,161 | 2,062 | -4.58% |
+| Median output tokens | 943 | 611 | **-35.21%** |
+| Median reasoning tokens | 513 | 475 | -7.41% |
+
+This supports retaining compact output as the benchmark baseline. It does not
+prove the same percentage for all conversations or providers; fixtures were
+limited to three consented screenshots.
+
+## Current experiment and unfinished work
+
+The deferred lease-release change is a controlled server-side latency experiment.
+It should reduce end-to-end latency by removing one database RPC from the
+successful subscription response path. Its actual benefit is not yet quantified.
+
+Runtime verification is pending because Supabase function-log ingestion lagged
+behind the manual staging traffic during the test session. Query only the
+privacy-safe event `ai_generation_lease_release_latency` from `function_logs`;
+do not broaden logging or inspect prompts/screenshots to troubleshoot it. Compare
+the event's duration with end-to-end request timing only after enough successful
+staging calls have accumulated.
+
+No additional paid OpenRouter calls are authorized by this handoff. The next
+live benchmark or extra test traffic needs explicit user approval and a stated
+budget. `npm run benchmark:ai -- --dry-run` is safe to run without approval.
+
+## Technical decisions and risks
+
+- **Reasoning stays medium.** A previous low-reasoning setting harmed response
+  quality. Do not repeat it without a blinded fixture review covering speaker
+  ownership, cropped screenshots, language and reply usefulness.
+- **No automatic screenshot cropping.** The fixture images are phone-sized and
+  may be tiled by the vision provider. Cropping could reduce image processing
+  cost, but risks removing the bottom/latest bubble and changing ME/THEM
+  attribution. Measure it as a separately gated experiment with manual review.
+- **Fallback behavior is deliberate.** The deferred cleanup applies only after
+  valid paid/subscription output. Onboarding and failure paths remain synchronous
+  so leases cannot be left active due to an unavailable scheduler.
+- **Telemetry is privacy constrained.** Keep the exact four-field allowlist
+  tested in `analyze-conversation.test.ts`; no request or response content
+  belongs in latency logs.
+- **Staging ambiguity.** The Supabase dashboard UI can show a `main` branch
+  label even for the known staging project ref. Verify the project ref and URL,
+  not only the visual label, before any future staging action.
+
+## Recommended next steps
+
+1. Let staging runtime logs settle, then inspect the fixed lease-release metric
+   and Edge Function request timing for the manual test window. Record sample
+   count and percentile definitions before interpreting a result.
+2. If the lease release is reliably scheduled and benefits observed latency,
+   run a bounded, user-approved staging comparison against the preserved compact
+   baseline. Include failures and lease recovery checks—not just happy-path speed.
+3. Perform manual fixture QA before any prompt/image experiment. For every
+   fixture, record visible messages and ownership, the latest hook, language,
+   expected reply direction and whether the screenshot is cropped at the bottom.
+4. Candidate future experiments, one at a time: prompt-token reduction that
+   leaves output schema and medium reasoning intact; safe image downscaling or
+   crop proposals evaluated offline; provider/network timing attribution. Do not
+   change multiple variables in one run.
+5. Before any production decision, repeat tests, perform an independently
+   reviewed fixture-quality pass and obtain explicit approval for deployment.
+
+## Validation to run before handoff commit
+
+```sh
+npm test
+npm run typecheck
+npm run benchmark:ai -- --dry-run
+git diff --check
+```
+
+The first two cover app and shared Edge Function behavior; the dry run validates
+the benchmark fixtures without reading credentials or making a network request.
+
+## Update 2026-10-12 (Claude review)
+
+- Independent review of the deferred lease release found no defects: quota is
+  recorded at claim (not release), release is lease-id scoped under the same
+  advisory lock, failures/timeouts are swallowed and recovered by the 60-second
+  TTL. Only new effect: an immediate re-request can briefly see
+  `generation_in_progress` (no quota consumed).
+- Added a test for a failing deferred release and `npm run staging:latency`
+  (`scripts/staging-latency-report.ts`): offline, no network/credentials/quota.
+  Next: export staging `function_logs` for the lease event and run it with
+  `--logs`; only then consider an approved, budgeted A/B using `--samples`.

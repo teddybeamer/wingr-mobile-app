@@ -1227,3 +1227,162 @@ test("release failure never replaces a valid provider response", async (t) => {
     { code: "generation_lease_release_failed" },
   ]);
 });
+
+test("a valid subscription reply is not delayed by lease cleanup", async () => {
+  const cleanup = deferred<void>();
+  let releaseCalls = 0;
+  let scheduledRelease: (() => Promise<void>) | undefined;
+  const response = await handleConversationRequest(request(), "key", {
+    defer(task) {
+      scheduledRelease = task;
+    },
+    usageLimiter: {
+      claim: async () => testLease(),
+      claimOnboarding: async () => testLease(),
+      release: async () => {
+        releaseCalls++;
+        await cleanup.promise;
+        return true;
+      },
+    },
+    fetchImpl: provider(result),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), result);
+  assert.ok(scheduledRelease);
+  assert.equal(releaseCalls, 0);
+
+  const pendingRelease = scheduledRelease();
+  await nextTurn();
+  assert.equal(releaseCalls, 1);
+  cleanup.resolve();
+  await pendingRelease;
+});
+
+test("failed generation cleanup is never deferred", async () => {
+  let releaseCalls = 0;
+  let deferred = false;
+  const response = await handleConversationRequest(request(), "key", {
+    defer() {
+      deferred = true;
+    },
+    usageLimiter: {
+      claim: async () => testLease(),
+      claimOnboarding: async () => testLease(),
+      release: async () => {
+        releaseCalls++;
+        return true;
+      },
+    },
+    fetchImpl: async () => new Response(null, { status: 503 }),
+  });
+
+  assert.equal(response.status, 502);
+  assert.equal(deferred, false);
+  assert.equal(releaseCalls, 1);
+});
+
+test("onboarding cleanup remains synchronous", async () => {
+  let releaseCalls = 0;
+  let deferred = false;
+  const response = await handleConversationRequest(
+    request({ ...input, isOnboardingGeneration: true }),
+    "key",
+    {
+      defer() {
+        deferred = true;
+      },
+      usageLimiter: {
+        claim: async () => testLease(),
+        claimOnboarding: async () => testLease(),
+        release: async () => {
+          releaseCalls++;
+          return true;
+        },
+      },
+      fetchImpl: provider(result),
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(deferred, false);
+  assert.equal(releaseCalls, 1);
+});
+
+test("an unavailable background scheduler falls back to synchronous cleanup", async () => {
+  let releaseCalls = 0;
+  const response = await handleConversationRequest(request(), "key", {
+    defer() {
+      throw new Error("background tasks unavailable");
+    },
+    usageLimiter: {
+      claim: async () => testLease(),
+      claimOnboarding: async () => testLease(),
+      release: async () => {
+        releaseCalls++;
+        return true;
+      },
+    },
+    fetchImpl: provider(result),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(releaseCalls, 1);
+});
+
+test("lease release telemetry contains only fixed performance fields", async (t) => {
+  const info = t.mock.method(console, "info", () => {});
+  const response = await handleConversationRequest(request(), "key", {
+    fetchImpl: provider(result),
+  });
+
+  assert.equal(response.status, 200);
+  const call = info.mock.calls.find(
+    ({ arguments: [event] }) => event === "[Wingr AI] generation lease release latency",
+  );
+  assert.ok(call);
+  assert.deepEqual(Object.keys(call.arguments[1] as object).sort(), [
+    "durationMs",
+    "event",
+    "generation",
+    "outcome",
+  ]);
+  assert.equal((call.arguments[1] as { event: string }).event, "ai_generation_lease_release_latency");
+  assert.equal((call.arguments[1] as { generation: string }).generation, "subscription");
+  assert.equal((call.arguments[1] as { outcome: string }).outcome, "success");
+  assert.equal(typeof (call.arguments[1] as { durationMs: unknown }).durationMs, "number");
+});
+
+test("a failing deferred release never rejects and is logged with fixed fields", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  const info = t.mock.method(console, "info", () => {});
+  let scheduledRelease: (() => Promise<void>) | undefined;
+  const response = await handleConversationRequest(request(), "key", {
+    defer(task) {
+      scheduledRelease = task;
+    },
+    usageLimiter: {
+      claim: async () => testLease(),
+      claimOnboarding: async () => testLease(),
+      release: async () => {
+        throw new Error("release unavailable");
+      },
+    },
+    fetchImpl: provider(result),
+  });
+
+  assert.equal(response.status, 200);
+  assert.ok(scheduledRelease);
+  // waitUntil must never receive a promise that can reject.
+  await assert.doesNotReject(scheduledRelease());
+  assert.deepEqual(
+    warn.mock.calls.map(({ arguments: [, details] }) => details),
+    [{ code: "generation_lease_release_failed" }],
+  );
+  const latency = info.mock.calls.find(
+    ({ arguments: [event] }) =>
+      event === "[Wingr AI] generation lease release latency",
+  );
+  assert.equal((latency?.arguments[1] as { outcome: string }).outcome, "failure");
+});

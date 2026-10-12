@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -22,11 +23,23 @@ const STAGING_ENV_FILE = join(ROOT, "benchmarks/.env.staging.local");
 const STAGING_PROJECT_REF = "driytnlagwgzebnfdpcr";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const RUNS_PER_VARIANT_PER_FIXTURE = 3;
+const BENCHMARK_TIMEOUT_MS = 45_000;
+const FIXTURE_FILENAMES = [
+  "fixture-01.png",
+  "fixture-02.png",
+  "fixture-03.png",
+] as const;
 
 type Variant = "baseline" | "compact";
 type TokenCount = number | null;
-type RunStatus = "valid" | "http_error" | "transport_error" | "validation_error";
+type RunStatus =
+  | "valid"
+  | "http_error"
+  | "timeout_error"
+  | "transport_error"
+  | "validation_error";
 type RunMeasurement = {
+  inputTokens: TokenCount;
   latencyMs: number;
   outputTokens: TokenCount;
   reasoningTokens: TokenCount;
@@ -44,6 +57,7 @@ type VariantImplementation = {
 };
 type Summary = {
   attemptedRuns: number;
+  medianInputTokens: number | null;
   medianLatencyMs: number | null;
   p90LatencyMs: number | null;
   medianOutputTokens: number | null;
@@ -93,6 +107,37 @@ function stagingCredentials() {
   return apiKey;
 }
 
+export function validateFixtureNames(files: string[]) {
+  if (
+    files.length !== FIXTURE_FILENAMES.length ||
+    files.some(
+      (filename, index) => filename.toLowerCase() !== FIXTURE_FILENAMES[index],
+    )
+  ) {
+    fail(
+      "benchmarks/screenshots must contain only fixture-01.png, fixture-02.png, and fixture-03.png.",
+    );
+  }
+}
+
+function hasExpectedImageSignature(mimeType: string, bytes: Buffer) {
+  const matches = (expected: number[], offset = 0) =>
+    bytes.length >= offset + expected.length &&
+    expected.every((byte, index) => bytes[offset + index] === byte);
+  switch (mimeType) {
+    case "image/png":
+      return matches([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    case "image/jpeg":
+      return matches([0xff, 0xd8, 0xff]);
+    case "image/webp":
+      return (
+        matches([0x52, 0x49, 0x46, 0x46]) &&
+        matches([0x57, 0x45, 0x42, 0x50], 8)
+      );
+  }
+  return false;
+}
+
 function readFixtures() {
   if (!existsSync(SCREENSHOT_DIRECTORY))
     fail("Missing benchmarks/screenshots.");
@@ -106,14 +151,15 @@ function readFixtures() {
     .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
     .map((entry) => entry.name)
     .sort();
-  if (files.length !== 3)
-    fail("benchmarks/screenshots must contain exactly three non-hidden files.");
+  validateFixtureNames(files);
   return files.map((filename) => {
     const mimeType = mimeTypes[extname(filename).toLowerCase()];
     if (!mimeType) fail("Benchmark fixtures must be PNG, JPEG, or WebP.");
     const bytes = readFileSync(join(SCREENSHOT_DIRECTORY, filename));
     if (bytes.byteLength === 0 || bytes.byteLength > 10 * 1024 * 1024)
       fail("Each benchmark fixture must be non-empty and at most 10 MiB.");
+    if (!hasExpectedImageSignature(mimeType, bytes))
+      fail("Each benchmark fixture's bytes must match its declared image type.");
     return `data:${mimeType};base64,${bytes.toString("base64")}`;
   });
 }
@@ -209,17 +255,36 @@ function nonNegativeInteger(value: unknown): TokenCount {
 function responseTokens(payload: unknown) {
   const usage = (payload as {
     usage?: {
+      prompt_tokens?: unknown;
       completion_tokens?: unknown;
       reasoning_tokens?: unknown;
       completion_tokens_details?: { reasoning_tokens?: unknown };
     };
   })?.usage;
   return {
+    inputTokens: nonNegativeInteger(usage?.prompt_tokens),
     outputTokens: nonNegativeInteger(usage?.completion_tokens),
     reasoningTokens:
       nonNegativeInteger(usage?.reasoning_tokens) ??
       nonNegativeInteger(usage?.completion_tokens_details?.reasoning_tokens),
   };
+}
+
+export function completedResponseContent(payload: unknown) {
+  const choice = (payload as {
+    choices?: Array<{
+      finish_reason?: unknown;
+      message?: { content?: unknown; refusal?: unknown };
+    }>;
+  })?.choices?.[0];
+  if (
+    choice?.finish_reason !== "stop" ||
+    typeof choice.message?.content !== "string" ||
+    choice.message.refusal
+  ) {
+    return null;
+  }
+  return choice.message.content;
 }
 
 async function runOnce({
@@ -235,58 +300,67 @@ async function runOnce({
 }): Promise<RunMeasurement> {
   const request = implementation.buildRequest({ screenshot, selectedTone: "playful" });
   const startedAt = performance.now();
-  let response: Response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BENCHMARK_TIMEOUT_MS);
   try {
-    response = await fetch(OPENROUTER_URL, {
-      body: JSON.stringify(request),
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json",
-      },
-      method: "POST",
-    });
-  } catch {
+    let response: Response;
+    try {
+      response = await fetch(OPENROUTER_URL, {
+        body: JSON.stringify(request),
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          "content-type": "application/json",
+        },
+        method: "POST",
+        signal: controller.signal,
+      });
+    } catch {
+      return {
+        inputTokens: null,
+        latencyMs: performance.now() - startedAt,
+        outputTokens: null,
+        reasoningTokens: null,
+        status: controller.signal.aborted ? "timeout_error" : "transport_error",
+        variant,
+      };
+    }
+    if (!response.ok)
+      return {
+        inputTokens: null,
+        latencyMs: performance.now() - startedAt,
+        outputTokens: null,
+        reasoningTokens: null,
+        status: "http_error",
+        variant,
+      };
+    let payload: unknown;
+    try {
+      payload = await response.json();
+      const content = completedResponseContent(payload);
+      if (content === null) throw new Error("invalid response shape");
+      implementation.parseResult(JSON.parse(content));
+    } catch {
+      return {
+        inputTokens: null,
+        latencyMs: performance.now() - startedAt,
+        outputTokens: null,
+        reasoningTokens: null,
+        status: controller.signal.aborted ? "timeout_error" : "validation_error",
+        variant,
+      };
+    }
+    const { inputTokens, outputTokens, reasoningTokens } = responseTokens(payload);
     return {
+      inputTokens,
       latencyMs: performance.now() - startedAt,
-      outputTokens: null,
-      reasoningTokens: null,
-      status: "transport_error",
+      outputTokens,
+      reasoningTokens,
+      status: "valid",
       variant,
     };
+  } finally {
+    clearTimeout(timeout);
   }
-  if (!response.ok)
-    return {
-      latencyMs: performance.now() - startedAt,
-      outputTokens: null,
-      reasoningTokens: null,
-      status: "http_error",
-      variant,
-    };
-  let payload: unknown;
-  try {
-    payload = await response.json();
-    const content = (payload as {
-      choices?: Array<{ message?: { content?: unknown } }>;
-    })?.choices?.[0]?.message?.content;
-    if (typeof content !== "string") throw new Error("invalid response shape");
-    implementation.parseResult(JSON.parse(content));
-  } catch {
-    return {
-      latencyMs: performance.now() - startedAt,
-      outputTokens: null,
-      reasoningTokens: null,
-      status: "validation_error",
-      variant,
-    };
-  }
-  const { outputTokens, reasoningTokens } = responseTokens(payload);
-  return {
-    latencyMs: performance.now() - startedAt,
-    outputTokens,
-    reasoningTokens,
-    status: "valid",
-    variant,
-  };
 }
 
 function nearestRank(values: number[], percentile: number) {
@@ -313,6 +387,10 @@ export function summarize(measurements: RunMeasurement[]): Summary {
   return {
     attemptedRuns: measurements.length,
     medianLatencyMs: median(valid.map((measurement) => measurement.latencyMs)),
+    medianInputTokens: completeTokenMedian(
+      valid.map((measurement) => measurement.inputTokens),
+      valid.length,
+    ),
     medianOutputTokens: completeTokenMedian(
       valid.map((measurement) => measurement.outputTokens),
       valid.length,
@@ -324,7 +402,9 @@ export function summarize(measurements: RunMeasurement[]): Summary {
     p90LatencyMs: nearestRank(valid.map((measurement) => measurement.latencyMs), 0.9),
     requestErrors: measurements.filter(
       (measurement) =>
-        measurement.status === "http_error" || measurement.status === "transport_error",
+        measurement.status === "http_error" ||
+        measurement.status === "timeout_error" ||
+        measurement.status === "transport_error",
     ).length,
     successfulRuns: valid.length,
     validationErrors: measurements.filter(
@@ -356,6 +436,7 @@ function reportFor(measurements: RunMeasurement[]) {
     runsPerVariantPerFixture: RUNS_PER_VARIANT_PER_FIXTURE,
     summaries: { baseline, compact },
     tokenSavings: {
+      inputTokens: savings(baseline.medianInputTokens, compact.medianInputTokens),
       outputTokens: savings(baseline.medianOutputTokens, compact.medianOutputTokens),
       reasoningTokens: savings(
         baseline.medianReasoningTokens,
@@ -381,11 +462,41 @@ function markdownReport(report: ReturnType<typeof reportFor>) {
       row("Request errors", baseline.requestErrors, compact.requestErrors),
       row("Median latency (ms)", baseline.medianLatencyMs, compact.medianLatencyMs),
       row("P90 latency (ms)", baseline.p90LatencyMs, compact.p90LatencyMs),
+      row("Median input tokens", baseline.medianInputTokens, compact.medianInputTokens),
       row("Median output tokens", baseline.medianOutputTokens, compact.medianOutputTokens),
       row("Median reasoning tokens", baseline.medianReasoningTokens, compact.medianReasoningTokens),
     ].join("\n") +
-    `\n\n- Output-token savings: ${JSON.stringify(report.tokenSavings.outputTokens)}\n` +
+    `\n\n- Input-token savings: ${JSON.stringify(report.tokenSavings.inputTokens)}\n` +
+    `- Output-token savings: ${JSON.stringify(report.tokenSavings.outputTokens)}\n` +
     `- Reasoning-token savings: ${JSON.stringify(report.tokenSavings.reasoningTokens)}\n`;
+}
+
+function writeAggregateReport({
+  measurements,
+  partial,
+  timestamp,
+}: {
+  measurements: RunMeasurement[];
+  partial: boolean;
+  timestamp: string;
+}) {
+  const report = reportFor(measurements);
+  const suffix = partial ? ".partial" : "";
+  const writePrivateFile = (filename: string, contents: string) => {
+    const destination = join(RESULT_DIRECTORY, filename);
+    const pending = `${destination}.next`;
+    writeFileSync(pending, contents, { mode: 0o600 });
+    renameSync(pending, destination);
+  };
+  mkdirSync(RESULT_DIRECTORY, { recursive: true });
+  writePrivateFile(
+    `compact-output-${timestamp}${suffix}.json`,
+    `${JSON.stringify(report, null, 2)}\n`,
+  );
+  writePrivateFile(
+    `compact-output-${timestamp}${suffix}.md`,
+    markdownReport(report),
+  );
 }
 
 export function plannedVariants(fixtureIndex: number) {
@@ -415,6 +526,7 @@ async function main() {
       compact,
     };
     const measurements: RunMeasurement[] = [];
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     for (const [fixtureIndex, screenshot] of fixtures.entries()) {
       for (const variant of plannedVariants(fixtureIndex)) {
         measurements.push(
@@ -425,13 +537,16 @@ async function main() {
             variant,
           }),
         );
+        writeAggregateReport({ measurements, partial: true, timestamp });
       }
     }
-    const report = reportFor(measurements);
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    mkdirSync(RESULT_DIRECTORY, { recursive: true });
-    writeFileSync(join(RESULT_DIRECTORY, `compact-output-${timestamp}.json`), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
-    writeFileSync(join(RESULT_DIRECTORY, `compact-output-${timestamp}.md`), markdownReport(report), { mode: 0o600 });
+    writeAggregateReport({ measurements, partial: false, timestamp });
+    rmSync(join(RESULT_DIRECTORY, `compact-output-${timestamp}.partial.json`), {
+      force: true,
+    });
+    rmSync(join(RESULT_DIRECTORY, `compact-output-${timestamp}.partial.md`), {
+      force: true,
+    });
     console.log("Benchmark complete. Aggregate-only report saved in benchmarks/results/.");
   } finally {
     baseline.dispose();
