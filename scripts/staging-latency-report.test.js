@@ -140,3 +140,17 @@ test("summarizes per-stage timings of successful subscription requests", async (
   assert.equal(report.stages.claimMs.medianMs, 90);
   assert.equal(report.stages.entitlementWaitMs, undefined);
 });
+
+test("splits stage timings by reasoning effort when more than one is present", async () => {
+  const { reportFromLogs } = await reportModule();
+  const stage = (effort, providerMs) =>
+    `ai_generation_stage_latency { bodyMs: 300, claimMs: 90, entitlementWaitMs: 200, event: 'ai_generation_stage_latency', generation: 'subscription', outcome: 'success', providerMs: ${providerMs}, reasoningEffort: '${effort}', totalMs: ${providerMs + 600} }`;
+  const report = reportFromLogs([stage("medium", 8000), stage("medium", 9000), stage("low", 3000)]);
+  assert.equal(report.stagesByEffort.medium.providerMs.count, 2);
+  assert.equal(report.stagesByEffort.low.providerMs.medianMs, 3000);
+  assert.equal(report.stages.providerMs.count, 3);
+  const legacy = reportFromLogs([
+    "ai_generation_stage_latency { bodyMs: 1, outcome: 'success', generation: 'subscription', providerMs: 5, totalMs: 6 }",
+  ]);
+  assert.deepEqual(legacy.stagesByEffort, {});
+});

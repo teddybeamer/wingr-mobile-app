@@ -251,3 +251,14 @@ low 3, tie 4, none 2. Combined with round one (22 pairs): understanding/ownershi
 equal; low costs about 0.4 flirt points on English and looked weaker on Danish
 naturalness (only 3 pairs on one Danish fixture). Open: more Danish fixtures, hard
 ownership cases, and whether a prompt tweak can recover flirt under low.
+
+## Configurable reasoning effort (Claude, 2026-10-12; NOT deployed)
+
+Primary market is English-speaking users, so the Danish naturalness concern is low
+priority. `AI_REASONING_EFFORT` (Edge Function secret) now selects "low" or the default
+"medium"; anything else falls back to medium. Only `reasoning.effort` changes (tested:
+routing, model and contract identical). Stage telemetry records `reasoningEffort` and
+`npm run staging:latency` splits timings by effort. Suggested staging validation: set
+`AI_REASONING_EFFORT=low` on staging only (needs owner approval), use the app on a phone
+for real flows, compare stage latency by effort and re-review replies; roll back by
+unsetting the secret. Do not set it on production without a separate decision.

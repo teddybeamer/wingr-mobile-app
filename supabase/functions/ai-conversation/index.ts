@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { handleConversationRequest } from "../_shared/analyze-conversation.ts";
 import { createRevenueCatEntitlementVerifier } from "../_shared/revenuecat-entitlement.ts";
+import { parseReasoningEffort } from "../_shared/openrouter.ts";
 import { createSupabaseUsageLimiter } from "../_shared/usage-limit.ts";
 import {
   createDeviceCheckOnboardingTrialManager,
@@ -83,6 +84,8 @@ Deno.serve((request) =>
       return data.claims.sub;
     },
     onboardingTrialManager,
+    // Defaults to medium; only the exact value "low" changes it.
+    reasoningEffort: parseReasoningEffort(Deno.env.get("AI_REASONING_EFFORT")),
     usageLimiter,
     defer(task) {
       if (!edgeRuntime) throw new Error("EdgeRuntime is unavailable");

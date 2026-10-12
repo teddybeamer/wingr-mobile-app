@@ -17,10 +17,22 @@ export type ProviderLatencyMeasurement = {
   outputContract: typeof AI_OUTPUT_CONTRACT;
 };
 
-export function buildOpenRouterRequest(request: ConversationRequest) {
+// Production default stays "medium". "low" is only reachable through the explicit
+// AI_REASONING_EFFORT setting; any other value falls back to medium (fail safe).
+export type ReasoningEffort = "low" | "medium";
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
+
+export function parseReasoningEffort(value: string | null | undefined): ReasoningEffort {
+  return value?.trim() === "low" ? "low" : DEFAULT_REASONING_EFFORT;
+}
+
+export function buildOpenRouterRequest(
+  request: ConversationRequest,
+  reasoningEffort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
+) {
   return {
     model: GEMINI_MODEL,
-    reasoning: { effort: "medium" },
+    reasoning: { effort: reasoningEffort },
     service_tier: "default",
     provider: {
       only: ["google-vertex/global"],
@@ -99,12 +111,14 @@ export async function analyzeWithGemini(
     fetchImpl = fetch,
     onProviderDispatch,
     onProviderLatency,
+    reasoningEffort = DEFAULT_REASONING_EFFORT,
     timeoutMs = AI_TIMEOUT_MS,
     signal,
   }: {
     fetchImpl?: typeof fetch;
     onProviderDispatch?: () => Promise<void>;
     onProviderLatency?: (measurement: ProviderLatencyMeasurement) => void;
+    reasoningEffort?: ReasoningEffort;
     timeoutMs?: number;
     signal?: AbortSignal;
   } = {},
@@ -114,7 +128,7 @@ export async function analyzeWithGemini(
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
-  const body = JSON.stringify(buildOpenRouterRequest(request));
+  const body = JSON.stringify(buildOpenRouterRequest(request, reasoningEffort));
   let providerStartedAt: number | null = null;
   let providerOutcome: ProviderLatencyMeasurement["outcome"] = "provider";
   // Includes response body consumption, not just response headers.

@@ -152,6 +152,8 @@ export function assertStagingOnly(records: string[]) {
 
 export type LogReport = {
   stages: Record<string, Stats>;
+  // Same breakdown split by reasoning effort ("unspecified" for events from before the field existed).
+  stagesByEffort: Record<string, Record<string, Stats>>;
   lease: Record<string, Stats>;
   provider: Record<string, Stats>;
   leaseShareOfProviderMedian: number | null;
@@ -174,22 +176,38 @@ export function reportFromLogs(records: string[]): LogReport {
   const lease = records.flatMap((r) => parseLatencyEvent(r, LEASE_EVENT) ?? []);
   const provider = records.flatMap((r) => parseLatencyEvent(r, PROVIDER_EVENT) ?? []);
   // Per-stage breakdown of successful subscription generations only.
-  const stageRecords = records.filter((record) => record.includes(STAGE_EVENT));
-  const stages: Record<string, Stats> = {};
-  for (const name of STAGE_FIELDS) {
-    const values = stageRecords
-      .filter((record) => field(record, "outcome") === "success" && field(record, "generation") === "subscription")
-      .map((record) => Number(field(record, name)))
-      .filter((value) => Number.isFinite(value) && value >= 0 && value <= MAX_PLAUSIBLE_MS);
-    const stats = summarizeDurations(values);
-    if (stats) stages[name] = stats;
-  }
+  const successfulStages = records.filter(
+    (record) =>
+      record.includes(STAGE_EVENT) &&
+      field(record, "outcome") === "success" &&
+      field(record, "generation") === "subscription",
+  );
+  const stageStats = (selected: string[]) => {
+    const result: Record<string, Stats> = {};
+    for (const name of STAGE_FIELDS) {
+      const values = selected
+        .map((record) => Number(field(record, name)))
+        .filter((value) => Number.isFinite(value) && value >= 0 && value <= MAX_PLAUSIBLE_MS);
+      const stats = summarizeDurations(values);
+      if (stats) result[name] = stats;
+    }
+    return result;
+  };
+  const stages = stageStats(successfulStages);
+  const efforts = [...new Set(successfulStages.map((record) => field(record, "reasoningEffort") ?? "unspecified"))];
+  const stagesByEffort: Record<string, Record<string, Stats>> = {};
+  if (efforts.length > 1 || (efforts.length === 1 && efforts[0] !== "unspecified"))
+    for (const effort of efforts)
+      stagesByEffort[effort] = stageStats(
+        successfulStages.filter((record) => (field(record, "reasoningEffort") ?? "unspecified") === effort),
+      );
   const leaseStats = group(lease);
   const providerStats = group(provider);
   const leaseMedian = leaseStats["subscription/success"]?.medianMs;
   const providerMedian = providerStats["subscription/success"]?.medianMs;
   return {
     stages,
+    stagesByEffort,
     lease: leaseStats,
     provider: providerStats,
     leaseShareOfProviderMedian:
@@ -241,6 +259,10 @@ export function formatReport(
     lines.push("", "Pipeline stages, successful subscription requests (ai_generation_stage_latency):");
     const stages = Object.entries(logs.stages);
     lines.push(...(stages.length ? stages.map(([k, v]) => formatStats(k, v)) : ["  no events found"]));
+    for (const [effort, byStage] of Object.entries(logs.stagesByEffort)) {
+      lines.push("", `Pipeline stages with reasoning effort "${effort}":`);
+      lines.push(...Object.entries(byStage).map(([k, v]) => formatStats(k, v)));
+    }
     lines.push("", "Lease release (ai_generation_lease_release_latency):");
     const lease = Object.entries(logs.lease);
     lines.push(...(lease.length ? lease.map(([k, v]) => formatStats(k, v)) : ["  no events found"]));

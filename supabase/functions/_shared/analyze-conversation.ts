@@ -67,6 +67,7 @@ type StageTimings = {
   claimMs: number | null;
   entitlementWaitMs: number | null;
   providerMs: number | null;
+  reasoningEffort: "low" | "medium";
 };
 
 function recordStageLatency({
@@ -342,6 +343,7 @@ export async function handleConversationRequest(
       claimMs: null,
       entitlementWaitMs,
       providerMs: null,
+      reasoningEffort: geminiOptions.reasoningEffort ?? "medium",
     };
     let succeeded = false;
     try {

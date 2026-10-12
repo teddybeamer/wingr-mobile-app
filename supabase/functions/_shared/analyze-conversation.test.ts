@@ -1407,8 +1407,10 @@ test("stage latency telemetry contains only fixed performance fields", async (t)
     "generation",
     "outcome",
     "providerMs",
+    "reasoningEffort",
     "totalMs",
   ]);
+  assert.equal(fields.reasoningEffort, "medium");
   assert.equal(fields.event, "ai_generation_stage_latency");
   assert.equal(fields.outcome, "success");
   for (const key of ["bodyMs", "claimMs", "providerMs", "totalMs"])
@@ -1426,4 +1428,23 @@ test("a failed provider call still reports stage latency with a failure outcome"
     ({ arguments: [event] }) => event === "[Wingr AI] generation stage latency",
   );
   assert.equal((call?.arguments[1] as { outcome: string }).outcome, "failure");
+});
+
+test("the configured reasoning effort reaches the provider request and the stage telemetry", async (t) => {
+  const info = t.mock.method(console, "info", () => {});
+  let sentEffort: unknown;
+  const response = await handleConversationRequest(request(), "key", {
+    reasoningEffort: "low",
+    fetchImpl: async (_url, init) => {
+      sentEffort = JSON.parse(String(init?.body)).reasoning;
+      return provider(result)(_url, init);
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(sentEffort, { effort: "low" });
+  const call = info.mock.calls.find(
+    ({ arguments: [event] }) => event === "[Wingr AI] generation stage latency",
+  );
+  assert.equal((call?.arguments[1] as { reasoningEffort: string }).reasoningEffort, "low");
 });

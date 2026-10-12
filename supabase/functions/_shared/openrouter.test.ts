@@ -4,6 +4,7 @@ import {
   analyzeWithGemini,
   buildOpenRouterRequest,
   GEMINI_MODEL,
+  parseReasoningEffort,
 } from "./openrouter.ts";
 import { AI_OUTPUT_CONTRACT, ConversationError } from "./conversation.ts";
 import { input, result } from "./test-fixtures.ts";
@@ -254,4 +255,30 @@ test("configuration errors expose fixed explanations without leaking upstream te
       },
     );
   }
+});
+
+test("reasoning effort defaults to medium and only the exact value low changes it", () => {
+  assert.equal(parseReasoningEffort(undefined), "medium");
+  assert.equal(parseReasoningEffort(null), "medium");
+  assert.equal(parseReasoningEffort(""), "medium");
+  assert.equal(parseReasoningEffort("high"), "medium");
+  assert.equal(parseReasoningEffort("LOW"), "medium");
+  assert.equal(parseReasoningEffort("minimal"), "medium");
+  assert.equal(parseReasoningEffort(" low "), "low");
+  assert.equal(buildOpenRouterRequest(input).reasoning.effort, "medium");
+  assert.equal(buildOpenRouterRequest(input, "low").reasoning.effort, "low");
+});
+
+test("low reasoning changes nothing but the effort: routing, model and contract stay pinned", () => {
+  const medium = buildOpenRouterRequest(input);
+  const low = buildOpenRouterRequest(input, "low");
+  assert.deepEqual({ ...low, reasoning: medium.reasoning }, medium);
+  assert.deepEqual(low.provider, {
+    only: ["google-vertex/global"],
+    zdr: true,
+    data_collection: "deny",
+    allow_fallbacks: false,
+    require_parameters: true,
+  });
+  assert.equal(low.model, GEMINI_MODEL);
 });
