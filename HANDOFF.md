@@ -148,3 +148,20 @@ not read without Pro; keep those guarantees unless the product owner decides
 otherwise. Added `ai_generation_stage_latency` telemetry (fixed numeric fields)
 so the next staging run shows body/entitlement/claim/provider/total per request;
 `npm run staging:latency` summarizes it. Deploy to staging requires approval.
+
+## Offline experiments (Claude, 2026-10-12)
+
+Telemetry deployed to staging only (`--project-ref driytnlagwgzebnfdpcr`; the CLI
+link in `supabase/.temp` still points at the production-labelled project, so
+never deploy without an explicit ref).
+
+- Screenshot resolution: `npm run experiment:image-resolution` (macOS sips +
+  Vision OCR, aggregate-only, no AI call). 3 fixtures: 1170x2532 PNG, ~0.5 MB
+  base64. 1280px long edge PNG: ~0.25 MB, OCR word recall 99-100%. Saves
+  ~0.25 MB of upload; provider image tokens likely capped, so latency gain is
+  expected to be small. Needs a client image-resize dependency. OCR recall
+  cannot judge ME/THEM ownership.
+- Prompt: `benchmarks/prompt-candidates.ts` holds a lean candidate (-7.4%, about
+  65 tokens) guarded by a 37-rule checklist that the production prompt also
+  passes (`scripts/prompt-candidates.test.js`). Not wired into production or the
+  benchmark; any live comparison needs approval and fixture-based review.
