@@ -232,3 +232,9 @@ low better in 1, 3 ties. All three medium wins are on the Danish-language fixtur
 (naturalness low 3.3 vs medium 5.0); English fixtures were equal or favored low. Latency
 benefit of low stays -66% (median 9.7 -> 3.3 s). Next: a larger fixture set with several
 Danish conversations before any production decision.
+
+Update: the owner completed the review (all 16 outputs rated). Means (1-5): hook low
+4.75 / medium 4.88; naturalness low 4.25 / medium 4.63; flirt low 4.38 / medium 4.63.
+Choices: medium 3, low 1, tie 3, one pair without a choice. No ME/THEM or
+invented-facts flags. Pairwise naturalness: medium better in 3 pairs (all on the Danish
+fixture), low better in 1, 4 ties. This supersedes the partial numbers above.
