@@ -33,3 +33,22 @@ test("the lean candidate does not change the closed output vocabulary", async ()
     assert.equal(LEAN_SYSTEM_PROMPT.includes(term), SYSTEM_PROMPT.includes(term), term);
   }
 });
+
+test("the fact-grounding candidate keeps every baseline rule and adds the new ones", async () => {
+  const candidates = await import("../benchmarks/prompt-candidates.ts");
+  const production = await import("../supabase/functions/_shared/prompting.ts");
+  const mod = candidates.default ?? candidates;
+  const base = (production.default ?? production).SYSTEM_PROMPT;
+  const grounded = mod.withFactGrounding(base);
+  const missing = Object.entries(mod.PROMPT_RULE_CHECKS)
+    .filter(([, pattern]) => !pattern.test(grounded))
+    .map(([name]) => name);
+  assert.deepEqual(missing, []);
+  for (const [name, pattern] of Object.entries(mod.FACT_GROUNDING_CHECKS)) {
+    assert.ok(pattern.test(grounded), `${name} missing from candidate`);
+    assert.equal(pattern.test(base), false, `${name} already in production`);
+  }
+  assert.ok(!grounded.includes(mod.UNKNOWN_FACT_SENTENCE));
+  assert.ok(grounded.length > base.length);
+  assert.throws(() => mod.withFactGrounding("unrelated prompt"), /no longer contains/);
+});

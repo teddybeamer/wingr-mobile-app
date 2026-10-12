@@ -50,6 +50,7 @@
     "benchmark:ai": "node --import tsx scripts/benchmark-ai-output.ts",
     "benchmark:image-resolution": "node --import tsx scripts/benchmark-image-resolution.ts",
     "benchmark:reasoning-effort": "node --import tsx scripts/benchmark-reasoning-effort.ts",
+    "review:blind-page": "node --import tsx scripts/build-blind-review-page.ts",
     "experiment:image-resolution": "node --import tsx scripts/image-resolution-experiment.ts",
     "staging:latency": "node --import tsx scripts/staging-latency-report.ts",
     "web": "expo start --web",

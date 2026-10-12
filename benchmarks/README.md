@@ -116,3 +116,13 @@ and cropped bottom bubbles. Then unblind with
 `npm run benchmark:reasoning-effort -- --score <key.local.json> <scores.local.json>`,
 which prints per-variant totals without any model text. Never share or commit these
 files.
+
+## Blinded review page
+
+`npm run review:blind-page` turns the latest `reasoning-effort-review-*.local.md` into
+one self-contained, local-only HTML page in `benchmarks/results/` (screenshot next to
+replies A/B, 1-5 ratings for naturalness, flirt and context, ME/THEM and
+invented-facts flags, "which would you send"). It contains no variant key, makes no
+network request and embeds consented screenshots and model output, so never share or
+commit it. Export the scores from the page, then unblind with
+`npm run benchmark:reasoning-effort -- --score <key.local.json> <exported-scores.json>`.

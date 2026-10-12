@@ -58,3 +58,31 @@ export const PROMPT_RULE_CHECKS: Record<string, RegExp> = {
   noRepeatOrParaphrase: /(?:avoid|not) repeating or lightly paraphrasing|not repeat or lightly paraphrase/i,
   structuredOnly: /strict structured result/i,
 };
+
+// ---- Fact-grounding candidate -------------------------------------------------
+// Staging review showed that replies to questions about ME (favorites, weekend
+// plans, willingness to meet) state plausible-sounding personal facts that the
+// screenshot never establishes, with both medium and low reasoning. This replaces
+// the single existing sentence about unknown personal information with a
+// dedicated rule. It is applied to the production prompt text at test/benchmark
+// time, so nothing in production changes.
+
+export const UNKNOWN_FACT_SENTENCE =
+  "When an answer requires unknown personal information, avoid claiming an answer; use an honest, contextual response or mark it unreplyable.";
+
+export const FACT_GROUNDING_RULE =
+  "When an answer requires unknown personal information (ME's preferences, favorites, plans, availability, location, work, relationships, feelings or willingness that neither the screenshot nor the user context states), do not state or imply one. Never fill the gap with a plausible guess, even a small or generic one such as a favorite, a free weekend or a yes to meeting. Instead react to THEM's hook with warmth or light teasing, and either hand the question back to THEM or give a playful reply that stays true whatever the real answer is. Showing interest in continuing the conversation is fine; committing ME to a fact, plan, time or place is not. Mark it unreplyable only when no honest reply exists.";
+
+export function withFactGrounding(basePrompt: string) {
+  if (!basePrompt.includes(UNKNOWN_FACT_SENTENCE))
+    throw new Error("Base prompt no longer contains the sentence this candidate replaces.");
+  return basePrompt.replace(UNKNOWN_FACT_SENTENCE, FACT_GROUNDING_RULE);
+}
+
+// Rules the grounded candidate adds; the production prompt must NOT match them yet.
+export const FACT_GROUNDING_CHECKS: Record<string, RegExp> = {
+  listsPersonalCategories: /preferences, favorites, plans, availability/i,
+  noPlausibleGuesses: /never fill the gap with a plausible guess/i,
+  handBackOrStayTrue: /hand the question back to THEM|true whatever the real answer is/i,
+  noCommitting: /committing ME to a fact, plan, time or place is not/i,
+};

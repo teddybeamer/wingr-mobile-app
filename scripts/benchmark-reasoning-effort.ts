@@ -189,7 +189,7 @@ function seededRandom(seed: number) {
 }
 
 export const HARD_CRITERIA = ["ownership", "noInventedFacts", "language"] as const;
-export const SCALE_CRITERIA = ["hook", "natural"] as const;
+export const SCALE_CRITERIA = ["hook", "natural", "flirt"] as const;
 type Labelled = "A" | "B";
 export type ReviewKey = Record<string, Record<Labelled, Effort>>;
 type OutputScore = Partial<Record<(typeof HARD_CRITERIA)[number], boolean | null>> &

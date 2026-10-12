@@ -206,3 +206,16 @@ Low is NOT approved for production; it needs a larger, harder fixture set
 (ambiguous ownership, same-color bubbles, cropped bottoms, mixed languages) and a
 human blinded review first. Local review/scores/key files stay ignored in
 benchmarks/results/.
+
+## Low-reasoning follow-ups (Claude, 2026-10-12)
+
+- Blinded review page: `npm run review:blind-page` (local-only, see benchmarks/README.md).
+- OpenRouter model metadata for `google/gemini-3.8-flash` (public /models endpoint, no
+  paid call): reasoning is mandatory (cannot be disabled), `supported_efforts` =
+  high/medium/low, default medium, no max_tokens reasoning-budget support listed.
+  OpenRouter docs: Gemini 3 uses Google's thinkingLevel; `effort` passes through, and a
+  `reasoning.max_tokens` would only be mapped to a level, so there is no true token-budget
+  middle ground. Pricing: $0.75/M input, $3.75/M output (reasoning billed as output).
+- Fact-grounding prompt candidate (`withFactGrounding` in benchmarks/prompt-candidates.ts,
+  tested, NOT in production) targets replies that state ME's favorites/plans/willingness
+  that the screenshot never establishes. Needs an approved live A/B before any change.
