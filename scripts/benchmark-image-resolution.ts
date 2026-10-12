@@ -60,7 +60,7 @@ export type Run = {
   reasoningTokens: number | null;
   review: { reply: string; summary: string } | null;
   status: "valid" | "request_error" | "validation_error";
-  variant: Variant;
+  variant: string;
 };
 
 function fail(message: string): never {
@@ -354,18 +354,18 @@ function prepareFixtures(directory: string) {
   });
 }
 
-async function runOnce(
+export async function runOnce(
   implementation: Awaited<ReturnType<typeof loadCompact>>,
   apiKey: string,
   screenshot: string,
-  variant: Variant,
+  variant: string,
   fixtureIndex: number,
   keepReview: boolean,
+  adjustRequest: (request: unknown) => unknown = (request) => request,
 ): Promise<Run> {
-  const request = implementation.buildRequest({
-    screenshot,
-    selectedTone: "playful",
-  });
+  const request = adjustRequest(
+    implementation.buildRequest({ screenshot, selectedTone: "playful" }),
+  );
   const startedAt = performance.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);

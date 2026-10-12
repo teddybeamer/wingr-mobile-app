@@ -177,3 +177,12 @@ output/reasoning-token differences are within run-to-run noise at n=9 per arm.
 Conclusion: no evidence of benefit; do not add a client resize dependency on
 this basis. A local-only review file with model output (ignored by Git) exists in
 benchmarks/results/ and was NOT read; delete it when no longer needed.
+
+## Reasoning-effort A/B (prepared, not run)
+
+`npm run benchmark:reasoning-effort` (dry run by default) compares medium vs low on
+the original fixtures with identical prompt/contract/Vertex-only/ZDR routing; the
+request contract is asserted before every call. Blinded manual review and scoring
+are documented in `benchmarks/README.md`. No paid call was made. Stage telemetry
+analysis was blocked: the only local log export predates the telemetry deploy
+(0 `ai_generation_stage_latency` events).

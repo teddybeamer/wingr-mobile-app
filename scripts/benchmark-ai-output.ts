@@ -138,7 +138,7 @@ function hasExpectedImageSignature(mimeType: string, bytes: Buffer) {
   return false;
 }
 
-function readFixtures() {
+export function readFixtures() {
   if (!existsSync(SCREENSHOT_DIRECTORY))
     fail("Missing benchmarks/screenshots.");
   const mimeTypes: Record<string, string> = {

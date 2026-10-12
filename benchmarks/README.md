@@ -96,3 +96,23 @@ structured-output agreement (within-original agreement is the noise floor).
 Add `--write-review` to also write an ignored, local-only side-by-side file of model
 output for the manual checklist (ME/THEM ownership, short messages and emoji, cropped
 bottom bubbles, language). Never share or commit it.
+
+## Reasoning-effort A/B (medium vs low)
+
+`npm run benchmark:reasoning-effort` is a dry run: it builds both requests with the
+production code, asserts they differ only in `reasoning.effort`, and re-checks the
+model, Vertex-only/ZDR routing and no-fallback settings (the same check runs before
+every live request). It makes no network request. A live run needs `-- --execute`,
+`BENCHMARK_CONFIRM_LIVE_API=yes` and the ignored staging-only key, and makes 3
+fixtures x 3 runs x 2 variants = 18 paid calls (`--runs N`, 1-5). Production stays
+on medium; a previous low-reasoning experiment regressed quality.
+
+Add `--write-review` for a **blinded** manual review: it writes three ignored,
+local-only files in `benchmarks/results/`: a review file with each medium/low pair
+shown as A/B in random order, a scores template and a key. Score every output before
+opening the aggregate report or the key: ownership (ME/THEM and perspective),
+noInventedFacts, language (true/false) and hook, natural (1-5), plus small messages
+and cropped bottom bubbles. Then unblind with
+`npm run benchmark:reasoning-effort -- --score <key.local.json> <scores.local.json>`,
+which prints per-variant totals without any model text. Never share or commit these
+files.
