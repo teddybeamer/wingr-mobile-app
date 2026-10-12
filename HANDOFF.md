@@ -238,3 +238,16 @@ Update: the owner completed the review (all 16 outputs rated). Means (1-5): hook
 Choices: medium 3, low 1, tie 3, one pair without a choice. No ME/THEM or
 invented-facts flags. Pairwise naturalness: medium better in 3 pairs (all on the Danish
 fixture), low better in 1, 4 ties. This supersedes the partial numbers above.
+
+## Second human blinded round: medium vs low on 7 new English fixtures (2026-10-12)
+
+Fixtures 04, 06, 08, 10, 11, 12, 13 (05/07/09 were byte-identical duplicates of 03/01/02
+and were skipped), 2 runs per variant, 28 paid staging calls, original resolution, owner
+scored 14 pairs blind. Speed: median 8,082 -> 3,733 ms (-54%), P90 11,666 -> 5,244 ms,
+reasoning tokens 524 -> 0, no errors either side. Quality (1-5): hook low 4.93 / medium
+4.86; naturalness 4.93 / 5.00; flirt 4.36 / 4.79 (medium better in 6 of 14 pairs, 8
+ties, low never better on flirt). No ME/THEM or invented-facts flags. Choices: medium 5,
+low 3, tie 4, none 2. Combined with round one (22 pairs): understanding/ownership is
+equal; low costs about 0.4 flirt points on English and looked weaker on Danish
+naturalness (only 3 pairs on one Danish fixture). Open: more Danish fixtures, hard
+ownership cases, and whether a prompt tweak can recover flirt under low.
