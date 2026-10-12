@@ -186,3 +186,23 @@ request contract is asserted before every call. Blinded manual review and scorin
 are documented in `benchmarks/README.md`. No paid call was made. Stage telemetry
 analysis was blocked: the only local log export predates the telemetry deploy
 (0 `ai_generation_stage_latency` events).
+
+## Reasoning-effort A/B result: medium vs low (18 paid calls, 2026-10-12)
+
+3 fixtures x 3 runs, original resolution, identical prompt/contract/Vertex-only/ZDR.
+Medium: 8 valid + 1 validation error, median 9,655 ms, P90 33,355 ms (above the
+25 s production AI timeout), 496 median reasoning tokens. Low: 9/9 valid, median
+3,289 ms (-66%), P90 5,324 ms, 0 reasoning tokens (low effectively disables
+thinking on this model via OpenRouter), 145 median output tokens. Enum agreement 1.0
+across variants; reply length equal.
+
+Blinded first-pass review by Claude (8 medium/low pairs, scored before unblinding;
+not a human review): no ownership, language or cropped-bubble failures in either
+variant; hook 4.25 vs 4.25; naturalness medium 4.0 vs low 3.75; preferences
+medium 4, low 2, tie 2. Both variants invented personal facts (favorite game,
+weekend plans) on one fixture in 3/3 outputs each - a prompt issue independent of
+reasoning. Limits: 3 easy fixtures (clear bubble colors), n=8 pairs, AI reviewer.
+Low is NOT approved for production; it needs a larger, harder fixture set
+(ambiguous ownership, same-color bubbles, cropped bottoms, mixed languages) and a
+human blinded review first. Local review/scores/key files stay ignored in
+benchmarks/results/.
