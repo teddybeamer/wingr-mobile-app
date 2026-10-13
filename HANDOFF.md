@@ -376,3 +376,22 @@ Hedged retry is postponed: timeout and retry behaviour are unchanged. The missin
 mixed interest, sensitive/negative messages, image/GIF-only or voice-only last item, reply threads,
 unreadable screenshot; plus the finding that the 7 English fixtures are 4 conversations and 5/7/9 are
 duplicates) is saved above; the benchmark will be extended later. Priority now: staging test on the iPhone.
+
+## Relaxed replyability guardrail (Claude, 2026-10-13; STAGING only, not committed, not live-evaluated)
+
+Trigger: a clearly readable staging screenshot repeatedly returned 422 `unusable_screenshot`
+(model returned `replyable:false`). Prompt-only change in `SYSTEM_PROMPT`, two sentences:
+`replyable=false` now only when there is no readable conversation, ownership cannot be determined
+reliably, or there is no readable conversational message ME could reasonably respond to; missing
+personal information/background/uncertainty about the ideal reply is never a reason. The old
+"no safe conversational hook" and "or mark it unreplyable" are removed; unknown personal information
+now means: never state or imply it, but still write a natural, engaging reply that stays true whatever
+the real answer is; avoid generic deflections and mechanically returning the question; no commitments
+to facts/plans/times/places. Schema, backend validation, API contract and Low reasoning unchanged.
+The `withFactGrounding` candidate is retired (superseded by production; its "mark it unreplyable"
+escape hatch is gone). `LEAN_SYSTEM_PROMPT` carries the same two rules; `REMOVED_REFUSAL_PHRASES`
+keeps the old phrases out of both.
+Deployed to staging `driytnlagwgzebnfdpcr` only (explicit `--project-ref`; the CLI link still points
+to `ogypfpwbeeelyxqcyjle`). This deploy also carried the previously undeployed unified-language rule.
+NOT done: paid live A/B (replyable rate on the failing screenshot, genuinely unreadable fixtures
+still `false`, invented-fact and ownership review).
