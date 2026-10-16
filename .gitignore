@@ -40,3 +40,12 @@ yarn-error.*
 /ios
 /android
 .env
+
+# Private, consented local AI-benchmark fixtures and generated aggregate reports.
+/benchmarks/screenshots/*
+!/benchmarks/screenshots/.gitkeep
+/benchmarks/results/*
+!/benchmarks/results/.gitkeep
+
+# Local investigation notes and artifacts; never part of a release.
+/_investigations/

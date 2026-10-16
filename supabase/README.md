@@ -63,7 +63,33 @@ This entitlement enforcement is server-only and does not require another native
 app build. The existing RevenueCat client integration still requires a development
 or native build as before.
 
+## Endpoint versions (read before deploying)
+
+Two incompatible response contracts are live side by side. Each installed app build is
+tied to the contract it validates, so **never redeploy or change `ai-conversation` while
+WiNGR 1.0.0 (1) can still be installed.**
+
+| Endpoint | Source | Contract | Used by | Reasoning |
+| --- | --- | --- | --- | --- |
+| `ai-conversation` | `functions/ai-conversation`, `functions/_shared/*` (frozen) | includes `messages` | build 1 | `medium` (hard-coded) |
+| `ai-conversation-v2` | `functions/ai-conversation-v2`, `functions/_shared_v2/*` | compact: `replyable`, `vibeCheck`, `replies` | build 2 | `low` default, `AI_REASONING_EFFORT=medium` overrides |
+
+`_shared_v2` holds only the contract-specific code (result parser and schema, prompt,
+provider request, handler). Authentication, RevenueCat verification, usage limits,
+DeviceCheck onboarding trials, CORS and the single `ConversationError` class are reused
+unchanged from `_shared`, and both endpoints use the same project secrets and database.
+The v2 endpoint needs no new secret. `AI_REASONING_EFFORT` is optional; leave it unset to
+use `low`. Deploy v2 with an explicit project ref and never with a bare `deploy`:
+
+```sh
+supabase functions deploy ai-conversation-v2 --project-ref <verified-project-ref>
+```
+
+Retire v1 only after builds that call it are no longer in use.
+
 ## Contract
+
+The description below is the v1 contract. v2 returns the same fields without `messages`.
 
 Request: `{ screenshot: "data:image/png;base64,...", selectedTone: "playful" | "direct" | "casualSmallTalk", extraContext?: string, previousWingrSuggestions?: string[] }`. On an explicit refresh, the app sends at most the three latest suggestions already shown to the user. They are separate from screenshot context and let Gemini choose a different grounded reply; they are never conversation messages or user facts.
 

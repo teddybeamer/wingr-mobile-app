@@ -1,5 +1,8 @@
 [functions.ai-conversation]
 verify_jwt = true
 
+[functions.ai-conversation-v2]
+verify_jwt = true
+
 [functions.delete-account]
 verify_jwt = true

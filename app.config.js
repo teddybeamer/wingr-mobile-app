@@ -8,7 +8,7 @@ export default {
     userInterfaceStyle: 'dark',
     ios: {
       icon: './assets/WiNGR.icon',
-      supportsTablet: true,
+      supportsTablet: false,
       bundleIdentifier: 'com.perkristian.wingrmobileapp',
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,

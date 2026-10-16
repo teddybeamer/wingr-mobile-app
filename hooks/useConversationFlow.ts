@@ -6,12 +6,12 @@ import {
 } from "../lib/wingr-ai";
 import { posthog } from "../lib/posthog";
 import {
+  AI_OUTPUT_CONTRACT,
   ConversationError,
   type ConversationErrorKind,
-} from "../supabase/functions/_shared/conversation";
+} from "../supabase/functions/_shared_v2/conversation";
 import { getOnboardingDeviceCheck } from "../lib/devicecheck";
 import type {
-  ConversationMessage,
   ReplyTone,
   SuggestedReply,
   VibeCheck,
@@ -39,7 +39,6 @@ export function useConversationFlow() {
     string | null
   >(null);
   const [vibeCheck, setVibeCheck] = useState<VibeCheck | null>(null);
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>("idle");
   const [repliesStatus, setRepliesStatus] = useState<RepliesStatus>("idle");
   const [error, setError] = useState<ConversationFlowError | null>(null);
@@ -64,7 +63,6 @@ export function useConversationFlow() {
   };
   const resetGeneratedState = () => {
     cancelRequest();
-    setMessages([]);
     setVibeCheck(null);
     setGeneratedReplies([]);
     setLastGeneratedReplyId(null);
@@ -145,11 +143,11 @@ export function useConversationFlow() {
       setAnalysisStatus("analyzing");
       setGeneratedReplies([]);
       setVibeCheck(null);
-      setMessages([]);
     }
     const startedAt = Date.now();
     posthog.capture(
       append ? "reply_generation_started" : "screenshot_analysis_started",
+      { output_contract: AI_OUTPUT_CONTRACT },
     );
     try {
       const onboardingDeviceCheck = isOnboardingGeneration
@@ -166,7 +164,6 @@ export function useConversationFlow() {
         signal: controller.signal,
       });
       if (id !== requestIdRef.current) return "cancelled" as const;
-      setMessages(result.messages);
       setVibeCheck(result.vibeCheck);
       setGeneratedReplies((current) =>
         append ? [...current, ...result.replies] : result.replies,
@@ -178,8 +175,8 @@ export function useConversationFlow() {
         append ? "reply_generated" : "screenshot_analysis_completed",
         {
           tone,
-          message_count: result.messages.length,
           duration_ms: Date.now() - startedAt,
+          output_contract: AI_OUTPUT_CONTRACT,
         },
       );
       return "ready" as const;
@@ -206,7 +203,10 @@ export function useConversationFlow() {
       setError(error);
       posthog.capture(
         append ? "reply_generation_failed" : "screenshot_analysis_failed",
-        { duration_ms: Date.now() - startedAt },
+        {
+          duration_ms: Date.now() - startedAt,
+          output_contract: AI_OUTPUT_CONTRACT,
+        },
       );
       return { status: "error" as const, error };
     } finally {
@@ -247,7 +247,6 @@ export function useConversationFlow() {
     extraContext,
     generatedReplies,
     lastGeneratedReplyId,
-    messages,
     pickScreenshot,
     refreshReplies,
     repliesStatus,

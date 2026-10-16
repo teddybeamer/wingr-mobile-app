@@ -3,7 +3,7 @@ import {
   MAX_PREVIOUS_WINGR_SUGGESTIONS,
   parseConversationRequest,
   parseConversationResult,
-} from "../supabase/functions/_shared/conversation";
+} from "../supabase/functions/_shared_v2/conversation";
 import type { OnboardingDeviceCheck } from "./devicecheck";
 import type {
   AnalyzeScreenshotResult,
@@ -12,16 +12,19 @@ import type {
 } from "../types/wingr";
 import { postJsonToWingrBackend } from "./wingr-api";
 
+// WiNGR 1.0.0 (2) uses the compact response contract, which the original
+// /ai-conversation endpoint (still serving build 1) does not return.
+export const AI_CONVERSATION_PATH = "/ai-conversation-v2";
+
 export function toAppResult(
   value: unknown,
   tone: ReplyTone,
   requestId: number,
 ): AnalyzeScreenshotResult {
   const result = parseConversationResult(value);
-  if (!result.replyable || !result.vibeCheck || !result.messages.length)
+  if (!result.replyable || !result.vibeCheck)
     throw new ConversationError("unusable_screenshot");
   return {
-    messages: result.messages,
     vibeCheck: result.vibeCheck,
     replies: result.replies.map((text, index) => ({
       id: `${requestId}-${index}`,
@@ -81,7 +84,7 @@ export async function analyzeScreenshot({
     });
   }
   const result = await postJsonToWingrBackend<unknown>(
-    "/ai-conversation",
+    AI_CONVERSATION_PATH,
     body,
     signal,
   );

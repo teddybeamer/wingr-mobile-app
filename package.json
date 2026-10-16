@@ -48,7 +48,7 @@
     "ios:staging": "node scripts/with-staging-env.js run:ios --device",
     "staging:check": "node scripts/with-staging-env.js --check",
     "web": "expo start --web",
-    "test": "tsx --test lib/*.test.ts supabase/functions/_shared/*.test.ts scripts/*.test.js",
+    "test": "tsx --test lib/*.test.ts supabase/functions/_shared/*.test.ts supabase/functions/_shared_v2/*.test.ts scripts/*.test.js",
     "test:db-concurrency": "bash supabase/tests/database/ai_generation_concurrency.integration.sh",
     "typecheck": "node --stack-size=8192 node_modules/typescript/bin/tsc --noEmit && tsc -p supabase/tsconfig.json"
   },

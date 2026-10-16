@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["functions/_shared/**/*.ts"]
+  "include": ["functions/_shared/**/*.ts", "functions/_shared_v2/**/*.ts"]
 }
