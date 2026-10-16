@@ -299,7 +299,13 @@ export async function handleConversationRequest(
     const input = parseConversationRequest(value);
     const bodyMs = Date.now() - requestStartedAt;
 
-    if (input.isOnboardingGeneration && input.deviceCheckToken) {
+    // Free onboarding generations are only available through the DeviceCheck
+    // protected, one-per-device trial. There is deliberately no fallback to the
+    // account-scoped onboarding claim: an anonymous account is free to create, so
+    // it cannot guard a free generation. A missing token is rejected here, before
+    // any entitlement lookup, usage claim or provider call.
+    if (input.isOnboardingGeneration) {
+      if (!input.deviceCheckToken) throw new ConversationError("invalid_request");
       if (!onboardingTrialManager)
         throw new ConversationError("generation_protection_unavailable");
       return await handleDeviceCheckOnboardingRequest({
@@ -380,19 +386,14 @@ export async function handleConversationRequest(
           try {
             if (!usageLimiter)
               throw new ConversationError("generation_protection_unavailable");
-            if (input.isOnboardingGeneration) {
-              generationLease.current =
-                await usageLimiter.claimOnboarding(authorization);
-            } else {
-              if (!subscriptionPlan)
-                throw new ConversationError(
-                  "generation_protection_unavailable",
-                );
-              generationLease.current = await usageLimiter.claim(
-                authorization,
-                subscriptionPlan,
-              );
-            }
+            // Onboarding returned above. Fail closed rather than ever claiming the
+            // account-scoped onboarding allowance if that guard is changed.
+            if (input.isOnboardingGeneration || !subscriptionPlan)
+              throw new ConversationError("generation_protection_unavailable");
+            generationLease.current = await usageLimiter.claim(
+              authorization,
+              subscriptionPlan,
+            );
           } finally {
             timings.claimMs = Date.now() - claimStartedAt;
           }

@@ -84,7 +84,7 @@ Deno.serve((request) =>
       return data.claims.sub;
     },
     onboardingTrialManager,
-    // Defaults to medium; only the exact value "low" changes it.
+    // Defaults to low; only the exact value "medium" changes it.
     reasoningEffort: parseReasoningEffort(Deno.env.get("AI_REASONING_EFFORT")),
     usageLimiter,
     defer(task) {
