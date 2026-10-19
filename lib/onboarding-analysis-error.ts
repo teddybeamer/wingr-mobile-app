@@ -1,7 +1,7 @@
-import type { ConversationErrorKind } from "../supabase/functions/_shared/conversation";
+import type { BackendErrorCode } from "./wingr-api";
 
 type OnboardingAnalysisError = {
-  code?: ConversationErrorKind;
+  code?: BackendErrorCode;
   message: string;
 };
 
@@ -12,9 +12,7 @@ export const ONBOARDING_DEVICE_PREVIEW_USED_ALERT = {
   title: "Looks like we’ve met before 👀",
 } as const;
 
-export function isOnboardingDevicePreviewUsed(
-  error: OnboardingAnalysisError,
-) {
+export function isOnboardingDevicePreviewUsed(error: OnboardingAnalysisError) {
   return error.code === "onboarding_device_reply_used";
 }
 

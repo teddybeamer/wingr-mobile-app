@@ -23,6 +23,7 @@ export function BottomSheet({
   title,
   titleColor = "#F5F5F5",
   showHandle = true,
+  showCloseButton = false,
   panelStyle,
   bottomPadding = 34,
 }: {
@@ -33,6 +34,7 @@ export function BottomSheet({
   title: string;
   titleColor?: string;
   showHandle?: boolean;
+  showCloseButton?: boolean;
   panelStyle?: StyleProp<ViewStyle>;
   bottomPadding?: number;
 }) {
@@ -158,7 +160,25 @@ export function BottomSheet({
             ]}
           >
             {showHandle ? <View style={styles.handle} /> : null}
-            <Text accessibilityRole="header" style={[styles.title, { color: titleColor }]}>
+            {showCloseButton ? (
+              <Pressable
+                accessibilityLabel={`Close ${title} sheet`}
+                accessibilityRole="button"
+                hitSlop={12}
+                onPress={onClose}
+                style={styles.closeButton}
+              >
+                <Text style={styles.closeButtonText}>×</Text>
+              </Pressable>
+            ) : null}
+            <Text
+              accessibilityRole="header"
+              style={[
+                styles.title,
+                showCloseButton && styles.titleWithClose,
+                { color: titleColor },
+              ]}
+            >
               {title}
             </Text>
             {children}
@@ -192,11 +212,30 @@ const styles = StyleSheet.create({
     height: 5,
     width: 48,
   },
+  closeButton: {
+    alignItems: "center",
+    height: 36,
+    justifyContent: "center",
+    position: "absolute",
+    right: 16,
+    top: 14,
+    width: 36,
+    zIndex: 1,
+  },
+  closeButtonText: {
+    color: "#F5F5F5",
+    fontFamily: "ClashGroteskRegular",
+    fontSize: 30,
+    lineHeight: 32,
+  },
   title: {
     color: "#F5F5F5",
     fontFamily: "ClashDisplay",
     fontSize: 24,
     fontWeight: "700",
     textAlign: "center",
+  },
+  titleWithClose: {
+    paddingHorizontal: 44,
   },
 });

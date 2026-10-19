@@ -23,7 +23,9 @@ export function RepliesScreen(props: OnboardingScreenProps) {
         />
       ) : null}
 
-      {conversation.repliesStatus === "error" && conversation.error ? (
+      {conversation.repliesStatus === "error" &&
+      conversation.error &&
+      conversation.error.errorCode !== "unusable_screenshot" ? (
         <InlineErrorCard
           message={conversation.error.message}
           onPrimaryAction={() => {

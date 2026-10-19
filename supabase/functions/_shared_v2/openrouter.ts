@@ -2,7 +2,7 @@ import {
   AI_OUTPUT_CONTRACT,
   ConversationError,
   conversationSchema,
-  parseConversationResult,
+  parseProviderConversationResult,
   type ConversationRequest,
 } from "./conversation.ts";
 import { buildConversationPrompt, SYSTEM_PROMPT } from "./prompting.ts";
@@ -23,7 +23,9 @@ export type ProviderLatencyMeasurement = {
 export type ReasoningEffort = "low" | "medium";
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "low";
 
-export function parseReasoningEffort(value: string | null | undefined): ReasoningEffort {
+export function parseReasoningEffort(
+  value: string | null | undefined,
+): ReasoningEffort {
   return value?.trim() === "medium" ? "medium" : DEFAULT_REASONING_EFFORT;
 }
 
@@ -181,7 +183,7 @@ export async function analyzeWithGemini(
     } catch {
       throw new ConversationError("invalid_output");
     }
-    const parsed = parseConversationResult(result);
+    const parsed = parseProviderConversationResult(result);
     providerOutcome = "success";
     return parsed;
   } catch (error) {
@@ -190,9 +192,10 @@ export async function analyzeWithGemini(
       throw new ConversationError("timeout");
     }
     // Never expose upstream bodies, messages, or request content in logs/errors.
-    const safeError = error instanceof ConversationError
-      ? error
-      : new ConversationError("provider");
+    const safeError =
+      error instanceof ConversationError
+        ? error
+        : new ConversationError("provider");
     if (safeError.kind === "invalid_output") providerOutcome = "invalid_output";
     else if (safeError.kind === "timeout") providerOutcome = "timeout";
     else providerOutcome = "provider";

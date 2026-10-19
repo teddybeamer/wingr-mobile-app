@@ -11,7 +11,12 @@ import {
   RevenueCatVerificationError,
 } from "../_shared/revenuecat-entitlement.ts";
 import type { RevenueCatSubscriptionPlan } from "../_shared/revenuecat-entitlement.ts";
-import { input, result } from "./test-fixtures.ts";
+import {
+  asProviderResult,
+  input,
+  providerResult,
+  result,
+} from "./test-fixtures.ts";
 import type { GenerationLease, UsageLimiter } from "../_shared/usage-limit.ts";
 
 const AUTHENTICATED_USER_ID = "00000000-0000-4000-8000-000000000001";
@@ -132,7 +137,10 @@ const provider =
   async () =>
     Response.json({
       choices: [
-        { finish_reason: "stop", message: { content: JSON.stringify(value) } },
+        {
+          finish_reason: "stop",
+          message: { content: JSON.stringify(asProviderResult(value)) },
+        },
       ],
     });
 test("endpoint returns a compact vibe and reply from one call compatible with the app", async () => {
@@ -653,7 +661,7 @@ test("technically valid replies pass through unchanged with one provider call", 
   }
 });
 
-test("endpoint exposes and logs only safe error codes and provider status", async (t) => {
+test("endpoint keeps provider diagnostics in logs and out of the response", async (t) => {
   const warn = t.mock.method(console, "warn", () => {});
   const response = await handleConversationRequest(request(), "key", {
     fetchImpl: async () =>
@@ -662,13 +670,62 @@ test("endpoint exposes and logs only safe error codes and provider status", asyn
   assert.equal(response.status, 502);
   const body = await response.json();
   assert.equal(body.code, "provider");
-  assert.equal(body.providerStatus, 402);
-  assert.match(body.error, /insufficient credits/);
+  assert.equal(body.providerStatus, undefined);
+  assert.equal(body.providerReason, undefined);
+  assert.match(body.error, /could not analyze/);
   assert.deepEqual(warn.mock.calls[0].arguments, [
     "[Wingr AI] request failed",
-    { code: "provider", providerStatus: 402, providerReason: undefined },
+    {
+      code: "provider",
+      providerStatus: 402,
+      providerReason: undefined,
+      reason: undefined,
+    },
   ]);
   assert.ok(!JSON.stringify(body).includes("PRIVATE"));
+});
+
+test("semantic failures preserve 422 and return only a validated reason", async () => {
+  for (const reason of [
+    "unreadable_image",
+    "no_conversation",
+    "ownership_unclear",
+    "no_replyable_message",
+  ] as const) {
+    let calls = 0;
+    const response = await handleConversationRequest(request(), "key", {
+      fetchImpl: async (...args) => {
+        calls++;
+        return provider({
+          replyable: false,
+          failureReason: reason,
+          vibeCheck: null,
+          replies: [],
+        })(...args);
+      },
+    });
+    assert.equal(response.status, 422);
+    assert.deepEqual(await response.json(), {
+      code: "unusable_screenshot",
+      error:
+        "WiNGR could not find a readable conversation to reply to. Try another screenshot.",
+      reason,
+    });
+    assert.equal(calls, 1);
+  }
+  for (const failureReason of [undefined, null, "invalid"]) {
+    const value = {
+      replyable: false,
+      vibeCheck: null,
+      replies: [],
+      ...(failureReason === undefined ? {} : { failureReason }),
+    };
+    const response = await handleConversationRequest(request(), "key", {
+      fetchImpl: provider(value),
+    });
+    assert.equal(response.status, 422);
+    assert.equal((await response.json()).reason, "unknown");
+  }
 });
 
 test("provider dispatch permanently claims usage for successful and unusable model results", async () => {
@@ -867,7 +924,7 @@ test("10 and 50 parallel requests for one user dispatch exactly once", async () 
         choices: [
           {
             finish_reason: "stop",
-            message: { content: JSON.stringify(result) },
+            message: { content: JSON.stringify(providerResult) },
           },
         ],
       }),
@@ -947,7 +1004,10 @@ test("499 attempts plus concurrent requests permits only attempt 500", async () 
   providerGate.resolve(
     Response.json({
       choices: [
-        { finish_reason: "stop", message: { content: JSON.stringify(result) } },
+        {
+          finish_reason: "stop",
+          message: { content: JSON.stringify(providerResult) },
+        },
       ],
     }),
   );
@@ -1149,7 +1209,8 @@ test("lease release telemetry contains only fixed performance fields", async (t)
 
   assert.equal(response.status, 200);
   const call = info.mock.calls.find(
-    ({ arguments: [event] }) => event === "[Wingr AI] generation lease release latency",
+    ({ arguments: [event] }) =>
+      event === "[Wingr AI] generation lease release latency",
   );
   assert.ok(call);
   assert.deepEqual(Object.keys(call.arguments[1] as object).sort(), [
@@ -1158,10 +1219,19 @@ test("lease release telemetry contains only fixed performance fields", async (t)
     "generation",
     "outcome",
   ]);
-  assert.equal((call.arguments[1] as { event: string }).event, "ai_generation_lease_release_latency");
-  assert.equal((call.arguments[1] as { generation: string }).generation, "subscription");
+  assert.equal(
+    (call.arguments[1] as { event: string }).event,
+    "ai_generation_lease_release_latency",
+  );
+  assert.equal(
+    (call.arguments[1] as { generation: string }).generation,
+    "subscription",
+  );
   assert.equal((call.arguments[1] as { outcome: string }).outcome, "success");
-  assert.equal(typeof (call.arguments[1] as { durationMs: unknown }).durationMs, "number");
+  assert.equal(
+    typeof (call.arguments[1] as { durationMs: unknown }).durationMs,
+    "number",
+  );
 });
 
 test("a failing deferred release never rejects and is logged with fixed fields", async (t) => {
@@ -1194,7 +1264,10 @@ test("a failing deferred release never rejects and is logged with fixed fields",
     ({ arguments: [event] }) =>
       event === "[Wingr AI] generation lease release latency",
   );
-  assert.equal((latency?.arguments[1] as { outcome: string }).outcome, "failure");
+  assert.equal(
+    (latency?.arguments[1] as { outcome: string }).outcome,
+    "failure",
+  );
 });
 
 test("stage latency telemetry contains only fixed performance fields", async (t) => {
@@ -1247,7 +1320,9 @@ test("low reasoning is the default and medium can be selected by configuration",
     efforts.push(JSON.parse(String(init?.body)).reasoning);
     return provider(result)(_url as never, init);
   };
-  const byDefault = await handleConversationRequest(request(), "key", { fetchImpl: capture });
+  const byDefault = await handleConversationRequest(request(), "key", {
+    fetchImpl: capture,
+  });
   const medium = await handleConversationRequest(request(), "key", {
     reasoningEffort: "medium",
     fetchImpl: capture,
@@ -1257,7 +1332,13 @@ test("low reasoning is the default and medium can be selected by configuration",
   assert.equal(medium.status, 200);
   assert.deepEqual(efforts, [{ effort: "low" }, { effort: "medium" }]);
   const logged = info.mock.calls
-    .filter(({ arguments: [event] }) => event === "[Wingr AI] generation stage latency")
-    .map(({ arguments: [, details] }) => (details as { reasoningEffort: string }).reasoningEffort);
+    .filter(
+      ({ arguments: [event] }) =>
+        event === "[Wingr AI] generation stage latency",
+    )
+    .map(
+      ({ arguments: [, details] }) =>
+        (details as { reasoningEffort: string }).reasoningEffort,
+    );
   assert.deepEqual(logged, ["low", "medium"]);
 });

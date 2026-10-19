@@ -8,25 +8,32 @@ import { posthog } from "../lib/posthog";
 import {
   AI_OUTPUT_CONTRACT,
   ConversationError,
-  type ConversationErrorKind,
 } from "../supabase/functions/_shared_v2/conversation";
 import { getOnboardingDeviceCheck } from "../lib/devicecheck";
-import type {
-  ReplyTone,
-  SuggestedReply,
-  VibeCheck,
-} from "../types/wingr";
+import { ConversationApiError, type BackendErrorCode } from "../lib/wingr-api";
+import type { UnusableScreenshotReason } from "../supabase/functions/_shared_v2/conversation";
+import {
+  buildConversationFailureProperties,
+  captureSafely,
+} from "../lib/conversation-diagnostics";
+import type { ReplyTone, SuggestedReply, VibeCheck } from "../types/wingr";
 
 export type ConversationFlowError = {
+  id: number;
   kind: "permission" | "analysis" | "replies";
   message: string;
-  code?: ConversationErrorKind;
+  code?: BackendErrorCode;
+  errorCode?: BackendErrorCode;
+  failureReason?: UnusableScreenshotReason;
+  httpStatus?: number;
   retryAt?: string;
 };
 export type AnalysisStatus = "idle" | "analyzing" | "ready" | "error";
 export type RepliesStatus = "idle" | "generating" | "ready" | "error";
 
-export function useConversationFlow() {
+export type ConversationFlowName = "onboarding" | "pro";
+
+export function useConversationFlow(flow: ConversationFlowName = "pro") {
   const [selectedScreenshotUri, setSelectedScreenshotUri] = useState<
     string | null
   >(null);
@@ -45,6 +52,7 @@ export function useConversationFlow() {
   const toneRef = useRef<ReplyTone>("playful");
   const contextRef = useRef("");
   const requestIdRef = useRef(0);
+  const errorIdRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
   const screenshotRef = useRef<string | null>(null);
 
@@ -61,13 +69,25 @@ export function useConversationFlow() {
     controllerRef.current?.abort();
     controllerRef.current = null;
   };
-  const resetGeneratedState = () => {
+  const capture = (
+    event: string,
+    properties?: Parameters<typeof posthog.capture>[1],
+  ) => {
+    captureSafely(
+      (name, values) => posthog.capture(name, values),
+      event,
+      properties,
+    );
+  };
+  const resetGeneratedState = ({ preserveTone = false } = {}) => {
     cancelRequest();
     setVibeCheck(null);
     setGeneratedReplies([]);
     setLastGeneratedReplyId(null);
-    toneRef.current = "playful";
-    setSelectedTone("playful");
+    if (!preserveTone) {
+      toneRef.current = "playful";
+      setSelectedTone("playful");
+    }
     setAnalysisStatus("idle");
     setRepliesStatus("idle");
     setError(null);
@@ -79,7 +99,7 @@ export function useConversationFlow() {
     setExtraContext("");
     resetGeneratedState();
   };
-  const pickScreenshot = async () => {
+  const pickScreenshot = async ({ preserveTone = false } = {}) => {
     setError(null);
     try {
       const permission =
@@ -97,11 +117,12 @@ export function useConversationFlow() {
       setSelectedScreenshotUri(uri);
       contextRef.current = "";
       setExtraContext("");
-      resetGeneratedState();
-      posthog.capture("screenshot_selected");
+      resetGeneratedState({ preserveTone });
+      capture("screenshot_selected");
       return uri;
     } catch (failure) {
       setError({
+        id: ++errorIdRef.current,
         kind: "permission",
         message:
           failure instanceof Error
@@ -120,7 +141,11 @@ export function useConversationFlow() {
     isOnboardingGeneration = false,
   ) => {
     if (!uri) {
-      const error: ConversationFlowError = { kind: "analysis", message: "Choose a screenshot first." };
+      const error: ConversationFlowError = {
+        id: ++errorIdRef.current,
+        kind: "analysis",
+        message: "Choose a screenshot first.",
+      };
       setError(error);
       setAnalysisStatus("error");
       return { status: "error" as const, error };
@@ -145,7 +170,7 @@ export function useConversationFlow() {
       setVibeCheck(null);
     }
     const startedAt = Date.now();
-    posthog.capture(
+    capture(
       append ? "reply_generation_started" : "screenshot_analysis_started",
       { output_contract: AI_OUTPUT_CONTRACT },
     );
@@ -171,14 +196,11 @@ export function useConversationFlow() {
       setLastGeneratedReplyId(result.replies[0].id);
       setAnalysisStatus("ready");
       setRepliesStatus("ready");
-      posthog.capture(
-        append ? "reply_generated" : "screenshot_analysis_completed",
-        {
-          tone,
-          duration_ms: Date.now() - startedAt,
-          output_contract: AI_OUTPUT_CONTRACT,
-        },
-      );
+      capture(append ? "reply_generated" : "screenshot_analysis_completed", {
+        tone,
+        duration_ms: Date.now() - startedAt,
+        output_contract: AI_OUTPUT_CONTRACT,
+      });
       return "ready" as const;
     } catch (failure) {
       if (id !== requestIdRef.current) return "cancelled" as const;
@@ -191,22 +213,36 @@ export function useConversationFlow() {
       }
       if (!append) setAnalysisStatus("error");
       setRepliesStatus(append ? "error" : "idle");
+      const apiError =
+        failure instanceof ConversationApiError ? failure : undefined;
+      const errorCode =
+        apiError?.errorCode ??
+        (failure instanceof ConversationError ? failure.kind : undefined);
       const error: ConversationFlowError = {
+        id: ++errorIdRef.current,
         kind: append ? "replies" : "analysis",
-        code: failure instanceof ConversationError ? failure.kind : undefined,
-        retryAt: failure instanceof ConversationError ? failure.retryAt : undefined,
+        code: errorCode,
+        errorCode,
+        failureReason: apiError?.failureReason,
+        httpStatus: apiError?.httpStatus,
+        retryAt:
+          failure instanceof ConversationError ? failure.retryAt : undefined,
         message:
-          failure instanceof Error
+          failure instanceof ConversationError
             ? failure.message
-            : "WiNGR could not analyze that screenshot. Please try again.",
+            : append
+              ? "WiNGR could not create another reply. Please try again."
+              : "WiNGR could not analyze that screenshot. Please try again.",
       };
       setError(error);
-      posthog.capture(
+      capture(
         append ? "reply_generation_failed" : "screenshot_analysis_failed",
-        {
-          duration_ms: Date.now() - startedAt,
-          output_contract: AI_OUTPUT_CONTRACT,
-        },
+        buildConversationFailureProperties({
+          durationMs: Date.now() - startedAt,
+          error,
+          flow,
+          outputContract: AI_OUTPUT_CONTRACT,
+        }),
       );
       return { status: "error" as const, error };
     } finally {
@@ -228,7 +264,7 @@ export function useConversationFlow() {
       true,
     )) === "ready";
   const changeTone = async (tone: ReplyTone) => {
-    posthog.capture("reply_tone_changed", {
+    capture("reply_tone_changed", {
       tone,
       previous_tone: toneRef.current,
     });

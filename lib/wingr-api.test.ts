@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { postJsonToWingrBackend } from "./wingr-api";
+import { ConversationApiError, postJsonToWingrBackend } from "./wingr-api";
 import { input, result } from "../supabase/functions/_shared/test-fixtures";
 import { ConversationError } from "../supabase/functions/_shared/conversation";
 
@@ -144,7 +144,7 @@ test("app timeout includes stalled body reads and never starts a second request"
   assert.equal(mock.mock.callCount(), 1);
 });
 
-test("app preserves safe backend error codes and provider status without displaying response text", async (t) => {
+test("app preserves safe backend error codes without displaying provider metadata or response text", async (t) => {
   const previous = process.env.EXPO_PUBLIC_WINGR_API_BASE_URL;
   process.env.EXPO_PUBLIC_WINGR_API_BASE_URL = "https://wingr.example";
   t.after(() => {
@@ -166,7 +166,7 @@ test("app preserves safe backend error codes and provider status without display
     Response.json(responses.shift(), { status: 502 }),
   );
   for (const expected of [
-    /insufficient credits.*OpenRouter 402/,
+    /could not analyze/,
     /reliable reply/,
     /could not analyze/,
     /could not analyze/,
@@ -181,6 +181,63 @@ test("app preserves safe backend error codes and provider status without display
       (failure: unknown) => {
         assert.ok(failure instanceof Error);
         assert.match(failure.message, expected);
+        assert.ok(!failure.message.includes("PRIVATE"));
+        return true;
+      },
+    );
+  }
+});
+
+test("app validates semantic reasons and preserves the HTTP status", async (t) => {
+  const previous = process.env.EXPO_PUBLIC_WINGR_API_BASE_URL;
+  process.env.EXPO_PUBLIC_WINGR_API_BASE_URL = "https://wingr.example";
+  t.after(() => {
+    if (previous === undefined)
+      delete process.env.EXPO_PUBLIC_WINGR_API_BASE_URL;
+    else process.env.EXPO_PUBLIC_WINGR_API_BASE_URL = previous;
+  });
+  const reasons = [
+    "unreadable_image",
+    "no_conversation",
+    "ownership_unclear",
+    "no_replyable_message",
+    "unknown",
+    "PRIVATE CHAT",
+    null,
+    undefined,
+  ];
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json(
+      {
+        code: "unusable_screenshot",
+        error: "PRIVATE CHAT",
+        reason: reasons.shift(),
+      },
+      { status: 422 },
+    ),
+  );
+  for (const expected of [
+    "unreadable_image",
+    "no_conversation",
+    "ownership_unclear",
+    "no_replyable_message",
+    "unknown",
+    "unknown",
+    "unknown",
+    "unknown",
+  ]) {
+    await assert.rejects(
+      postJsonToWingrBackend(
+        "/ai-conversation-v2",
+        input,
+        undefined,
+        authentication,
+      ),
+      (failure: unknown) => {
+        assert.ok(failure instanceof ConversationApiError);
+        assert.equal(failure.errorCode, "unusable_screenshot");
+        assert.equal(failure.failureReason, expected);
+        assert.equal(failure.httpStatus, 422);
         assert.ok(!failure.message.includes("PRIVATE"));
         return true;
       },

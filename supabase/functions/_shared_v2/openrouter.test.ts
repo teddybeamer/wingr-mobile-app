@@ -7,10 +7,10 @@ import {
   parseReasoningEffort,
 } from "./openrouter.ts";
 import { AI_OUTPUT_CONTRACT, ConversationError } from "./conversation.ts";
-import { input, result } from "./test-fixtures.ts";
+import { input, providerResult, result } from "./test-fixtures.ts";
 
 function completion(
-  content: unknown = JSON.stringify(result),
+  content: unknown = JSON.stringify(providerResult),
   finish_reason = "stop",
 ) {
   return Response.json({ choices: [{ finish_reason, message: { content } }] });
@@ -71,7 +71,7 @@ test("one multimodal request uses Gemini with low reasoning by default, standard
     },
   );
   assert.equal(calls, 1);
-  assert.deepEqual(value, result);
+  assert.deepEqual(value, providerResult);
 });
 test("reports a compact-contract provider duration without request content", async () => {
   const measurements: unknown[] = [];
@@ -90,7 +90,10 @@ test("reports a compact-contract provider duration without request content", asy
     outcome: "success",
     outputContract: AI_OUTPUT_CONTRACT,
   });
-  assert.equal(typeof (measurements[0] as { durationMs: unknown }).durationMs, "number");
+  assert.equal(
+    typeof (measurements[0] as { durationMs: unknown }).durationMs,
+    "number",
+  );
   assert.ok((measurements[0] as { durationMs: number }).durationMs >= 0);
   const serialized = JSON.stringify(measurements);
   for (const privateValue of ["secret", input.screenshot])
@@ -127,10 +130,10 @@ test("malformed, refused, truncated and schema-invalid completions terminate wit
   for (const response of [
     completion("not JSON"),
     completion("```json {} ```"),
-    completion(JSON.stringify(result), "length"),
+    completion(JSON.stringify(providerResult), "length"),
     completion(
       JSON.stringify({
-        ...result,
+        ...providerResult,
         messages: [{ speaker: "THEM", text: "Hi" }],
       }),
     ),
@@ -266,7 +269,10 @@ test("reasoning effort defaults to low and only the exact value medium switches 
   assert.equal(parseReasoningEffort("minimal"), "low");
   assert.equal(parseReasoningEffort(" medium "), "medium");
   assert.equal(buildOpenRouterRequest(input).reasoning.effort, "low");
-  assert.equal(buildOpenRouterRequest(input, "medium").reasoning.effort, "medium");
+  assert.equal(
+    buildOpenRouterRequest(input, "medium").reasoning.effort,
+    "medium",
+  );
 });
 
 test("the effort setting changes nothing but the effort: routing, model and contract stay pinned", () => {

@@ -1,4 +1,9 @@
-import { ConversationError, parseConversationRequest } from "./conversation.ts";
+import {
+  ConversationError,
+  parseConversationRequest,
+  toPublicConversationResult,
+  UnusableScreenshotError,
+} from "./conversation.ts";
 import { handleCors } from "../_shared/cors.ts";
 import { error, json } from "../_shared/http.ts";
 import {
@@ -245,8 +250,10 @@ async function handleDeviceCheckOnboardingRequest({
       signal: request.signal,
     });
     if (!result.replyable || !result.vibeCheck)
-      throw new ConversationError("unusable_screenshot");
-    return json(await trial.complete(result));
+      throw new UnusableScreenshotError(
+        result.replyable ? "unknown" : (result.failureReason ?? "unknown"),
+      );
+    return json(await trial.complete(toPublicConversationResult(result)));
   } catch (failure) {
     await trial.abandon();
     throw failure;
@@ -305,7 +312,8 @@ export async function handleConversationRequest(
     // it cannot guard a free generation. A missing token is rejected here, before
     // any entitlement lookup, usage claim or provider call.
     if (input.isOnboardingGeneration) {
-      if (!input.deviceCheckToken) throw new ConversationError("invalid_request");
+      if (!input.deviceCheckToken)
+        throw new ConversationError("invalid_request");
       if (!onboardingTrialManager)
         throw new ConversationError("generation_protection_unavailable");
       return await handleDeviceCheckOnboardingRequest({
@@ -367,7 +375,8 @@ export async function handleConversationRequest(
       claimMs: null,
       entitlementWaitMs,
       providerMs: null,
-      reasoningEffort: geminiOptions.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+      reasoningEffort:
+        geminiOptions.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
     };
     let succeeded = false;
     try {
@@ -400,12 +409,14 @@ export async function handleConversationRequest(
         },
       });
       if (!result.replyable || !result.vibeCheck)
-        throw new ConversationError("unusable_screenshot");
+        throw new UnusableScreenshotError(
+          result.replyable ? "unknown" : (result.failureReason ?? "unknown"),
+        );
       // Keep onboarding cleanup on the existing synchronous path. The normal
       // subscription path may respond once its model result is fully validated.
       successfulSubscriptionResponse = !input.isOnboardingGeneration;
       succeeded = true;
-      return json(result);
+      return json(toPublicConversationResult(result));
     } finally {
       recordStageLatency({
         generation: input.isOnboardingGeneration
@@ -476,11 +487,29 @@ export async function handleConversationRequest(
       code: safeError.kind,
       providerStatus: safeError.providerStatus,
       providerReason: safeError.providerReason,
+      reason:
+        safeError instanceof UnusableScreenshotError
+          ? safeError.reason
+          : undefined,
     };
     // Closed enum and numeric status only: never log a failure object or provider body.
     console.warn("[Wingr AI] request failed", diagnostics);
+    const publicError = new ConversationError(
+      safeError.kind,
+      undefined,
+      undefined,
+      safeError.retryAt,
+    );
     return json(
-      { error: safeError.message, ...diagnostics, retryAt: safeError.retryAt },
+      {
+        error: publicError.message,
+        code: safeError.kind,
+        reason:
+          safeError instanceof UnusableScreenshotError
+            ? safeError.reason
+            : undefined,
+        retryAt: safeError.retryAt,
+      },
       {
         status,
         headers:

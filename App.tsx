@@ -82,6 +82,7 @@ import {
   VibeCheckCard,
 } from "./components/conversation/ConversationContent";
 import { ReplyLoadingScreen } from "./components/conversation/ReplyLoadingScreen";
+import { ScreenshotErrorPopup } from "./components/conversation/ScreenshotErrorPopup";
 import {
   getRevenueCatCustomerInfo,
   hasProEntitlement,
@@ -102,6 +103,7 @@ import {
   type LaunchRoute,
 } from "./lib/launch-routing";
 import { LaunchSplash } from "./components/LaunchSplash";
+import { chooseSemanticReplacement } from "./lib/screenshot-analysis-error";
 
 const DEBUG_BOOT_PROBE = false;
 
@@ -407,9 +409,9 @@ export default function App() {
 
 function WingrApp() {
   const [screen, setScreen] = useState<Screen | null>(null);
-  const [authenticatedUserId, setAuthenticatedUserId] = useState<
-    string | null
-  >(null);
+  const [authenticatedUserId, setAuthenticatedUserId] = useState<string | null>(
+    null,
+  );
   const [onboardingInitialStep, setOnboardingInitialStep] = useState<
     "paywall" | undefined
   >(undefined);
@@ -429,7 +431,7 @@ function WingrApp() {
   const [uploadRevealToken, setUploadRevealToken] = useState<number | null>(
     null,
   );
-  const conversation = useConversationFlow();
+  const conversation = useConversationFlow("pro");
   const {
     error,
     generatedReplies,
@@ -447,6 +449,11 @@ function WingrApp() {
     [FONTS.body]: require("./assets/fonts/ClashGrotesk-Variable.ttf"),
     [FONTS.bodyRegular]: require("./assets/fonts/ClashGrotesk-Regular.ttf"),
   });
+
+  useEffect(() => {
+    if (error?.kind === "permission")
+      Alert.alert("Photo access needed", error.message);
+  }, [error?.id]);
 
   useEffect(() => {
     let mounted = true;
@@ -571,17 +578,22 @@ function WingrApp() {
 
   const handlePickScreenshotForUpload = async () => {
     const screenshotUri = await pickScreenshot();
-
-    if (!screenshotUri) {
-      if (conversation.error?.kind === "permission") {
-        Alert.alert("Photo access needed", conversation.error.message);
-      }
-      return;
-    }
+    if (!screenshotUri) return;
 
     uploadRevealVersionRef.current += 1;
     setUploadRevealToken(uploadRevealVersionRef.current);
     setScreen("upload");
+  };
+
+  const handleSemanticScreenshotReplacement = async () => {
+    await chooseSemanticReplacement({
+      pickScreenshot,
+      onSelected: () => {
+        uploadRevealVersionRef.current += 1;
+        setUploadRevealToken(uploadRevealVersionRef.current);
+        setScreen("upload");
+      },
+    });
   };
 
   const handleEnterLanding = async () => {
@@ -714,7 +726,8 @@ function WingrApp() {
           {screen === "upload" ? (
             <UploadScreenshotScreen
               errorMessage={
-                error?.kind === "analysis"
+                error?.kind === "analysis" &&
+                error.errorCode !== "unusable_screenshot"
                   ? getReplyErrorPresentation(error).message
                   : null
               }
@@ -743,13 +756,22 @@ function WingrApp() {
               onRefreshReplies={handleRefreshReplies}
               onToneChange={handleToneChange}
               replies={generatedReplies}
-              replyError={error?.kind === "replies" ? error : null}
+              replyError={
+                error?.kind === "replies" &&
+                error.errorCode !== "unusable_screenshot"
+                  ? error
+                  : null
+              }
               onDismissReplyError={conversation.clearError}
               selectedScreenshotUri={selectedScreenshotUri}
               vibeCheck={vibeCheck}
               selectedTone={selectedTone}
             />
           ) : null}
+          <ScreenshotErrorPopup
+            error={error}
+            onChooseAnotherScreenshot={handleSemanticScreenshotReplacement}
+          />
         </SafeAreaView>
       </BootErrorBoundary>
     </PostHogProvider>

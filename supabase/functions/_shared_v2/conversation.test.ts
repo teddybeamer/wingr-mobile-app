@@ -7,7 +7,9 @@ import {
   MAX_REPLY_LENGTH,
   MAX_SCREENSHOT_LENGTH,
   parseConversationRequest,
+  parseProviderConversationResult,
   parseConversationResult,
+  SEMANTIC_FAILURE_REASONS,
 } from "./conversation.ts";
 
 import { input, result } from "./test-fixtures.ts";
@@ -145,13 +147,60 @@ test("accepts a clearly unusable result, rejects contradictions and missing/empt
     invalid(() => parseConversationResult(value));
 });
 
-test("Gemini wire schema omits the transcript and keeps string limits in runtime validation", async () => {
+test("provider failure reasons are strict for success and diagnostic-only for rejection", () => {
+  assert.deepEqual(
+    parseProviderConversationResult({ ...result, failureReason: null }),
+    { ...result, failureReason: null },
+  );
+  for (const failureReason of SEMANTIC_FAILURE_REASONS) {
+    assert.deepEqual(
+      parseProviderConversationResult({
+        replyable: false,
+        failureReason,
+        vibeCheck: null,
+        replies: [],
+      }),
+      { replyable: false, failureReason, vibeCheck: null, replies: [] },
+    );
+  }
+  for (const failureReason of [undefined, null, "invalid", 42]) {
+    const value = {
+      replyable: false,
+      vibeCheck: null,
+      replies: [],
+      ...(failureReason === undefined ? {} : { failureReason }),
+    };
+    assert.equal(
+      parseProviderConversationResult(value).failureReason,
+      "unknown",
+    );
+  }
+  for (const value of [
+    result,
+    { ...result, failureReason: "no_conversation" },
+    { ...result, failureReason: null, extra: true },
+    { ...result, failureReason: null, replies: [] },
+    {
+      ...result,
+      failureReason: null,
+      vibeCheck: { ...result.vibeCheck, summary: "x".repeat(1001) },
+    },
+  ])
+    invalid(() => parseProviderConversationResult(value));
+});
+
+test("Gemini wire schema includes the diagnostic and keeps string limits in runtime validation", async () => {
   const { conversationSchema } = await import("./conversation.ts");
   assert.deepEqual(conversationSchema.properties.vibeCheck.type, [
     "object",
     "null",
   ]);
   assert.equal(Object.hasOwn(conversationSchema.properties, "messages"), false);
+  assert.deepEqual(conversationSchema.properties.failureReason.enum, [
+    ...SEMANTIC_FAILURE_REASONS,
+    null,
+  ]);
+  assert.ok(conversationSchema.required.includes("failureReason"));
   assert.equal(conversationSchema.properties.replies.maxItems, 1);
   const schema = JSON.stringify(conversationSchema);
   for (const unsupported of ["anyOf", "minLength", "maxLength"])

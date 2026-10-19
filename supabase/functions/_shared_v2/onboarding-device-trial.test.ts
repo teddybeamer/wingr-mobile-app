@@ -7,7 +7,12 @@ import {
   createTrialCipher,
   type OnboardingTrialStore,
 } from "../_shared/onboarding-device-trial.ts";
-import { input, result } from "./test-fixtures.ts";
+import {
+  asProviderResult,
+  input,
+  providerResult,
+  result,
+} from "./test-fixtures.ts";
 
 const USER_ID = "00000000-0000-4000-8000-000000000001";
 const TRIAL_ID = "00000000-0000-4000-8000-000000000001";
@@ -27,7 +32,11 @@ function createStore(expectedUserId = USER_ID) {
   let attempts = 0;
   const store: OnboardingTrialStore = {
     async abandon(userId, trialId) {
-      if (record?.userId === userId && trialId === TRIAL_ID && record.state === "generating")
+      if (
+        record?.userId === userId &&
+        trialId === TRIAL_ID &&
+        record.state === "generating"
+      )
         record = undefined;
     },
     async begin(userId, trialId) {
@@ -37,7 +46,8 @@ function createStore(expectedUserId = USER_ID) {
         record = { state: "generating", userId };
         return { status: "started" };
       }
-      if (record.state === "generating") return { status: "generation_in_progress" };
+      if (record.state === "generating")
+        return { status: "generation_in_progress" };
       return {
         status: record.state === "finalized" ? "replay" : "result_ready",
         ciphertext: record.ciphertext,
@@ -47,18 +57,28 @@ function createStore(expectedUserId = USER_ID) {
     async finalize(userId, trialId) {
       assert.equal(userId, expectedUserId);
       assert.equal(trialId, TRIAL_ID);
-      if (!record || record.state === "generating") return { status: "trial_unavailable" };
+      if (!record || record.state === "generating")
+        return { status: "trial_unavailable" };
       if (record.state === "finalized")
-        return { status: "replay", ciphertext: record.ciphertext, iv: record.iv };
+        return {
+          status: "replay",
+          ciphertext: record.ciphertext,
+          iv: record.iv,
+        };
       claims++;
       attempts++;
       record.state = "finalized";
-      return { status: "finalized", ciphertext: record.ciphertext, iv: record.iv };
+      return {
+        status: "finalized",
+        ciphertext: record.ciphertext,
+        iv: record.iv,
+      };
     },
     async saveResult(userId, trialId, _hash, encrypted) {
       assert.equal(userId, expectedUserId);
       assert.equal(trialId, TRIAL_ID);
-      if (!record || record.state !== "generating") return { status: "trial_unavailable" };
+      if (!record || record.state !== "generating")
+        return { status: "trial_unavailable" };
       record = { ...record, ...encrypted, state: "result_ready" };
       return { status: "result_ready" };
     },
@@ -111,14 +131,22 @@ function deviceRequest() {
   });
 }
 
-const provider = (value: unknown): typeof fetch => async () =>
-  Response.json({
-    choices: [
-      { finish_reason: "stop", message: { content: JSON.stringify(value) } },
-    ],
-  });
+const provider =
+  (value: unknown): typeof fetch =>
+  async () =>
+    Response.json({
+      choices: [
+        {
+          finish_reason: "stop",
+          message: { content: JSON.stringify(asProviderResult(value)) },
+        },
+      ],
+    });
 
-function createManager(store: OnboardingTrialStore, deviceCheck: ReturnType<typeof createDeviceCheck>["deviceCheck"]) {
+function createManager(
+  store: OnboardingTrialStore,
+  deviceCheck: ReturnType<typeof createDeviceCheck>["deviceCheck"],
+) {
   return createDeviceCheckOnboardingTrialManager({
     cipher: createTrialCipher(KEY),
     deviceCheck,
@@ -141,16 +169,44 @@ test("a provider failure abandons the DeviceCheck lease without marking the devi
   const memory = createStore();
   const apple = createDeviceCheck();
   let providerCalls = 0;
-  const response = await call(createManager(memory.store, apple.deviceCheck), async () => {
-    providerCalls++;
-    throw new Error("network unavailable");
-  });
+  const response = await call(
+    createManager(memory.store, apple.deviceCheck),
+    async () => {
+      providerCalls++;
+      throw new Error("network unavailable");
+    },
+  );
 
   assert.equal(response.status, 502);
   assert.equal(providerCalls, 1);
   assert.equal(memory.record(), undefined);
   assert.equal(memory.claims(), 0);
   assert.equal(memory.attempts(), 0);
+  assert.equal(apple.marks(), 0);
+});
+
+test("a semantic screenshot failure abandons the free preview without consuming it", async () => {
+  const memory = createStore();
+  const apple = createDeviceCheck();
+  let providerCalls = 0;
+  const response = await call(
+    createManager(memory.store, apple.deviceCheck),
+    async (...args) => {
+      providerCalls++;
+      return provider({
+        replyable: false,
+        failureReason: "no_conversation",
+        vibeCheck: null,
+        replies: [],
+      })(...args);
+    },
+  );
+  assert.equal(response.status, 422);
+  assert.equal((await response.json()).reason, "no_conversation");
+  assert.equal(providerCalls, 1);
+  assert.equal(memory.claims(), 0);
+  assert.equal(memory.attempts(), 0);
+  assert.equal(memory.record(), undefined);
   assert.equal(apple.marks(), 0);
 });
 
@@ -194,7 +250,10 @@ test("a used DeviceCheck bit produces the Pro continuation without Gemini", asyn
       providerCalls++;
       return Response.json({
         choices: [
-          { finish_reason: "stop", message: { content: JSON.stringify(result) } },
+          {
+            finish_reason: "stop",
+            message: { content: JSON.stringify(providerResult) },
+          },
         ],
       });
     },
@@ -215,7 +274,10 @@ test("an uninitialized DeviceCheck state permits one generation and then blocks 
     return provider(result)(...args);
   };
 
-  const first = await call(createManager(firstStore.store, apple.deviceCheck), fetchImpl);
+  const first = await call(
+    createManager(firstStore.store, apple.deviceCheck),
+    fetchImpl,
+  );
   assert.equal(first.status, 200);
   assert.equal(providerCalls, 1);
   assert.equal(apple.marks(), 1);
@@ -223,7 +285,10 @@ test("an uninitialized DeviceCheck state permits one generation and then blocks 
   assert.equal(firstStore.attempts(), 1);
 
   const laterStore = createStore();
-  const later = await call(createManager(laterStore.store, apple.deviceCheck), fetchImpl);
+  const later = await call(
+    createManager(laterStore.store, apple.deviceCheck),
+    fetchImpl,
+  );
   assert.equal(later.status, 409);
   assert.equal((await later.json()).code, "onboarding_device_reply_used");
   assert.equal(providerCalls, 1);
@@ -232,7 +297,9 @@ test("an uninitialized DeviceCheck state permits one generation and then blocks 
 
 test("a DeviceCheck query failure remains fail-closed before Gemini", async () => {
   const memory = createStore();
-  const apple = createDeviceCheck({ queryError: new Error("Apple unavailable") });
+  const apple = createDeviceCheck({
+    queryError: new Error("Apple unavailable"),
+  });
   let providerCalls = 0;
 
   const response = await call(
@@ -244,7 +311,10 @@ test("a DeviceCheck query failure remains fail-closed before Gemini", async () =
   );
 
   assert.equal(response.status, 503);
-  assert.equal((await response.json()).code, "generation_protection_unavailable");
+  assert.equal(
+    (await response.json()).code,
+    "generation_protection_unavailable",
+  );
   assert.equal(providerCalls, 0);
   assert.equal(memory.record(), undefined);
   assert.equal(apple.marks(), 0);
@@ -293,7 +363,6 @@ test("concurrent DeviceCheck trials dispatch one model request", async () => {
   release();
   assert.equal((await first).status, 200);
 });
-
 
 // ---------------------------------------------------------------------------
 // Onboarding requires DeviceCheck on ai-conversation-v2. There is no fallback to
@@ -391,7 +460,14 @@ test("an onboarding request without a DeviceCheck token is rejected before any e
 
 test("an empty, blank or malformed DeviceCheck token is rejected before any entitlement, usage claim or Gemini call", async () => {
   const spies = createSpies();
-  for (const deviceCheckToken of ["", "   ", "not base64!!", "dGVz dA==", "====", "a".repeat(4097)]) {
+  for (const deviceCheckToken of [
+    "",
+    "   ",
+    "not base64!!",
+    "dGVz dA==",
+    "====",
+    "a".repeat(4097),
+  ]) {
     const response = await handleConversationRequest(
       rawRequest({
         ...input,
@@ -406,7 +482,11 @@ test("an empty, blank or malformed DeviceCheck token is rejected before any enti
         onboardingTrialManager: spies.countingManager,
       },
     );
-    assert.equal(response.status, 400, JSON.stringify(deviceCheckToken.slice(0, 12)));
+    assert.equal(
+      response.status,
+      400,
+      JSON.stringify(deviceCheckToken.slice(0, 12)),
+    );
     assert.equal((await response.json()).code, "invalid_request");
   }
   assert.deepEqual(spies.calls, untouched);
@@ -415,7 +495,9 @@ test("an empty, blank or malformed DeviceCheck token is rejected before any enti
 test("a DeviceCheck token that Apple cannot verify fails closed before any entitlement, usage claim or Gemini call", async () => {
   const spies = createSpies();
   const memory = createStore();
-  const apple = createDeviceCheck({ queryError: new Error("Apple rejected the token") });
+  const apple = createDeviceCheck({
+    queryError: new Error("Apple rejected the token"),
+  });
   const response = await handleConversationRequest(deviceRequest(), "key", {
     ...spies.options,
     fetchImpl: spies.fetchImpl,
@@ -423,7 +505,10 @@ test("a DeviceCheck token that Apple cannot verify fails closed before any entit
   });
 
   assert.equal(response.status, 503);
-  assert.equal((await response.json()).code, "generation_protection_unavailable");
+  assert.equal(
+    (await response.json()).code,
+    "generation_protection_unavailable",
+  );
   assert.deepEqual(spies.calls, untouched);
   assert.equal(memory.record(), undefined);
   assert.equal(apple.marks(), 0);
@@ -437,7 +522,10 @@ test("a tokened onboarding request fails closed when DeviceCheck is not configur
   });
 
   assert.equal(response.status, 503);
-  assert.equal((await response.json()).code, "generation_protection_unavailable");
+  assert.equal(
+    (await response.json()).code,
+    "generation_protection_unavailable",
+  );
   assert.deepEqual(spies.calls, untouched);
 });
 
@@ -453,7 +541,11 @@ test("a valid onboarding request is authorized only by the DeviceCheck trial and
     onboardingTrialManager: manager,
   };
 
-  const first = await handleConversationRequest(deviceRequest(), "key", options);
+  const first = await handleConversationRequest(
+    deviceRequest(),
+    "key",
+    options,
+  );
   assert.equal(first.status, 200);
   assert.deepEqual(await first.json(), result);
   assert.deepEqual(spies.efforts, [{ effort: "low" }]);
@@ -463,7 +555,11 @@ test("a valid onboarding request is authorized only by the DeviceCheck trial and
   assert.deepEqual(spies.calls, { ...untouched, provider: 1 });
 
   // The 15-minute cached replay still answers a retry without another model call.
-  const replay = await handleConversationRequest(deviceRequest(), "key", options);
+  const replay = await handleConversationRequest(
+    deviceRequest(),
+    "key",
+    options,
+  );
   assert.equal(replay.status, 200);
   assert.deepEqual(await replay.json(), result);
   assert.deepEqual(spies.calls, { ...untouched, provider: 1 });
@@ -494,7 +590,11 @@ test("a paid generation without a DeviceCheck token is unaffected and never touc
 test("DeviceCheck fields cannot turn a paid request into an onboarding request or skip the entitlement check", async () => {
   const spies = createSpies();
   const response = await handleConversationRequest(
-    rawRequest({ ...input, deviceCheckToken: DEVICE_TOKEN, onboardingTrialId: TRIAL_ID }),
+    rawRequest({
+      ...input,
+      deviceCheckToken: DEVICE_TOKEN,
+      onboardingTrialId: TRIAL_ID,
+    }),
     "key",
     {
       ...spies.options,

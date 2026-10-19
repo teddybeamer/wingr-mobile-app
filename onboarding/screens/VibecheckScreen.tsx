@@ -23,7 +23,9 @@ export function VibecheckScreen(props: OnboardingScreenProps) {
     conversation.error?.code === "onboarding_device_reply_used";
 
   const chooseAnotherScreenshot = async () => {
-    const screenshotUri = await conversation.pickScreenshot();
+    const screenshotUri = await conversation.pickScreenshot({
+      preserveTone: true,
+    });
 
     if (screenshotUri) {
       await onReplacementScreenshotSelected?.(screenshotUri);
@@ -36,7 +38,9 @@ export function VibecheckScreen(props: OnboardingScreenProps) {
 
   return (
     <OnboardingScreenScaffold {...props} middleContentScrollable>
-      {conversation.analysisStatus === "error" && conversation.error ? (
+      {conversation.analysisStatus === "error" &&
+      conversation.error &&
+      conversation.error.errorCode !== "unusable_screenshot" ? (
         <InlineErrorCard
           message={conversation.error.message}
           onPrimaryAction={() => {
@@ -93,7 +97,9 @@ export function VibecheckScreen(props: OnboardingScreenProps) {
         </>
       ) : null}
 
-      {conversation.repliesStatus === "error" && conversation.error ? (
+      {conversation.repliesStatus === "error" &&
+      conversation.error &&
+      conversation.error.errorCode !== "unusable_screenshot" ? (
         <InlineErrorCard
           message={conversation.error.message}
           onPrimaryAction={() => {

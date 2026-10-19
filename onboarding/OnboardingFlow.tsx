@@ -28,6 +28,8 @@ import type {
   OnboardingScreenProps,
   OnboardingStepId,
 } from "./types/onboarding";
+import { ScreenshotErrorPopup } from "../components/conversation/ScreenshotErrorPopup";
+import { chooseSemanticReplacement } from "../lib/screenshot-analysis-error";
 
 type OnboardingFlowProps = {
   initialStepId?: OnboardingStepId;
@@ -99,8 +101,12 @@ function OnboardingFlowContent({
   onMore,
   userId,
 }: OnboardingFlowProps & { initialStepId?: OnboardingStepId }) {
-  const conversation = useConversationFlow();
+  const conversation = useConversationFlow("onboarding");
   const [analysisFailureCount, setAnalysisFailureCount] = useState(0);
+  useEffect(() => {
+    if (conversation.error?.kind === "permission")
+      Alert.alert("Photo access needed", conversation.error.message);
+  }, [conversation.error?.id]);
   const completeOnboarding = useCallback(async () => {
     conversation.reset();
     setAnalysisFailureCount(0);
@@ -211,6 +217,7 @@ function OnboardingFlowContent({
         );
         return;
       }
+      if (result.error.errorCode === "unusable_screenshot") return;
       const alert = getOnboardingAnalysisFailureAlert(result.error);
       Alert.alert(alert.title, alert.message);
       goBack();
@@ -224,6 +231,13 @@ function OnboardingFlowContent({
   const analyzeReplacementScreenshot = async (screenshotUri: string) => {
     setAnalysisFailureCount(0);
     await analyzeScreenshotForOnboarding(screenshotUri);
+  };
+
+  const chooseReplacementFromSemanticError = async () => {
+    await chooseSemanticReplacement({
+      pickScreenshot: conversation.pickScreenshot,
+      onSelected: analyzeReplacementScreenshot,
+    });
   };
 
   const handleDevicePreviewUsed = () => {
@@ -244,36 +258,42 @@ function OnboardingFlowContent({
   }, []);
 
   return (
-    <ScreenComponent
-      canGoBack={canGoBack}
-      canContinue={stepCanContinue}
-      analysisFailureCount={analysisFailureCount}
-      content={currentStep.content}
-      conversation={conversation}
-      ctaDisabled={!stepCanContinue}
-      ctaLoading={ctaLoading}
-      currentIndex={currentIndex}
-      isLastStep={isLastStep}
-      moreVisible={moreVisible}
-      onBack={goBack}
-      onComplete={completeOnboarding}
-      onDevicePreviewUsed={handleDevicePreviewUsed}
-      onMore={onMore}
-      onNext={goNext}
-      onPrimaryAction={handlePrimaryAction}
-      onReplacementScreenshotSelected={analyzeReplacementScreenshot}
-      onRetryScreenshotAnalysis={retryScreenshotAnalysis}
-      onScreenshotSelected={handleScreenshotSelected}
-      onSelectChoice={selectChoice}
-      onSkip={() => {
-        if (isUploadStep) {
-          goToStep("testimonials");
-          return;
-        }
-        skip();
-      }}
-      selectedChoiceId={selectedChoiceId}
-      totalSteps={totalSteps}
-    />
+    <>
+      <ScreenComponent
+        canGoBack={canGoBack}
+        canContinue={stepCanContinue}
+        analysisFailureCount={analysisFailureCount}
+        content={currentStep.content}
+        conversation={conversation}
+        ctaDisabled={!stepCanContinue}
+        ctaLoading={ctaLoading}
+        currentIndex={currentIndex}
+        isLastStep={isLastStep}
+        moreVisible={moreVisible}
+        onBack={goBack}
+        onComplete={completeOnboarding}
+        onDevicePreviewUsed={handleDevicePreviewUsed}
+        onMore={onMore}
+        onNext={goNext}
+        onPrimaryAction={handlePrimaryAction}
+        onReplacementScreenshotSelected={analyzeReplacementScreenshot}
+        onRetryScreenshotAnalysis={retryScreenshotAnalysis}
+        onScreenshotSelected={handleScreenshotSelected}
+        onSelectChoice={selectChoice}
+        onSkip={() => {
+          if (isUploadStep) {
+            goToStep("testimonials");
+            return;
+          }
+          skip();
+        }}
+        selectedChoiceId={selectedChoiceId}
+        totalSteps={totalSteps}
+      />
+      <ScreenshotErrorPopup
+        error={conversation.error}
+        onChooseAnotherScreenshot={chooseReplacementFromSemanticError}
+      />
+    </>
   );
 }
