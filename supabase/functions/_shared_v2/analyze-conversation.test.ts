@@ -6,6 +6,7 @@ import {
   type ConversationHandlerOptions,
 } from "./analyze-conversation.ts";
 import { ConversationError } from "./conversation.ts";
+import { DEEPSEEK_MODEL } from "./openrouter.ts";
 import {
   createRevenueCatEntitlementVerifier,
   RevenueCatVerificationError,
@@ -17,7 +18,11 @@ import {
   providerResult,
   result,
 } from "./test-fixtures.ts";
-import type { GenerationLease, UsageLimiter } from "../_shared/usage-limit.ts";
+import type {
+  GenerationLease,
+  SettlementOutcome,
+  UsageLimiter,
+} from "./usage-limit.ts";
 
 const AUTHENTICATED_USER_ID = "00000000-0000-4000-8000-000000000001";
 const TEST_LEASE_ID = "00000000-0000-4000-8000-000000000101";
@@ -25,50 +30,53 @@ const testLease = (leaseId = TEST_LEASE_ID): GenerationLease => ({
   expiresAt: new Date(Date.now() + 60_000).toISOString(),
   leaseId,
 });
+const settled = (charged = true) => ({ applied: true, charged });
 const allowUsage = (): UsageLimiter => ({
-  claim: async () => testLease(),
-  claimOnboarding: async () => testLease(),
-  release: async () => true,
+  reserve: async () => testLease(),
+  settle: async () => settled(),
 });
+// Mirrors the database rules: reserving checks the limit and takes the lease but
+// charges nothing; settling ends the lease and charges 1 for a success, 1 for
+// every 5th invalid screenshot, and 0 for everything else.
 function createInMemoryGuard(initialAttempts: Record<string, number> = {}) {
   const active = new Map<string, GenerationLease>();
   const attempts = new Map(Object.entries(initialAttempts));
-  const onboardingClaims = new Set<string>();
-  const begin = async (
-    authorization: string | null,
-    isOnboarding: boolean,
-    subscriptionPlan: RevenueCatSubscriptionPlan = "monthly",
-  ) => {
-    await Promise.resolve();
-    const user = authorization ?? "missing";
-    const current = active.get(user);
-    if (current)
-      throw new ConversationError(
-        "generation_in_progress",
-        undefined,
-        undefined,
-        current.expiresAt,
-      );
-    if (isOnboarding && onboardingClaims.has(user))
-      throw new ConversationError("onboarding_reply_used");
-    const used = attempts.get(user) ?? 0;
-    const limit = subscriptionPlan === "weekly" ? 125 : 500;
-    if (used >= limit) throw new ConversationError("usage_limit");
-    if (isOnboarding) onboardingClaims.add(user);
-    attempts.set(user, used + 1);
-    const lease = testLease(crypto.randomUUID());
-    active.set(user, lease);
-    return lease;
-  };
+  const invalidPending = new Map<string, number>();
+  const settlements: { charged: boolean; outcome: SettlementOutcome }[] = [];
   const limiter: UsageLimiter = {
-    claim: (authorization, subscriptionPlan) =>
-      begin(authorization, false, subscriptionPlan),
-    claimOnboarding: (authorization) => begin(authorization, true),
-    release: async (authorization, leaseId) => {
+    reserve: async (authorization, subscriptionPlan) => {
+      await Promise.resolve();
       const user = authorization ?? "missing";
-      if (active.get(user)?.leaseId !== leaseId) return false;
+      const current = active.get(user);
+      if (current)
+        throw new ConversationError(
+          "generation_in_progress",
+          undefined,
+          undefined,
+          current.expiresAt,
+        );
+      const limit = subscriptionPlan === "weekly" ? 125 : 500;
+      if ((attempts.get(user) ?? 0) >= limit)
+        throw new ConversationError("usage_limit");
+      const lease = testLease(crypto.randomUUID());
+      active.set(user, lease);
+      return lease;
+    },
+    settle: async (authorization, leaseId, outcome) => {
+      await Promise.resolve();
+      const user = authorization ?? "missing";
+      if (active.get(user)?.leaseId !== leaseId)
+        return { applied: false, charged: false };
       active.delete(user);
-      return true;
+      let charged = outcome === "success";
+      if (outcome === "invalid_screenshot") {
+        const pending = (invalidPending.get(user) ?? 0) + 1;
+        charged = pending >= 5;
+        invalidPending.set(user, charged ? 0 : pending);
+      }
+      if (charged) attempts.set(user, (attempts.get(user) ?? 0) + 1);
+      settlements.push({ charged, outcome });
+      return { applied: true, charged };
     },
   };
   return {
@@ -76,8 +84,11 @@ function createInMemoryGuard(initialAttempts: Record<string, number> = {}) {
     attemptsFor(authorization: string) {
       return attempts.get(authorization) ?? 0;
     },
+    invalidPendingFor(authorization: string) {
+      return invalidPending.get(authorization) ?? 0;
+    },
     limiter,
-    onboardingClaims,
+    settlements,
   };
 }
 function deferred<T>() {
@@ -179,17 +190,14 @@ test("normal generation verifies the authenticated user before usage and OpenRou
       },
     },
     usageLimiter: {
-      claim: async (_authorization, subscriptionPlan) => {
+      reserve: async (_authorization, subscriptionPlan) => {
         assert.equal(subscriptionPlan, "monthly");
         order.push("usage");
         return testLease();
       },
-      claimOnboarding: async () => {
-        throw new Error("must not use the onboarding claim");
-      },
-      release: async () => {
-        order.push("release");
-        return true;
+      settle: async () => {
+        order.push("settle");
+        return settled();
       },
     },
     fetchImpl: async (...args) => {
@@ -203,7 +211,7 @@ test("normal generation verifies the authenticated user before usage and OpenRou
     "entitlement",
     "usage",
     "openrouter",
-    "release",
+    "settle",
   ]);
 });
 
@@ -215,12 +223,11 @@ test("missing pro returns subscription_required without usage or OpenRouter", as
       verifyAccess: async () => ({ hasActivePro: false }),
     },
     usageLimiter: {
-      claim: async () => {
+      reserve: async () => {
         usageClaims++;
         return testLease();
       },
-      claimOnboarding: async () => testLease(),
-      release: async () => true,
+      settle: async () => settled(),
     },
     fetchImpl: async (...args) => {
       providerCalls++;
@@ -261,12 +268,11 @@ test("a confirmed missing RevenueCat customer returns subscription_required", as
   const response = await handleConversationRequest(request(), "key", {
     entitlementVerifier,
     usageLimiter: {
-      claim: async () => {
+      reserve: async () => {
         usageClaims++;
         return testLease();
       },
-      claimOnboarding: async () => testLease(),
-      release: async () => true,
+      settle: async () => settled(),
     },
     fetchImpl: async (...args) => {
       providerCalls++;
@@ -305,12 +311,11 @@ test("request-body identity and premium fields cannot bypass the verified user e
         },
       },
       usageLimiter: {
-        claim: async () => {
+        reserve: async () => {
           usageClaims++;
           return testLease();
         },
-        claimOnboarding: async () => testLease(),
-        release: async () => true,
+        settle: async () => settled(),
       },
       fetchImpl: async (...args) => {
         providerCalls++;
@@ -343,12 +348,11 @@ test("request-body plan and product fields cannot override the trusted RevenueCa
         }),
       },
       usageLimiter: {
-        claim: async (_authorization, subscriptionPlan) => {
+        reserve: async (_authorization, subscriptionPlan) => {
           claimedPlans.push(subscriptionPlan);
           return testLease();
         },
-        claimOnboarding: async () => testLease(),
-        release: async () => true,
+        settle: async () => settled(),
       },
       fetchImpl: provider(result),
     },
@@ -373,12 +377,11 @@ test("entitlement verification failures fail closed before usage and OpenRouter"
         },
       },
       usageLimiter: {
-        claim: async () => {
+        reserve: async () => {
           usageClaims++;
           return testLease();
         },
-        claimOnboarding: async () => testLease(),
-        release: async () => true,
+        settle: async () => settled(),
       },
       fetchImpl: async (...args) => {
         providerCalls++;
@@ -461,12 +464,11 @@ test("request validation rejects before RevenueCat or usage", async () => {
         },
       },
       usageLimiter: {
-        claim: async () => {
+        reserve: async () => {
           usageClaims++;
           return testLease();
         },
-        claimOnboarding: async () => testLease(),
-        release: async () => true,
+        settle: async () => settled(),
       },
       fetchImpl: async () => {
         providerCalls++;
@@ -507,15 +509,11 @@ test("Content-Length above the request limit rejects before the body is read", a
       },
     },
     usageLimiter: {
-      claim: async () => {
+      reserve: async () => {
         usageClaims++;
         return testLease();
       },
-      claimOnboarding: async () => {
-        usageClaims++;
-        return testLease();
-      },
-      release: async () => true,
+      settle: async () => settled(),
     },
     fetchImpl: async () => {
       providerCalls++;
@@ -552,15 +550,11 @@ test("streamed bodies that exceed the limit reject before RevenueCat and OpenRou
           },
         },
         usageLimiter: {
-          claim: async () => {
+          reserve: async () => {
             usageClaims++;
             return testLease();
           },
-          claimOnboarding: async () => {
-            usageClaims++;
-            return testLease();
-          },
-          release: async () => true,
+          settle: async () => settled(),
         },
         fetchImpl: async () => {
           providerCalls++;
@@ -728,49 +722,63 @@ test("semantic failures preserve 422 and return only a validated reason", async 
   }
 });
 
-test("provider dispatch permanently claims usage for successful and unusable model results", async () => {
-  for (const value of [
-    result,
-    { replyable: false, vibeCheck: null, replies: [] },
-    { ...result, replies: [] },
-  ]) {
-    let claims = 0;
-    let calls = 0;
-    let releases = 0;
+test("every provider dispatch reserves once and settles once with the matching outcome", async () => {
+  const unusable = (failureReason: string) => ({
+    replyable: false,
+    failureReason,
+    vibeCheck: null,
+    replies: [],
+  });
+  const scenarios: [unknown, number, SettlementOutcome][] = [
+    [result, 200, "success"],
+    [unusable("unreadable_image"), 422, "invalid_screenshot"],
+    [unusable("no_conversation"), 422, "invalid_screenshot"],
+    [unusable("ownership_unclear"), 422, "failure"],
+    [unusable("no_replyable_message"), 422, "failure"],
+    [unusable("unknown"), 422, "failure"],
+    [{ replyable: false, vibeCheck: null, replies: [] }, 422, "failure"],
+    [{ ...result, replies: [] }, 502, "failure"],
+  ];
+  for (const [value, status, expected] of scenarios) {
+    const calls: unknown[][] = [];
+    let reserves = 0;
+    let providerCalls = 0;
     const response = await handleConversationRequest(request(), "key", {
       usageLimiter: {
-        claim: async () => {
-          claims++;
+        reserve: async () => {
+          reserves++;
           return testLease();
         },
-        claimOnboarding: async () => testLease(),
-        release: async () => {
-          releases++;
-          return true;
+        settle: async (...args) => {
+          calls.push(args);
+          return settled();
         },
       },
       fetchImpl: async (...args) => {
-        calls++;
+        providerCalls++;
         return provider(value)(...args);
       },
     });
-    assert.ok([200, 422, 502].includes(response.status));
-    assert.equal(claims, 1);
-    assert.equal(calls, 1);
-    assert.equal(releases, 1);
+    assert.equal(response.status, status);
+    assert.equal(reserves, 1);
+    assert.equal(providerCalls, 1);
+    assert.deepEqual(calls, [["Bearer signed-user", TEST_LEASE_ID, expected]]);
   }
 });
 
-test("failures before provider dispatch do not claim usage", async () => {
-  let claims = 0;
+test("failures before provider dispatch neither reserve nor settle", async () => {
+  let reserves = 0;
+  let settles = 0;
   let calls = 0;
-  const usageLimiter = {
-    claim: async () => {
-      claims++;
+  const usageLimiter: UsageLimiter = {
+    reserve: async () => {
+      reserves++;
       return testLease();
     },
-    claimOnboarding: async () => testLease(),
-    release: async () => true,
+    settle: async () => {
+      settles++;
+      return settled();
+    },
   };
   const fetchImpl: typeof fetch = async () => {
     calls++;
@@ -795,74 +803,42 @@ test("failures before provider dispatch do not claim usage", async () => {
     ).status,
     502,
   );
-  assert.equal(claims, 0);
+  assert.equal(reserves, 0);
+  assert.equal(settles, 0);
   assert.equal(calls, 0);
 });
 
-test("the usage limit rejects before Gemini, including concurrent requests", async () => {
-  let used = 499;
+test("a limit rejection reserves nothing, so it is never settled or charged", async () => {
+  let settles = 0;
   let calls = 0;
-  const usageLimiter = {
-    claim: async () => {
-      await Promise.resolve();
-      if (used >= 500)
+  const response = await handleConversationRequest(request(), "key", {
+    usageLimiter: {
+      reserve: async () => {
         throw new ConversationError(
           "usage_limit",
           undefined,
           undefined,
           "2026-10-09T14:34:00Z",
         );
-      used++;
-      return testLease();
+      },
+      settle: async () => {
+        settles++;
+        return settled();
+      },
     },
-    claimOnboarding: async () => testLease(),
-    release: async () => true,
-  };
-  const first = await handleConversationRequest(request(), "key", {
-    usageLimiter,
     fetchImpl: async (...args) => {
       calls++;
       return provider(result)(...args);
     },
   });
-  const second = await handleConversationRequest(request(), "key", {
-    usageLimiter,
-    fetchImpl: async (...args) => {
-      calls++;
-      return provider(result)(...args);
-    },
-  });
-  assert.equal(first.status, 200);
-  assert.equal(second.status, 429);
-  assert.deepEqual(await second.json(), {
+  assert.equal(response.status, 429);
+  assert.deepEqual(await response.json(), {
     code: "usage_limit",
     error: "You’ve reached your reply limit. Please check back later.",
     retryAt: "2026-10-09T14:34:00.000Z",
   });
-  assert.equal(calls, 1);
-
-  used = 0;
-  calls = 0;
-  const responses = await Promise.all(
-    Array.from({ length: 501 }, () =>
-      handleConversationRequest(request(), "key", {
-        usageLimiter,
-        fetchImpl: async (...args) => {
-          calls++;
-          return provider(result)(...args);
-        },
-      }),
-    ),
-  );
-  assert.equal(
-    responses.filter((response) => response.status === 200).length,
-    500,
-  );
-  assert.equal(
-    responses.filter((response) => response.status === 429).length,
-    1,
-  );
-  assert.equal(calls, 500);
+  assert.equal(calls, 0);
+  assert.equal(settles, 0);
 });
 
 test("the Weekly limit allows attempt 125 and rejects attempt 126 before OpenRouter", async () => {
@@ -918,7 +894,9 @@ test("10 and 50 parallel requests for one user dispatch exactly once", async () 
 
     await nextTurn();
     assert.equal(providerCalls, 1);
-    assert.equal(guard.attemptsFor(authorization), 1);
+    // Reserved but not charged while the generation is in flight.
+    assert.equal(guard.attemptsFor(authorization), 0);
+    assert.equal(guard.active.size, 1);
     providerGate.resolve(
       Response.json({
         choices: [
@@ -942,6 +920,9 @@ test("10 and 50 parallel requests for one user dispatch exactly once", async () 
     );
     assert.match(rejection.headers.get("retry-after") ?? "", /^\d+$/);
     assert.equal(guard.active.size, 0);
+    // Exactly one charge, however many requests raced.
+    assert.equal(guard.attemptsFor(authorization), 1);
+    assert.equal(guard.settlements.length, 1);
   }
 });
 
@@ -973,10 +954,11 @@ test("parallel requests allow one active generation independently per user", asy
 
   await nextTurn();
   assert.equal(providerCalls, 2);
-  assert.equal(guard.attemptsFor("Bearer user-a"), 1);
-  assert.equal(guard.attemptsFor("Bearer user-b"), 1);
+  assert.equal(guard.active.size, 2);
   providerGate.resolve();
   const responses = await pending;
+  assert.equal(guard.attemptsFor("Bearer user-a"), 1);
+  assert.equal(guard.attemptsFor("Bearer user-b"), 1);
   assert.equal(responses.filter(({ status }) => status === 200).length, 2);
   assert.equal(responses.filter(({ status }) => status === 429).length, 18);
 });
@@ -1000,7 +982,7 @@ test("499 attempts plus concurrent requests permits only attempt 500", async () 
 
   await nextTurn();
   assert.equal(providerCalls, 1);
-  assert.equal(guard.attemptsFor(authorization), 500);
+  assert.equal(guard.attemptsFor(authorization), 499);
   providerGate.resolve(
     Response.json({
       choices: [
@@ -1014,6 +996,16 @@ test("499 attempts plus concurrent requests permits only attempt 500", async () 
   const responses = await pending;
   assert.equal(responses.filter(({ status }) => status === 200).length, 1);
   assert.equal(responses.filter(({ status }) => status === 429).length, 19);
+  assert.equal(guard.attemptsFor(authorization), 500);
+
+  // The next request is refused at the limit without dispatching.
+  const afterLimit = await handleConversationRequest(
+    requestForUser("near-limit"),
+    "key",
+    { usageLimiter: guard.limiter, fetchImpl: provider(result) },
+  );
+  assert.equal(afterLimit.status, 429);
+  assert.equal((await afterLimit.json()).code, "usage_limit");
 });
 
 test("500 attempts fail closed without a lease or provider dispatch", async () => {
@@ -1042,34 +1034,42 @@ test("500 attempts fail closed without a lease or provider dispatch", async () =
   );
 });
 
-test("leases release after provider failure and timeout", async () => {
-  for (const scenario of ["provider", "timeout"] as const) {
-    let releases = 0;
-    const usageLimiter: UsageLimiter = {
-      claim: async () => testLease(),
-      claimOnboarding: async () => testLease(),
-      release: async () => {
-        releases++;
-        return true;
-      },
-    };
+test("technical failures settle as free after provider failure, timeout and client abort", async () => {
+  for (const scenario of ["provider", "timeout", "invalid_json"] as const) {
+    const outcomes: SettlementOutcome[] = [];
     const response = await handleConversationRequest(request(), "key", {
-      usageLimiter,
+      usageLimiter: {
+        reserve: async () => testLease(),
+        settle: async (_authorization, _leaseId, outcome) => {
+          outcomes.push(outcome);
+          return settled(false);
+        },
+      },
       timeoutMs: 5,
       fetchImpl:
         scenario === "provider"
           ? async () => new Response(null, { status: 503 })
-          : async (_url, init) =>
-              await new Promise<Response>((_resolve, reject) => {
-                init?.signal?.addEventListener(
-                  "abort",
-                  () => reject(new DOMException("Aborted", "AbortError")),
-                  { once: true },
-                );
-              }),
+          : scenario === "invalid_json"
+            ? async () =>
+                Response.json({
+                  choices: [
+                    {
+                      finish_reason: "stop",
+                      message: { content: "{ not json" },
+                    },
+                  ],
+                })
+            : async (_url, init) =>
+                await new Promise<Response>((_resolve, reject) => {
+                  init?.signal?.addEventListener(
+                    "abort",
+                    () => reject(new DOMException("Aborted", "AbortError")),
+                    { once: true },
+                  );
+                }),
     });
-    assert.equal(response.status, scenario === "provider" ? 502 : 504);
-    assert.equal(releases, 1);
+    assert.equal(response.status, scenario === "timeout" ? 504 : 502, scenario);
+    assert.deepEqual(outcomes, ["failure"], scenario);
   }
 });
 
@@ -1077,11 +1077,10 @@ test("missing or failed acquisition protection fails closed before OpenRouter", 
   for (const usageLimiter of [
     undefined,
     {
-      claim: async () => {
+      reserve: async () => {
         throw new ConversationError("generation_protection_unavailable");
       },
-      claimOnboarding: async () => testLease(),
-      release: async () => true,
+      settle: async () => settled(),
     } satisfies UsageLimiter,
   ]) {
     let providerCalls = 0;
@@ -1105,103 +1104,85 @@ test("missing or failed acquisition protection fails closed before OpenRouter", 
   }
 });
 
-test("release failure never replaces a valid provider response", async (t) => {
-  const warning = t.mock.method(console, "warn", () => {});
+test("a settlement failure never replaces a valid reply and is logged without identifiers", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  const info = t.mock.method(console, "info", () => {});
+  let settleCalls = 0;
   const response = await handleConversationRequest(request(), "key", {
     usageLimiter: {
-      claim: async () => testLease(),
-      claimOnboarding: async () => testLease(),
-      release: async () => {
+      reserve: async () => testLease(),
+      settle: async () => {
+        settleCalls++;
+        throw new ConversationError("generation_protection_unavailable");
+      },
+    },
+    fetchImpl: provider(result),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), result);
+  // Settlement is attempted exactly once and never retried.
+  assert.equal(settleCalls, 1);
+  assert.deepEqual(warn.mock.calls[0].arguments, [
+    "[Wingr AI] generation settlement failed",
+    { code: "generation_settlement_failed", settlement: "success" },
+  ]);
+  const call = info.mock.calls.find(
+    ({ arguments: [event] }) => event === "[Wingr AI] generation settlement",
+  );
+  const fields = call?.arguments[1] as Record<string, unknown>;
+  assert.equal(fields.result, "failed");
+  assert.equal(fields.charged, null);
+  assert.ok(
+    !JSON.stringify([warn.mock.calls, info.mock.calls]).includes(TEST_LEASE_ID),
+  );
+});
+
+test("a settlement failure after an unusable screenshot still returns the 422", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const response = await handleConversationRequest(request(), "key", {
+    usageLimiter: {
+      reserve: async () => testLease(),
+      settle: async () => {
         throw new Error("database unavailable");
       },
     },
-    fetchImpl: provider(result),
+    fetchImpl: provider({
+      replyable: false,
+      failureReason: "unreadable_image",
+      vibeCheck: null,
+      replies: [],
+    }),
   });
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), result);
-  assert.deepEqual(warning.mock.calls[0].arguments, [
-    "[Wingr AI] generation lease release failed",
-    { code: "generation_lease_release_failed" },
-  ]);
+  assert.equal(response.status, 422);
+  assert.equal((await response.json()).code, "unusable_screenshot");
 });
 
-test("a valid subscription reply is not delayed by lease cleanup", async () => {
-  const cleanup = deferred<void>();
-  let releaseCalls = 0;
-  let scheduledRelease: (() => Promise<void>) | undefined;
-  const response = await handleConversationRequest(request(), "key", {
-    defer(task) {
-      scheduledRelease = task;
-    },
+test("the reply is returned only after settlement has completed", async () => {
+  const order: string[] = [];
+  const gate = deferred<void>();
+  const pending = handleConversationRequest(request(), "key", {
     usageLimiter: {
-      claim: async () => testLease(),
-      claimOnboarding: async () => testLease(),
-      release: async () => {
-        releaseCalls++;
-        await cleanup.promise;
-        return true;
+      reserve: async () => testLease(),
+      settle: async () => {
+        order.push("settle-start");
+        await gate.promise;
+        order.push("settle-end");
+        return settled();
       },
     },
     fetchImpl: provider(result),
+  }).then((response) => {
+    order.push("response");
+    return response;
   });
-
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), result);
-  assert.ok(scheduledRelease);
-  assert.equal(releaseCalls, 0);
-
-  const pendingRelease = scheduledRelease();
   await nextTurn();
-  assert.equal(releaseCalls, 1);
-  cleanup.resolve();
-  await pendingRelease;
+  assert.deepEqual(order, ["settle-start"]);
+  gate.resolve();
+  assert.equal((await pending).status, 200);
+  assert.deepEqual(order, ["settle-start", "settle-end", "response"]);
 });
 
-test("failed generation cleanup is never deferred", async () => {
-  let releaseCalls = 0;
-  let deferred = false;
-  const response = await handleConversationRequest(request(), "key", {
-    defer() {
-      deferred = true;
-    },
-    usageLimiter: {
-      claim: async () => testLease(),
-      claimOnboarding: async () => testLease(),
-      release: async () => {
-        releaseCalls++;
-        return true;
-      },
-    },
-    fetchImpl: async () => new Response(null, { status: 503 }),
-  });
-
-  assert.equal(response.status, 502);
-  assert.equal(deferred, false);
-  assert.equal(releaseCalls, 1);
-});
-
-test("an unavailable background scheduler falls back to synchronous cleanup", async () => {
-  let releaseCalls = 0;
-  const response = await handleConversationRequest(request(), "key", {
-    defer() {
-      throw new Error("background tasks unavailable");
-    },
-    usageLimiter: {
-      claim: async () => testLease(),
-      claimOnboarding: async () => testLease(),
-      release: async () => {
-        releaseCalls++;
-        return true;
-      },
-    },
-    fetchImpl: provider(result),
-  });
-
-  assert.equal(response.status, 200);
-  assert.equal(releaseCalls, 1);
-});
-
-test("lease release telemetry contains only fixed performance fields", async (t) => {
+test("settlement telemetry contains only fixed fields", async (t) => {
   const info = t.mock.method(console, "info", () => {});
   const response = await handleConversationRequest(request(), "key", {
     fetchImpl: provider(result),
@@ -1209,65 +1190,102 @@ test("lease release telemetry contains only fixed performance fields", async (t)
 
   assert.equal(response.status, 200);
   const call = info.mock.calls.find(
-    ({ arguments: [event] }) =>
-      event === "[Wingr AI] generation lease release latency",
+    ({ arguments: [event] }) => event === "[Wingr AI] generation settlement",
   );
   assert.ok(call);
-  assert.deepEqual(Object.keys(call.arguments[1] as object).sort(), [
+  const fields = call.arguments[1] as Record<string, unknown>;
+  assert.deepEqual(Object.keys(fields).sort(), [
+    "charged",
     "durationMs",
     "event",
     "generation",
-    "outcome",
+    "result",
+    "settlement",
   ]);
-  assert.equal(
-    (call.arguments[1] as { event: string }).event,
-    "ai_generation_lease_release_latency",
-  );
-  assert.equal(
-    (call.arguments[1] as { generation: string }).generation,
-    "subscription",
-  );
-  assert.equal((call.arguments[1] as { outcome: string }).outcome, "success");
-  assert.equal(
-    typeof (call.arguments[1] as { durationMs: unknown }).durationMs,
-    "number",
-  );
+  assert.equal(fields.event, "ai_generation_settlement");
+  assert.equal(fields.generation, "subscription");
+  assert.equal(fields.result, "applied");
+  assert.equal(fields.settlement, "success");
+  assert.equal(fields.charged, true);
+  assert.equal(typeof fields.durationMs, "number");
 });
 
-test("a failing deferred release never rejects and is logged with fixed fields", async (t) => {
-  const warn = t.mock.method(console, "warn", () => {});
-  const info = t.mock.method(console, "info", () => {});
-  let scheduledRelease: (() => Promise<void>) | undefined;
-  const response = await handleConversationRequest(request(), "key", {
-    defer(task) {
-      scheduledRelease = task;
-    },
-    usageLimiter: {
-      claim: async () => testLease(),
-      claimOnboarding: async () => testLease(),
-      release: async () => {
-        throw new Error("release unavailable");
-      },
-    },
+test("a successful reply costs one attempt and a technical failure costs none", async () => {
+  const authorization = "Bearer signed-user";
+  const guard = createInMemoryGuard();
+  const run = (fetchImpl: typeof fetch) =>
+    handleConversationRequest(request(), "key", {
+      usageLimiter: guard.limiter,
+      fetchImpl,
+    });
+  assert.equal((await run(provider(result))).status, 200);
+  assert.equal(guard.attemptsFor(authorization), 1);
+  assert.equal(
+    (await run(async () => new Response(null, { status: 503 }))).status,
+    502,
+  );
+  assert.equal((await run(provider({ ...result, replies: [] }))).status, 502);
+  assert.equal(guard.attemptsFor(authorization), 1);
+  assert.equal(guard.active.size, 0);
+});
+
+test("every fifth invalid screenshot costs one attempt and counters persist across requests", async () => {
+  const authorization = "Bearer signed-user";
+  const guard = createInMemoryGuard();
+  const screenshot = (failureReason: string) =>
+    provider({
+      replyable: false,
+      failureReason,
+      vibeCheck: null,
+      replies: [],
+    });
+  const reasons = [
+    "unreadable_image",
+    "no_conversation",
+    "unreadable_image",
+    "no_conversation",
+  ];
+  for (const reason of reasons) {
+    const response = await handleConversationRequest(request(), "key", {
+      usageLimiter: guard.limiter,
+      fetchImpl: screenshot(reason),
+    });
+    assert.equal(response.status, 422);
+  }
+  assert.equal(guard.attemptsFor(authorization), 0);
+  assert.equal(guard.invalidPendingFor(authorization), 4);
+
+  // Free rejections and technical failures do not advance the counter.
+  for (const reason of ["ownership_unclear", "no_replyable_message", "unknown"])
+    await handleConversationRequest(request(), "key", {
+      usageLimiter: guard.limiter,
+      fetchImpl: screenshot(reason),
+    });
+  await handleConversationRequest(request(), "key", {
+    usageLimiter: guard.limiter,
+    fetchImpl: async () => new Response(null, { status: 503 }),
+  });
+  assert.equal(guard.invalidPendingFor(authorization), 4);
+  assert.equal(guard.attemptsFor(authorization), 0);
+
+  await handleConversationRequest(request(), "key", {
+    usageLimiter: guard.limiter,
+    fetchImpl: screenshot("unreadable_image"),
+  });
+  assert.equal(guard.attemptsFor(authorization), 1);
+  assert.equal(guard.invalidPendingFor(authorization), 0);
+
+  // A success never touches the invalid-screenshot counter.
+  await handleConversationRequest(request(), "key", {
+    usageLimiter: guard.limiter,
+    fetchImpl: screenshot("no_conversation"),
+  });
+  await handleConversationRequest(request(), "key", {
+    usageLimiter: guard.limiter,
     fetchImpl: provider(result),
   });
-
-  assert.equal(response.status, 200);
-  assert.ok(scheduledRelease);
-  // waitUntil must never receive a promise that can reject.
-  await assert.doesNotReject(scheduledRelease());
-  assert.deepEqual(
-    warn.mock.calls.map(({ arguments: [, details] }) => details),
-    [{ code: "generation_lease_release_failed" }],
-  );
-  const latency = info.mock.calls.find(
-    ({ arguments: [event] }) =>
-      event === "[Wingr AI] generation lease release latency",
-  );
-  assert.equal(
-    (latency?.arguments[1] as { outcome: string }).outcome,
-    "failure",
-  );
+  assert.equal(guard.invalidPendingFor(authorization), 1);
+  assert.equal(guard.attemptsFor(authorization), 2);
 });
 
 test("stage latency telemetry contains only fixed performance fields", async (t) => {
@@ -1288,12 +1306,14 @@ test("stage latency telemetry contains only fixed performance fields", async (t)
     "entitlementWaitMs",
     "event",
     "generation",
+    "model",
     "outcome",
     "providerMs",
     "reasoningEffort",
     "totalMs",
   ]);
   assert.equal(fields.reasoningEffort, "low");
+  assert.equal(fields.model, "google/gemini-3.8-flash");
   assert.equal(fields.event, "ai_generation_stage_latency");
   assert.equal(fields.outcome, "success");
   for (const key of ["bodyMs", "claimMs", "providerMs", "totalMs"])
@@ -1341,4 +1361,45 @@ test("low reasoning is the default and medium can be selected by configuration",
         (details as { reasoningEffort: string }).reasoningEffort,
     );
   assert.deepEqual(logged, ["low", "medium"]);
+});
+
+test("the handler sends the configured model and provider and logs only those fixed strings", async (t) => {
+  const info = t.mock.method(console, "info", () => {});
+  let sent: { model?: string; provider?: { only?: string[] } } = {};
+  const response = await handleConversationRequest(request(), "key", {
+    model: DEEPSEEK_MODEL,
+    fetchImpl: async (url, init) => {
+      sent = JSON.parse(String(init?.body));
+      return provider(result)(url as never, init);
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(sent.model, "deepseek/deepseek-v4.1-flash-1017");
+  assert.deepEqual(sent.provider?.only, ["inference-net/fp8"]);
+  const find = (name: string) =>
+    info.mock.calls.find(({ arguments: [event] }) => event === name)!
+      .arguments[1] as Record<string, unknown>;
+  assert.equal(find("[Wingr AI] provider latency").model, DEEPSEEK_MODEL);
+  assert.equal(
+    find("[Wingr AI] provider latency").provider,
+    "inference-net/fp8",
+  );
+  assert.equal(
+    find("[Wingr AI] generation stage latency").model,
+    DEEPSEEK_MODEL,
+  );
+});
+
+test("without a model option the handler stays on Gemini through Vertex", async () => {
+  let sent: { model?: string; provider?: { only?: string[] } } = {};
+  const response = await handleConversationRequest(request(), "key", {
+    fetchImpl: async (url, init) => {
+      sent = JSON.parse(String(init?.body));
+      return provider(result)(url as never, init);
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(sent.model, "google/gemini-3.8-flash");
+  assert.deepEqual(sent.provider?.only, ["google-vertex/global"]);
 });

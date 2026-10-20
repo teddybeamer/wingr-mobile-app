@@ -1,13 +1,13 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { handleConversationRequest } from "../_shared_v2/analyze-conversation.ts";
 import { createRevenueCatEntitlementVerifier } from "../_shared/revenuecat-entitlement.ts";
-import { parseReasoningEffort } from "../_shared_v2/openrouter.ts";
-import { createSupabaseUsageLimiter } from "../_shared/usage-limit.ts";
+import { parseModel, parseReasoningEffort } from "../_shared_v2/openrouter.ts";
+import { createSupabaseUsageLimiter } from "../_shared_v2/usage-limit.ts";
 import {
   createDeviceCheckOnboardingTrialManager,
   createSupabaseOnboardingTrialStore,
-  createTrialCipher,
-} from "../_shared/onboarding-device-trial.ts";
+} from "../_shared_v2/onboarding-device-trial.ts";
+import { createTrialCipher } from "../_shared/onboarding-device-trial.ts";
 import { createAppleDeviceCheckClient } from "../_shared/devicecheck.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
@@ -71,10 +71,6 @@ const callerClient = createClient(supabaseUrl, publishableKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const edgeRuntime = (globalThis as typeof globalThis & {
-  EdgeRuntime?: { waitUntil: (promise: Promise<unknown>) => void };
-}).EdgeRuntime;
-
 Deno.serve((request) =>
   handleConversationRequest(request, Deno.env.get("OPENROUTER_API_KEY") ?? "", {
     entitlementVerifier,
@@ -84,12 +80,10 @@ Deno.serve((request) =>
       return data.claims.sub;
     },
     onboardingTrialManager,
+    // Gemini unless the AI_MODEL secret names another preset (staging evaluation).
+    model: parseModel(Deno.env.get("AI_MODEL")),
     // Defaults to low; only the exact value "medium" changes it.
     reasoningEffort: parseReasoningEffort(Deno.env.get("AI_REASONING_EFFORT")),
     usageLimiter,
-    defer(task) {
-      if (!edgeRuntime) throw new Error("EdgeRuntime is unavailable");
-      edgeRuntime.waitUntil(task());
-    },
   }),
 );

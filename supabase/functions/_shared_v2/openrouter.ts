@@ -7,14 +7,22 @@ import {
 } from "./conversation.ts";
 import { buildConversationPrompt, SYSTEM_PROMPT } from "./prompting.ts";
 
-// The only production model configuration. No provider/model fallback chain.
+// Model presets. Each preset pins exactly one provider: there is no provider or
+// model fallback chain, and ZDR / data_collection:deny stay on for every preset.
+// Gemini is the default and the only production configuration; another preset is
+// selected only by the AI_MODEL secret, and any other value falls back to Gemini.
 export const GEMINI_MODEL = "google/gemini-3.8-flash";
+export const DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-1017";
+export const DEFAULT_MODEL = GEMINI_MODEL;
 export const AI_TIMEOUT_MS = 25_000;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 export type ProviderLatencyMeasurement = {
   durationMs: number;
+  // Fixed configuration strings (never request or response content).
+  model: string;
   outcome: "success" | "provider" | "invalid_output" | "timeout";
   outputContract: typeof AI_OUTPUT_CONTRACT;
+  provider: string;
 };
 
 // Owner decision 2026-10-12 (speed priority): the default is "low". "medium" is one
@@ -29,16 +37,50 @@ export function parseReasoningEffort(
   return value?.trim() === "medium" ? "medium" : DEFAULT_REASONING_EFFORT;
 }
 
+type ModelPreset = {
+  provider: string;
+  reasoning: (effort: ReasoningEffort) => { effort: string };
+};
+const MODEL_PRESETS = {
+  [GEMINI_MODEL]: {
+    provider: "google-vertex/global",
+    reasoning: (effort) => ({ effort }),
+  },
+  // DeepSeek V4.1 Flash is not reasoning-mandatory and thinks at "high" when no
+  // effort is sent, so an explicit effort is always sent. It accepts max, high,
+  // low and none (no "medium"): low stays low and the optional "medium" switch
+  // maps to the nearest supported level, high. Served by inference.net (fp8),
+  // a ZDR endpoint that supports strict structured outputs.
+  [DEEPSEEK_MODEL]: {
+    provider: "inference-net/fp8",
+    reasoning: (effort) => ({ effort: effort === "medium" ? "high" : "low" }),
+  },
+} as const satisfies Record<string, ModelPreset>;
+export type ModelId = keyof typeof MODEL_PRESETS;
+
+export function parseModel(value: string | null | undefined): ModelId {
+  const requested = value?.trim();
+  return requested && Object.hasOwn(MODEL_PRESETS, requested)
+    ? (requested as ModelId)
+    : DEFAULT_MODEL;
+}
+
+export function providerForModel(model: ModelId) {
+  return MODEL_PRESETS[model].provider;
+}
+
 export function buildOpenRouterRequest(
   request: ConversationRequest,
   reasoningEffort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
+  model: ModelId = DEFAULT_MODEL,
 ) {
+  const preset = MODEL_PRESETS[model];
   return {
-    model: GEMINI_MODEL,
-    reasoning: { effort: reasoningEffort },
+    model,
+    reasoning: preset.reasoning(reasoningEffort),
     service_tier: "default",
     provider: {
-      only: ["google-vertex/global"],
+      only: [preset.provider],
       zdr: true,
       data_collection: "deny",
       allow_fallbacks: false,
@@ -113,12 +155,14 @@ export async function analyzeWithGemini(
   {
     fetchImpl = fetch,
     onProviderDispatch,
+    model = DEFAULT_MODEL,
     onProviderLatency,
     reasoningEffort = DEFAULT_REASONING_EFFORT,
     timeoutMs = AI_TIMEOUT_MS,
     signal,
   }: {
     fetchImpl?: typeof fetch;
+    model?: ModelId;
     onProviderDispatch?: () => Promise<void>;
     onProviderLatency?: (measurement: ProviderLatencyMeasurement) => void;
     reasoningEffort?: ReasoningEffort;
@@ -131,7 +175,9 @@ export async function analyzeWithGemini(
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
-  const body = JSON.stringify(buildOpenRouterRequest(request, reasoningEffort));
+  const body = JSON.stringify(
+    buildOpenRouterRequest(request, reasoningEffort, model),
+  );
   let providerStartedAt: number | null = null;
   let providerOutcome: ProviderLatencyMeasurement["outcome"] = "provider";
   // Includes response body consumption, not just response headers.
@@ -207,8 +253,10 @@ export async function analyzeWithGemini(
       try {
         onProviderLatency?.({
           durationMs: Date.now() - providerStartedAt,
+          model,
           outcome: providerOutcome,
           outputContract: AI_OUTPUT_CONTRACT,
+          provider: providerForModel(model),
         });
       } catch {
         // Observability must never affect an AI request.

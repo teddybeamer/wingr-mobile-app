@@ -188,6 +188,35 @@ attempt. The Edge Function releases the token-matched lease in `finally`; a fail
 release cannot replace the provider response and recovers through the 60-second
 lease expiration. Database or acquisition failures fail closed before OpenRouter.
 
+### What counts as an attempt (`ai-conversation-v2`)
+
+`ai-conversation-v2` charges a generation when it is settled, not when it starts
+(migration `20261020140000_ai_generation_settlement.sql`, additive; the functions
+above, and therefore `ai-conversation`, are unchanged and still charge at claim
+time):
+
+- `reserve_ai_generation(subscription_plan)` checks the plan limit against settled
+  attempts and takes the same per-user 60-second lease. It charges nothing.
+- `settle_ai_generation(lease_id, outcome)` ends the lease and applies the charge:
+  - `success` — 1 attempt.
+  - `failure` — 0 attempts. Provider errors, timeouts, invalid output, client
+    aborts, and the rejections `ownership_unclear`, `no_replyable_message` and
+    `unknown`.
+  - `invalid_screenshot` — only `unreadable_image` and `no_conversation`. Every
+    fifth one inside a 30-day window costs 1 attempt. The count
+    (`ai_invalid_screenshot_counters`) persists across sessions, resets after the
+    charge, and restarts once the first counted screenshot is 30 days old.
+
+Deleting the lease is what authorizes the charge, under the per-user advisory lock,
+and a unique index on `ai_generation_attempts.lease_id` backs it up, so a repeated
+or concurrent settlement of one lease charges at most once. Settlement runs
+synchronously, once, with a 3-second timeout and no retry. If it fails after a
+valid reply, the reply is still returned and the user is not charged; the failure is
+logged (`generation settlement failed`, fixed fields only) and the lease frees
+itself within 60 seconds. Weekly (125 per 7 days), Monthly (500 per 30 days) and the
+DeviceCheck onboarding preview, which never reserves or settles, are unchanged.
+Apply the migration before deploying the updated function.
+
 On iOS, onboarding uses Apple DeviceCheck bit 0 as the durable, one-preview-per-
 iPhone marker. A client-created trial ID and a hash of the one-time DeviceCheck
 token coordinate a 60-second single-flight lease; no permanent Wingr device ID
@@ -202,6 +231,68 @@ database cleanup job deletes expired result and transient metadata. A set device
 bit without an active matching trial returns HTTP 409 with
 `code: "onboarding_device_reply_used"`; the app explains the preview was used and
 offers WiNGR Pro. Account deletion does not reset Apple’s device bit.
+
+### Request outcome log (`ai-conversation-v2`)
+
+Every POST writes exactly one `[Wingr AI] request outcome` line, including early
+rejections that log nothing else (401, 403, 503, onboarding replay). Fields, all
+closed values, a status or a duration:
+
+| Field | Values |
+|---|---|
+| `category` | `ok`, `client_input`, `invalid_screenshot`, `quota`, `entitlement`, `authentication`, `provider`, `technical` |
+| `code` | `ok`, the response `code` (`unusable_screenshot`, `usage_limit`, `subscription_required`, `timeout`, …) or `unknown` |
+| `reason` | for `invalid_screenshot` only: `unreadable_image`, `no_conversation`, `ownership_unclear`, `no_replyable_message`, `unknown`; otherwise `null` |
+| `status` | HTTP status (`500` if the handler threw) |
+| `stage` | where it ended: `auth`, `body`, `entitlement`, `quota`, `provider`, `onboarding_trial`, `onboarding_replay`, `onboarding_finalize`, `done` |
+| `generation` | `subscription`, `onboarding`, or `unknown` before the body is parsed |
+| `durationMs` | whole request |
+
+Categories: `client_input` is a malformed or oversized request, `entitlement` is
+`subscription_required`, `authentication` is `unauthorized`, `quota` covers usage
+limit, in-progress and onboarding-used, `provider` is the model call
+(`provider`, `invalid_output`, `timeout`), and `technical` is a dependency that was
+unavailable (RevenueCat, auth verification, DeviceCheck or the database). The line is
+`info` for every answered request, because failures already warn through
+`request failed` and `RevenueCat verification failed`; filter on `category`. An
+unhandled exception is logged once at `error`. Preflight and non-POST requests are not
+logged. Nothing from the request, response, user or lease is included.
+
+A request that fails inside the app before it is sent (file too large, unsupported
+format) never reaches the function and has no outcome line.
+
+### Free onboarding reply on `ai-conversation-v2`
+
+One free reply per device, and only a valid reply uses it. Provider errors,
+timeouts, invalid output, unreadable or unusable screenshots, and Apple or database
+errors before the reply is stored all abandon the trial without setting the
+DeviceCheck bit or making the account claim, so the user can try again. The bit and
+the claim are set only after a valid reply is stored.
+
+`_shared_v2/onboarding-device-trial.ts` differs from the shared manager that
+`ai-conversation` keeps using in three ways:
+
+- The trial row is bound to `sha256(trial ID)` rather than to the hash of the
+  DeviceCheck token. DeviceCheck issues a new token per request, so a retry carried a
+  different hash and failed with “Trial does not belong to this device” for up to 15
+  minutes whenever an interrupted request left its row behind. A retry now gets
+  `generation_in_progress` until the 60-second lease ends, or its stored result.
+- The free reply is not an attempt. Finalizing calls
+  `finalize_onboarding_device_trial_v2` (migration
+  `20261020150000_onboarding_trial_free_finalize.sql`), which makes the account claim
+  but records no `ai_generation_attempts` row, so the reply never reduces the Weekly
+  (125) or Monthly (500) allowance. The original function, which `ai-conversation`
+  still calls, records an attempt as before. Attempts recorded by it for accounts
+  that already onboarded are not rewritten.
+- DeviceCheck is queried again just before the reply is stored, so a request that
+  finishes after another request from the same device has already released its
+  reply returns nothing (HTTP 409 `onboarding_device_reply_used`).
+
+Concurrency: the database allows one generating row per trial, finalizing is
+serialized per account, and the account claim is recorded once. One
+residual case remains by design: DeviceCheck has no compare-and-set, so two
+different accounts on one device whose replies are stored within the same
+round trip can both pass the second lookup.
 
 Android currently retains the prior account-scoped onboarding path. This DeviceCheck
 flow requires deployment of `20260921120000_devicecheck_onboarding_trials.sql`,

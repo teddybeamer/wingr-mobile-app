@@ -1,13 +1,16 @@
 import {
   ConversationError,
+  isUnusableScreenshotReason,
   parseConversationRequest,
   toPublicConversationResult,
   UnusableScreenshotError,
+  type UnusableScreenshotReason,
 } from "./conversation.ts";
 import { handleCors } from "../_shared/cors.ts";
 import { error, json } from "../_shared/http.ts";
 import {
   analyzeWithGemini,
+  DEFAULT_MODEL,
   DEFAULT_REASONING_EFFORT,
   type ProviderLatencyMeasurement,
 } from "./openrouter.ts";
@@ -17,7 +20,11 @@ import type {
   RevenueCatEntitlementVerifier,
   RevenueCatSubscriptionPlan,
 } from "../_shared/revenuecat-entitlement.ts";
-import type { GenerationLease, UsageLimiter } from "../_shared/usage-limit.ts";
+import type {
+  GenerationLease,
+  SettlementOutcome,
+  UsageLimiter,
+} from "./usage-limit.ts";
 import type { OnboardingTrialManager as SharedOnboardingTrialManager } from "../_shared/onboarding-device-trial.ts";
 import type { ConversationResult } from "./conversation.ts";
 
@@ -46,9 +53,6 @@ export type ConversationHandlerOptions = Omit<
   getVerifiedUserId?: (accessToken: string) => Promise<string | null>;
   onboardingTrialManager?: OnboardingTrialManager;
   usageLimiter?: UsageLimiter;
-  // Schedules a non-critical task after the response has been handed back to
-  // the caller. The production edge handler maps this to EdgeRuntime.waitUntil.
-  defer?: (task: () => Promise<void>) => void;
 };
 
 function recordProviderLatency(
@@ -61,34 +65,152 @@ function recordProviderLatency(
     durationMs: measurement.durationMs,
     event: "ai_generation_provider_latency",
     generation,
+    model: measurement.model,
     outcome: measurement.outcome,
     outputContract: measurement.outputContract,
+    provider: measurement.provider,
   });
 }
 
-function recordLeaseReleaseLatency({
+function recordSettlement({
+  charged,
   durationMs,
   generation,
-  outcome,
+  result,
+  settlement,
 }: {
+  charged: boolean | null;
   durationMs: number;
   generation: "onboarding" | "subscription";
-  outcome: "success" | "failure";
+  result: "applied" | "not_found" | "failed";
+  settlement: SettlementOutcome;
 }) {
-  // Fixed labels and a duration only. Never log image, transcript, reply,
-  // prompt, user ID, authorization, API key, or provider response.
-  console.info("[Wingr AI] generation lease release latency", {
+  // Fixed labels, a boolean and a duration only. Never log image, transcript,
+  // reply, prompt, user ID, lease ID, authorization, API key, or provider response.
+  console.info("[Wingr AI] generation settlement", {
+    charged,
     durationMs,
-    event: "ai_generation_lease_release_latency",
+    event: "ai_generation_settlement",
     generation,
-    outcome,
+    result,
+    settlement,
   });
+}
+
+// One outcome line per POST, written by handleConversationRequest once the
+// response exists, so every exit is covered: success, validation, authentication,
+// entitlement, quota, invalid screenshot and provider or infrastructure failure.
+// Everything logged is a closed label, a status or a duration; the code and the
+// reason are read back from the response only if they are known values.
+type OutcomeStage =
+  | "auth"
+  | "body"
+  | "entitlement"
+  | "quota"
+  | "provider"
+  | "onboarding_trial"
+  | "onboarding_replay"
+  | "onboarding_finalize"
+  | "done";
+type OutcomeGeneration = "onboarding" | "subscription" | "unknown";
+// Where the request has got to. Updated as it progresses and read once at the end.
+type RequestTrace = { generation: OutcomeGeneration; stage: OutcomeStage };
+
+const OUTCOME_CATEGORIES = {
+  authentication_verification_unavailable: "technical",
+  generation_in_progress: "quota",
+  generation_protection_unavailable: "technical",
+  invalid_output: "provider",
+  invalid_request: "client_input",
+  onboarding_device_reply_used: "quota",
+  onboarding_reply_used: "quota",
+  payload_too_large: "client_input",
+  provider: "provider",
+  subscription_required: "entitlement",
+  subscription_verification_unavailable: "technical",
+  timeout: "provider",
+  unauthorized: "authentication",
+  unusable_screenshot: "invalid_screenshot",
+  usage_limit: "quota",
+} as const;
+type OutcomeCategory =
+  | (typeof OUTCOME_CATEGORIES)[keyof typeof OUTCOME_CATEGORIES]
+  | "ok";
+type OutcomeCode = keyof typeof OUTCOME_CATEGORIES | "ok" | "unknown";
+
+async function describeOutcome(response: Response): Promise<{
+  category: OutcomeCategory;
+  code: OutcomeCode;
+  reason: UnusableScreenshotReason | null;
+}> {
+  if (response.ok) return { category: "ok", code: "ok", reason: null };
+  let body: { code?: unknown; reason?: unknown } | null = null;
+  try {
+    body = await response.clone().json();
+  } catch {
+    // Not one of our JSON errors: reported as unknown below.
+  }
+  const code =
+    typeof body?.code === "string" &&
+    Object.hasOwn(OUTCOME_CATEGORIES, body.code)
+      ? (body.code as keyof typeof OUTCOME_CATEGORIES)
+      : null;
+  if (!code) return { category: "technical", code: "unknown", reason: null };
+  return {
+    category: OUTCOME_CATEGORIES[code],
+    code,
+    reason:
+      code === "unusable_screenshot" && isUnusableScreenshotReason(body?.reason)
+        ? body.reason
+        : null,
+  };
+}
+
+async function recordRequestOutcome({
+  durationMs,
+  generation,
+  response,
+  stage,
+}: {
+  durationMs: number;
+  generation: OutcomeGeneration;
+  response: Response | null;
+  stage: OutcomeStage;
+}) {
+  try {
+    // A request that threw instead of answering is an internal error.
+    const outcome = response
+      ? await describeOutcome(response)
+      : {
+          category: "technical" as const,
+          code: "unknown" as const,
+          reason: null,
+        };
+    const fields = {
+      category: outcome.category,
+      code: outcome.code,
+      durationMs,
+      event: "ai_request_outcome",
+      generation,
+      reason: outcome.reason,
+      stage,
+      status: response?.status ?? 500,
+    };
+    // Always information for an answered request, whatever its outcome: failures
+    // already raise their own warning (request failed, RevenueCat verification),
+    // and `category` is what separates them here. An unhandled exception is an error.
+    const log = response ? console.info : console.error;
+    log("[Wingr AI] request outcome", fields);
+  } catch {
+    // Logging must never change the response.
+  }
 }
 
 type StageTimings = {
   bodyMs: number;
   claimMs: number | null;
   entitlementWaitMs: number | null;
+  model: string;
   providerMs: number | null;
   reasoningEffort: "low" | "medium";
 };
@@ -224,6 +346,7 @@ async function handleDeviceCheckOnboardingRequest({
   manager,
   options,
   request,
+  trace,
 }: {
   apiKey: string;
   authenticatedUserId: string;
@@ -231,18 +354,24 @@ async function handleDeviceCheckOnboardingRequest({
   manager: OnboardingTrialManager;
   options: GeminiOptions;
   request: Request;
+  trace: RequestTrace;
 }) {
   if (!input.deviceCheckToken || !input.onboardingTrialId)
     throw new ConversationError("generation_protection_unavailable");
 
+  trace.stage = "onboarding_trial";
   const trial = await manager.prepare({
     deviceToken: input.deviceCheckToken,
     trialId: input.onboardingTrialId,
     userId: authenticatedUserId,
   });
-  if (trial.kind === "replay") return json(trial.replay);
+  if (trial.kind === "replay") {
+    trace.stage = "onboarding_replay";
+    return json(trial.replay);
+  }
 
   try {
+    trace.stage = "provider";
     const result = await analyzeWithGemini(input, apiKey, {
       ...options,
       onProviderLatency: (measurement) =>
@@ -253,17 +382,21 @@ async function handleDeviceCheckOnboardingRequest({
       throw new UnusableScreenshotError(
         result.replyable ? "unknown" : (result.failureReason ?? "unknown"),
       );
-    return json(await trial.complete(toPublicConversationResult(result)));
+    trace.stage = "onboarding_finalize";
+    const completed = await trial.complete(toPublicConversationResult(result));
+    trace.stage = "done";
+    return json(completed);
   } catch (failure) {
     await trial.abandon();
     throw failure;
   }
 }
 
-export async function handleConversationRequest(
+async function handleRequest(
   request: Request,
   apiKey: string,
-  options: ConversationHandlerOptions = {},
+  options: ConversationHandlerOptions,
+  trace: RequestTrace,
 ) {
   const corsResponse = handleCors(request);
   if (corsResponse) return corsResponse;
@@ -274,7 +407,6 @@ export async function handleConversationRequest(
     getVerifiedUserId,
     onboardingTrialManager,
     usageLimiter,
-    defer,
     ...geminiOptions
   } = options;
 
@@ -291,6 +423,7 @@ export async function handleConversationRequest(
   }
   const authenticatedUserId = userId?.trim() ?? "";
   if (!isUuid(authenticatedUserId)) return accessError("unauthorized");
+  trace.stage = "body";
 
   const requestStartedAt = Date.now();
 
@@ -304,6 +437,9 @@ export async function handleConversationRequest(
       throw new ConversationError("invalid_request");
     }
     const input = parseConversationRequest(value);
+    trace.generation = input.isOnboardingGeneration
+      ? "onboarding"
+      : "subscription";
     const bodyMs = Date.now() - requestStartedAt;
 
     // Free onboarding generations are only available through the DeviceCheck
@@ -323,12 +459,14 @@ export async function handleConversationRequest(
         manager: onboardingTrialManager,
         options: geminiOptions,
         request,
+        trace,
       });
     }
 
     let subscriptionPlan: RevenueCatSubscriptionPlan | null = null;
     let entitlementWaitMs: number | null = null;
     if (!input.isOnboardingGeneration) {
+      trace.stage = "entitlement";
       if (!entitlementVerifier) {
         return accessError("subscription_verification_unavailable");
       }
@@ -369,16 +507,21 @@ export async function handleConversationRequest(
     const generationLease: { current: GenerationLease | null } = {
       current: null,
     };
-    let successfulSubscriptionResponse = false;
+    // How this request is settled. Anything not explicitly decided below, which
+    // covers every technical failure (timeout, provider error, invalid output,
+    // protection error, client abort), stays "failure" and costs nothing.
+    let settlement: SettlementOutcome = "failure";
     const timings: StageTimings = {
       bodyMs,
       claimMs: null,
       entitlementWaitMs,
+      model: geminiOptions.model ?? DEFAULT_MODEL,
       providerMs: null,
       reasoningEffort:
         geminiOptions.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
     };
     let succeeded = false;
+    trace.stage = "provider";
     try {
       const result = await analyzeWithGemini(input, apiKey, {
         ...geminiOptions,
@@ -393,29 +536,41 @@ export async function handleConversationRequest(
         onProviderDispatch: async () => {
           const claimStartedAt = Date.now();
           try {
+            trace.stage = "quota";
             if (!usageLimiter)
               throw new ConversationError("generation_protection_unavailable");
-            // Onboarding returned above. Fail closed rather than ever claiming the
-            // account-scoped onboarding allowance if that guard is changed.
+            // Onboarding returned above. Fail closed rather than ever reserving
+            // against the subscription allowance if that guard is changed.
             if (input.isOnboardingGeneration || !subscriptionPlan)
               throw new ConversationError("generation_protection_unavailable");
-            generationLease.current = await usageLimiter.claim(
+            // Reserving takes the lease and checks the plan limit; it charges
+            // nothing. The charge, if any, happens when the request is settled.
+            generationLease.current = await usageLimiter.reserve(
               authorization,
               subscriptionPlan,
             );
+            trace.stage = "provider";
           } finally {
             timings.claimMs = Date.now() - claimStartedAt;
           }
         },
       });
-      if (!result.replyable || !result.vibeCheck)
-        throw new UnusableScreenshotError(
-          result.replyable ? "unknown" : (result.failureReason ?? "unknown"),
-        );
-      // Keep onboarding cleanup on the existing synchronous path. The normal
-      // subscription path may respond once its model result is fully validated.
-      successfulSubscriptionResponse = !input.isOnboardingGeneration;
+      if (!result.replyable || !result.vibeCheck) {
+        const reason = result.replyable
+          ? "unknown"
+          : (result.failureReason ?? "unknown");
+        // Only an unreadable image or a missing conversation counts toward the
+        // one-attempt-per-five-invalid-screenshots rule. Every other rejection
+        // (ownership_unclear, no_replyable_message, unknown) is free.
+        settlement =
+          reason === "unreadable_image" || reason === "no_conversation"
+            ? "invalid_screenshot"
+            : "failure";
+        throw new UnusableScreenshotError(reason);
+      }
+      settlement = "success";
       succeeded = true;
+      trace.stage = "done";
       return json(toPublicConversationResult(result));
     } finally {
       recordStageLatency({
@@ -427,41 +582,42 @@ export async function handleConversationRequest(
         totalMs: Date.now() - requestStartedAt,
       });
       if (generationLease.current && usageLimiter) {
+        // Settled synchronously, exactly once, and never retried: the database
+        // makes settlement idempotent per lease, but a retry here could only
+        // matter by risking a second charge. If settlement fails after a valid
+        // reply, the reply is still returned and the user is not charged; the
+        // failure is logged for investigation. A failed settlement of a free
+        // outcome costs nothing, and the 60-second lease TTL frees the user.
         const leaseId = generationLease.current.leaseId;
-        const releaseLease = async () => {
-          const releaseStartedAt = Date.now();
-          try {
-            await usageLimiter.release(authorization, leaseId);
-            recordLeaseReleaseLatency({
-              durationMs: Date.now() - releaseStartedAt,
-              generation: input.isOnboardingGeneration
-                ? "onboarding"
-                : "subscription",
-              outcome: "success",
-            });
-          } catch {
-            // The 60-second database TTL safely recovers a failed release.
-            console.warn("[Wingr AI] generation lease release failed", {
-              code: "generation_lease_release_failed",
-            });
-            recordLeaseReleaseLatency({
-              durationMs: Date.now() - releaseStartedAt,
-              generation: input.isOnboardingGeneration
-                ? "onboarding"
-                : "subscription",
-              outcome: "failure",
-            });
-          }
-        };
-        if (successfulSubscriptionResponse && defer) {
-          try {
-            defer(releaseLease);
-          } catch {
-            // A missing background-task runtime must not leave a lease active.
-            await releaseLease();
-          }
-        } else {
-          await releaseLease();
+        const settleStartedAt = Date.now();
+        const generation = input.isOnboardingGeneration
+          ? "onboarding"
+          : "subscription";
+        try {
+          const settled = await usageLimiter.settle(
+            authorization,
+            leaseId,
+            settlement,
+          );
+          recordSettlement({
+            charged: settled.charged,
+            durationMs: Date.now() - settleStartedAt,
+            generation,
+            result: settled.applied ? "applied" : "not_found",
+            settlement,
+          });
+        } catch {
+          console.warn("[Wingr AI] generation settlement failed", {
+            code: "generation_settlement_failed",
+            settlement,
+          });
+          recordSettlement({
+            charged: null,
+            durationMs: Date.now() - settleStartedAt,
+            generation,
+            result: "failed",
+            settlement,
+          });
         }
       }
     }
@@ -519,4 +675,37 @@ export async function handleConversationRequest(
       },
     );
   }
+}
+
+export async function handleConversationRequest(
+  request: Request,
+  apiKey: string,
+  options: ConversationHandlerOptions = {},
+) {
+  const trace: RequestTrace = { generation: "unknown", stage: "auth" };
+  // Only a POST is a generation request: preflight and wrong-method answers
+  // are not outcomes.
+  if (request.method !== "POST")
+    return handleRequest(request, apiKey, options, trace);
+
+  const startedAt = Date.now();
+  let response: Response;
+  try {
+    response = await handleRequest(request, apiKey, options, trace);
+  } catch (failure) {
+    await recordRequestOutcome({
+      durationMs: Date.now() - startedAt,
+      generation: trace.generation,
+      response: null,
+      stage: trace.stage,
+    });
+    throw failure;
+  }
+  await recordRequestOutcome({
+    durationMs: Date.now() - startedAt,
+    generation: trace.generation,
+    response,
+    stage: trace.stage,
+  });
+  return response;
 }

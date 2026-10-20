@@ -51,9 +51,43 @@ test("the v2 endpoint wires only v2 handler code and the unchanged shared securi
   const index = read("../ai-conversation-v2/index.ts");
   assert.match(index, /from "\.\.\/_shared_v2\/analyze-conversation\.ts"/);
   assert.match(index, /from "\.\.\/_shared_v2\/openrouter\.ts"/);
+  // v2 settles usage (charge on settlement); the original limiter, which charges at
+  // claim time, stays with the frozen v1 endpoint.
+  assert.match(index, /from "\.\.\/_shared_v2\/usage-limit\.ts"/);
+  assert.doesNotMatch(index, /_shared\/usage-limit\.ts/);
+  assert.match(
+    read("../ai-conversation/index.ts"),
+    /from "\.\.\/_shared\/usage-limit\.ts"/,
+  );
+  assert.doesNotMatch(
+    read("../_shared_v2/analyze-conversation.ts"),
+    /_shared\/usage-limit\.ts/,
+  );
+  // Same split for onboarding: v2 binds trials to the trial ID and re-checks the
+  // device before releasing a reply; the shared manager stays with v1.
+  assert.match(
+    index,
+    /createDeviceCheckOnboardingTrialManager,\s+createSupabaseOnboardingTrialStore,\s+\} from "\.\.\/_shared_v2\/onboarding-device-trial\.ts"/,
+  );
+  // The v2 store finalizes without recording an attempt; v1 keeps the shared one.
+  assert.doesNotMatch(
+    index,
+    /createSupabaseOnboardingTrialStore[^;]*_shared\/onboarding-device-trial\.ts/s,
+  );
+  assert.match(
+    read("../ai-conversation/index.ts"),
+    /createSupabaseOnboardingTrialStore,[^;]*_shared\/onboarding-device-trial\.ts/s,
+  );
+  assert.doesNotMatch(
+    index,
+    /createDeviceCheckOnboardingTrialManager[^;]*_shared\/onboarding-device-trial\.ts/s,
+  );
+  assert.match(
+    read("../ai-conversation/index.ts"),
+    /createDeviceCheckOnboardingTrialManager,[^;]*_shared\/onboarding-device-trial\.ts/s,
+  );
   for (const shared of [
     "revenuecat-entitlement",
-    "usage-limit",
     "onboarding-device-trial",
     "devicecheck",
   ])
@@ -69,7 +103,9 @@ test("the v2 endpoint wires only v2 handler code and the unchanged shared securi
       .map((m) => m[1])
       .sort();
   assert.deepEqual(
-    envNames(index).filter((name) => name !== "AI_REASONING_EFFORT"),
+    envNames(index).filter(
+      (name) => name !== "AI_REASONING_EFFORT" && name !== "AI_MODEL",
+    ),
     envNames(v1Index),
   );
 });
@@ -105,4 +141,15 @@ test("v2 function config requires a verified JWT like v1", () => {
     /\[functions\.ai-conversation-v2\]\s*\nverify_jwt = true/,
   );
   assert.match(config, /\[functions\.ai-conversation\]\s*\nverify_jwt = true/);
+});
+
+test("v2 selects its model only from the optional AI_MODEL secret; v1 never reads it", () => {
+  const index = read("../ai-conversation-v2/index.ts");
+  assert.match(index, /model: parseModel\(Deno\.env\.get\("AI_MODEL"\)\)/);
+  assert.doesNotMatch(read("../ai-conversation/index.ts"), /AI_MODEL/);
+  assert.match(
+    read("../_shared/openrouter.ts"),
+    /export const GEMINI_MODEL = "google\/gemini-3\.8-flash"/,
+  );
+  assert.doesNotMatch(read("../_shared/openrouter.ts"), /deepseek/i);
 });
