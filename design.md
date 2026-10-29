@@ -71,18 +71,18 @@ Use Tailwind neutral colors for:
 
 Recommended mapping:
 
-- `neutral-50`: Primary/high-contrast text
-- `neutral-100`: Strong text
-- `neutral-200`: Section titles and important body text
-- `neutral-300`: Default body text
-- `neutral-400`: Secondary body text
-- `neutral-500`: Metadata, timestamps, subtle labels
-- `neutral-700`: Secondary action buttons
-- `neutral-800`: Borders and dividers
-- `neutral-900`: Main card surfaces
-- `neutral-950`: Deep surfaces
+- `stone-50`: Primary/high-contrast text
+- `stone-100`: Strong text
+- `stone-200`: Section titles and important body text
+- `stone-300`: Default body text
+- `stone-400`: Secondary body text
+- `stone-500`: Metadata, timestamps, subtle labels
+- `stone-700`: Secondary action buttons
+- `stone-800`: Borders and dividers
+- `stone-900`: Main card surfaces
+- `stone-950`: Deep surfaces
 
-Use secondary buttons with `neutral-700`.
+Use secondary buttons with `stone-700`.
 
 ---
 
@@ -145,7 +145,7 @@ Header structure:
 
 Back icon:
 
-- White or `neutral-200`
+- White or `stone-200`
 - Simple and minimal
 - Not inside a heavy button
 
@@ -163,8 +163,8 @@ Title:
 
 Default card style:
 
-- Surface: `neutral-900` or `neutral-950`
-- Border: `neutral-800`
+- Surface: `stone-900` or `stone-950`
+- Border: `stone-800`
 - Radius: `20–24px`
 - Padding: `16–20px`
 
@@ -172,7 +172,7 @@ Cards should feel soft, dark, and premium.
 
 ### Borders
 
-- Default border: `neutral-800`
+- Default border: `stone-800`
 - Active/recommended border: `#1970FD`
 - Border width: `1px`
 
@@ -192,7 +192,7 @@ Use:
 Use subtle dividers:
 
 - Height: `1px`
-- Color: `neutral-800`
+- Color: `stone-800`
 - Low opacity if needed
 
 ### Shadows
@@ -218,8 +218,8 @@ Assistant avatar:
 
 Assistant message bubble:
 
-- Surface: `neutral-900`
-- Text: `neutral-100` / `neutral-200`
+- Surface: `stone-900`
+- Text: `stone-100` / `stone-200`
 - Border radius: `16–18px`
 - Padding: `12–16px`
 - Max width should leave room for the avatar
@@ -228,83 +228,8 @@ Timestamp:
 
 - Small
 - Muted
-- `neutral-500`
+- `stone-500`
 
----
-
-## 9. Vibe Check Card
-
-The vibe check card contains structured analysis.
-
-It should use:
-
-- Big blue title
-- Stacked insight rows
-- Colored icon blocks
-- Muted labels
-- Strong values
-- Thin dividers between rows
-
-Each row includes:
-
-- Icon block
-- Label
-- Value
-- Optional progress indicator
-
-Suggested accent colors:
-
-- Interest: violet / indigo
-- Conversation energy: amber / orange
-- Best move: teal / cyan
-- Risk: red
-- Recommended: primary blue
-
-Use Tailwind accent colors where possible:
-
-- `violet-500`
-- `amber-400`
-- `teal-400`
-- `red-500`
-
-Keep accent colors controlled and limited to insight values, icons, and small UI accents.
-
----
-
-## 10. Reply Cards
-
-Reply cards are focused content cards.
-
-Recommended reply card:
-
-- Dark surface
-- Primary blue border
-- Blue badge
-- Large reply text
-- “Why it works” explanation
-- Action row at bottom
-
-Secondary reply card:
-
-- Neutral dark surface
-- Neutral border
-- Optional accent badge
-- Same structure as recommended card
-
-Reply text:
-
-- Large
-- Bold
-- `neutral-50`
-- Tight but readable line height
-
-“Why it works” text:
-
-- Smaller than reply text
-- `neutral-300` / `neutral-400`
-- Clear but secondary
-
-Secondary reply cards should still feel useful, not disabled.
 
 ---
 
@@ -341,8 +266,8 @@ Examples:
 
 Style:
 
-- Background: `neutral-700`
-- Text: `neutral-100` / `neutral-200`
+- Background: `stone-700`
+- Text: `stone-100` / `stone-200`
 - Rounded pill
 - Icon optional
 - Smaller width allowed
