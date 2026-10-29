@@ -27,10 +27,12 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
+import { PreloadImage } from "../components/FadeInImage";
 import { HomeMoreSheet } from "../components/HomeMoreSheet";
 import { MoreButton } from "../components/MoreButton";
 import { ScreenHeader } from "../components/ScreenHeader";
 import { WingrLogoMark } from "../components/WingrLogoMark";
+import { CHOOSE_HERO_IMAGE } from "../lib/choose-hero";
 import { START_CONVERSATION_ENABLED } from "../lib/feature-flags";
 import {
   colors,
@@ -156,6 +158,8 @@ export function HomeScreen({
   const squaresHeight =
     cardCount * cardSide + (cardCount - 1) * spacing.xl + spacing.xl;
   const shareHeight = squaresHeight > viewport.height;
+  // Same width the Choose Screenshot stage gets, for the preloaded hero.
+  const heroPreloadWidth = Math.max(0, viewport.width - layout.pageGutter * 2);
 
   const getRevealStyle = (value: Animated.Value) => ({
     opacity: value.interpolate({
@@ -234,6 +238,11 @@ export function HomeScreen({
           title="Get Replies"
         />
       </ScrollView>
+      <PreloadImage
+        height={heroPreloadWidth / layout.stageAspectRatio}
+        source={CHOOSE_HERO_IMAGE}
+        width={heroPreloadWidth}
+      />
     </View>
   );
 }

@@ -1,14 +1,27 @@
 import { GalleryAdd } from "@solar-icons/react-native/Linear";
 import * as Haptics from "expo-haptics";
-import { Image, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef } from "react";
+import {
+  Animated,
+  Easing,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { ActionButton } from "../components/ActionButton";
+import { FadeInImage } from "../components/FadeInImage";
 import { HeaderBackButton } from "../components/HeaderBackButton";
 import { ScreenHeader, ScreenHeaderTitle } from "../components/ScreenHeader";
 import { StageColumn } from "../components/StageColumn";
+import { CHOOSE_HERO_IMAGE } from "../lib/choose-hero";
 import { colors, iconSizes, radii, spacing, typography } from "../theme";
 
-const HERO_IMAGE = require("../assets/images/redesign/choose/hero.png");
+// The card follows the hero's fade-in: same kind of soft fade, a beat later,
+// with a few points of upward drift so it settles into place.
+const CARD_ENTRY_DELAY_MS = 70;
+const CARD_ENTRY_DURATION_MS = 260;
+const CARD_ENTRY_OFFSET = 8;
 
 export function ChooseScreenshotScreen({
   onBack,
@@ -17,6 +30,32 @@ export function ChooseScreenshotScreen({
   onBack: () => void;
   onChooseScreenshot: () => void;
 }) {
+  const entry = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.timing(entry, {
+      delay: CARD_ENTRY_DELAY_MS,
+      duration: CARD_ENTRY_DURATION_MS,
+      easing: Easing.out(Easing.quad),
+      toValue: 1,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [entry]);
+
+  const cardEntryStyle = {
+    opacity: entry,
+    transform: [
+      {
+        translateY: entry.interpolate({
+          inputRange: [0, 1],
+          outputRange: [CARD_ENTRY_OFFSET, 0],
+        }),
+      },
+    ],
+  };
+
   return (
     <View style={styles.screen}>
       <ScreenHeader
@@ -25,7 +64,7 @@ export function ChooseScreenshotScreen({
       />
       <StageColumn
         footer={
-          <View style={styles.card}>
+          <Animated.View style={[styles.card, cardEntryStyle]}>
             <View style={styles.copy}>
               <Text maxFontSizeMultiplier={1.3} style={styles.title}>
                 Get better replies with more context
@@ -47,15 +86,10 @@ export function ChooseScreenshotScreen({
               }}
               variant="primary"
             />
-          </View>
+          </Animated.View>
         }
         stage={
-          <Image
-            accessibilityIgnoresInvertColors
-            resizeMode="cover"
-            source={HERO_IMAGE}
-            style={styles.stageImage}
-          />
+          <FadeInImage source={CHOOSE_HERO_IMAGE} style={styles.stageImage} />
         }
       />
     </View>

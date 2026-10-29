@@ -33,7 +33,7 @@ const ASSETS = [
   },
   {
     label: "Choose Screenshot hero",
-    source: require("../assets/images/redesign/choose/hero.png"),
+    source: require("../assets/images/redesign/choose/hero.jpg"),
   },
   {
     label: "Error dialog hero",

@@ -481,14 +481,18 @@ function WingrApp() {
     setScreen("upload");
   };
 
+  const playLandingReveal = () => {
+    landingRevealVersionRef.current += 1;
+    setLandingRevealToken(landingRevealVersionRef.current);
+  };
+
   const handleEnterLanding = async () => {
     if (authenticatedUserId) {
       await markOnboardingCompleted(authenticatedUserId).catch(() => {});
     }
     if (!landingRevealPlayedRef.current) {
       landingRevealPlayedRef.current = true;
-      landingRevealVersionRef.current += 1;
-      setLandingRevealToken(landingRevealVersionRef.current);
+      playLandingReveal();
     }
 
     setScreen("landing");
@@ -610,7 +614,11 @@ function WingrApp() {
 
           {screen === "choose" ? (
             <ChooseScreenshotScreen
-              onBack={() => setScreen("landing")}
+              onBack={() => {
+                // Home remounts, so replay the staggered card entrance.
+                playLandingReveal();
+                setScreen("landing");
+              }}
               onChooseScreenshot={handlePickScreenshotForUpload}
             />
           ) : null}
