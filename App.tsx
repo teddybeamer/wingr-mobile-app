@@ -14,6 +14,7 @@ import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import {
   Component,
+  type ComponentType,
   type ReactNode,
   useEffect,
   useLayoutEffect,
@@ -104,8 +105,15 @@ import {
 } from "./lib/launch-routing";
 import { LaunchSplash } from "./components/LaunchSplash";
 import { chooseSemanticReplacement } from "./lib/screenshot-analysis-error";
+import { fontFamilies } from "./theme";
 
 const DEBUG_BOOT_PROBE = false;
+
+// Dev-only UI preview. The require is inside the __DEV__ guard so Metro drops
+// the whole ./dev folder from production bundles.
+const DevPreviewLauncher: ComponentType | null = __DEV__
+  ? require("./dev/DevPreviewLauncher").DevPreviewLauncher
+  : null;
 
 if (Platform.OS === "ios") {
   SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -400,6 +408,7 @@ export default function App() {
   return (
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <WingrApp />
+      {DevPreviewLauncher ? <DevPreviewLauncher /> : null}
       {showLaunchSplash ? (
         <LaunchSplash onFinish={() => setShowLaunchSplash(false)} />
       ) : null}
@@ -448,6 +457,7 @@ function WingrApp() {
     [FONTS.displayMedium]: require("./assets/fonts/ClashDisplay-Medium.ttf"),
     [FONTS.body]: require("./assets/fonts/ClashGrotesk-Variable.ttf"),
     [FONTS.bodyRegular]: require("./assets/fonts/ClashGrotesk-Regular.ttf"),
+    [fontFamilies.body]: require("./assets/fonts/UncutSans-Medium.otf"),
   });
 
   useEffect(() => {
