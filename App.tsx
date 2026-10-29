@@ -28,7 +28,6 @@ import {
   CheckCircle,
   ChatRound,
   Copy,
-  GallerySend,
   Heart,
   Refresh,
   ShieldWarning,
@@ -69,7 +68,6 @@ import type {
 } from "./types/wingr";
 import { OnboardingFlow } from "./onboarding/OnboardingFlow";
 import { BackButton } from "./components/BackButton";
-import { MoreButton } from "./components/MoreButton";
 import { HomeMoreSheet } from "./components/HomeMoreSheet";
 import {
   useConversationFlow,
@@ -106,6 +104,7 @@ import {
 import { LaunchSplash } from "./components/LaunchSplash";
 import { chooseSemanticReplacement } from "./lib/screenshot-analysis-error";
 import { fontFamilies } from "./theme";
+import { HomeScreen } from "./screens/HomeScreen";
 
 const DEBUG_BOOT_PROBE = false;
 
@@ -721,8 +720,8 @@ function WingrApp() {
           />
 
           {screen === "landing" ? (
-            <LandingScreen
-              onContinue={handlePickScreenshotForUpload}
+            <HomeScreen
+              onGetReplies={handlePickScreenshotForUpload}
               onAccountDeleted={handleAccountDeleted}
               onRevealStarted={(revealToken) => {
                 setLandingRevealToken((currentToken) =>
@@ -785,304 +784,6 @@ function WingrApp() {
         </SafeAreaView>
       </BootErrorBoundary>
     </PostHogProvider>
-  );
-}
-
-function LandingScreen({
-  onContinue,
-  onAccountDeleted,
-  onRevealStarted,
-  revealToken,
-}: {
-  onContinue: () => void;
-  onAccountDeleted: () => Promise<void>;
-  onRevealStarted: (revealToken: number) => void;
-  revealToken: number | null;
-}) {
-  const [isMoreVisible, setIsMoreVisible] = useState(false);
-  const { height: viewportHeight, width: viewportWidth } =
-    useWindowDimensions();
-  const contentHeight = Math.min(617, Math.max(442, viewportHeight - 60));
-  const maxCardWidth = Math.min(
-    LANDING_CARD.baseline.width,
-    Math.max(0, viewportWidth - 32),
-  );
-  const [cardSize, setCardSize] = useState({
-    height: 439,
-    width: maxCardWidth,
-  });
-  const heroOpacity = useRef(new Animated.Value(1)).current;
-  const heroScale = useRef(new Animated.Value(1)).current;
-  const heroTranslateY = useRef(new Animated.Value(0)).current;
-  const copyOpacity = useRef(new Animated.Value(1)).current;
-  const copyTranslateY = useRef(new Animated.Value(0)).current;
-  const ctaOpacity = useRef(new Animated.Value(1)).current;
-  const ctaScale = useRef(new Animated.Value(1)).current;
-  const preparedRevealTokenRef = useRef<number | null>(null);
-  const startedRevealTokenRef = useRef<number | null>(null);
-  const revealAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
-  const revealFrameRef = useRef<number | null>(null);
-  const [isCtaInteractive, setIsCtaInteractive] = useState(
-    revealToken === null,
-  );
-  const cardWidth = Math.min(cardSize.width, maxCardWidth);
-  const layout = getLandingCardLayout(cardWidth);
-
-  useLayoutEffect(() => {
-    if (
-      revealToken === null ||
-      preparedRevealTokenRef.current === revealToken
-    ) {
-      return;
-    }
-
-    revealAnimationRef.current?.stop();
-    if (revealFrameRef.current !== null) {
-      cancelAnimationFrame(revealFrameRef.current);
-      revealFrameRef.current = null;
-    }
-
-    preparedRevealTokenRef.current = revealToken;
-    heroOpacity.setValue(0);
-    heroScale.setValue(0.9);
-    heroTranslateY.setValue(10);
-    copyOpacity.setValue(0);
-    copyTranslateY.setValue(8);
-    ctaOpacity.setValue(0);
-    ctaScale.setValue(0.94);
-    setIsCtaInteractive(false);
-  }, [
-    copyOpacity,
-    copyTranslateY,
-    ctaOpacity,
-    ctaScale,
-    heroOpacity,
-    heroScale,
-    heroTranslateY,
-    revealToken,
-  ]);
-
-  useEffect(
-    () => () => {
-      revealAnimationRef.current?.stop();
-      if (revealFrameRef.current !== null) {
-        cancelAnimationFrame(revealFrameRef.current);
-      }
-    },
-    [],
-  );
-
-  const startLandingReveal = () => {
-    if (
-      revealToken === null ||
-      preparedRevealTokenRef.current !== revealToken ||
-      startedRevealTokenRef.current === revealToken
-    ) {
-      return;
-    }
-
-    startedRevealTokenRef.current = revealToken;
-    onRevealStarted(revealToken);
-
-    const heroReveal = Animated.parallel([
-      Animated.timing(heroOpacity, {
-        duration: 130,
-        toValue: 1,
-        useNativeDriver: true,
-      }),
-      Animated.spring(heroScale, {
-        friction: 11,
-        tension: 150,
-        toValue: 1,
-        useNativeDriver: true,
-      }),
-      Animated.spring(heroTranslateY, {
-        friction: 11,
-        tension: 150,
-        toValue: 0,
-        useNativeDriver: true,
-      }),
-    ]);
-    const copyReveal = Animated.sequence([
-      Animated.delay(80),
-      Animated.parallel([
-        Animated.timing(copyOpacity, {
-          duration: 120,
-          toValue: 1,
-          useNativeDriver: true,
-        }),
-        Animated.timing(copyTranslateY, {
-          duration: 120,
-          toValue: 0,
-          useNativeDriver: true,
-        }),
-      ]),
-    ]);
-    const ctaReveal = Animated.sequence([
-      Animated.delay(150),
-      Animated.parallel([
-        Animated.timing(ctaOpacity, {
-          duration: 160,
-          toValue: 1,
-          useNativeDriver: true,
-        }),
-        Animated.spring(ctaScale, {
-          friction: 12,
-          tension: 130,
-          toValue: 1,
-          useNativeDriver: true,
-        }),
-      ]),
-    ]);
-
-    const revealAnimation = Animated.parallel([
-      heroReveal,
-      copyReveal,
-      ctaReveal,
-    ]);
-    revealAnimationRef.current = revealAnimation;
-    revealAnimation.start(({ finished }) => {
-      if (finished) {
-        setIsCtaInteractive(true);
-      }
-    });
-  };
-
-  const handleCardLayout = ({ nativeEvent }: LayoutChangeEvent) => {
-    const { height, width } = nativeEvent.layout;
-
-    setCardSize((currentSize) =>
-      Math.abs(currentSize.height - height) < 0.5 &&
-      Math.abs(currentSize.width - width) < 0.5
-        ? currentSize
-        : { height, width },
-    );
-  };
-
-  return (
-    <View style={styles.landingScreen}>
-      <LandingBackgroundGlow />
-
-      <View style={styles.landingHeader}>
-        <Text style={styles.landingLogo}>Wingr</Text>
-        <MoreButton
-          expanded={isMoreVisible}
-          onPress={() => setIsMoreVisible(true)}
-        />
-      </View>
-      <HomeMoreSheet
-        visible={isMoreVisible}
-        onClose={() => setIsMoreVisible(false)}
-        onAccountDeleted={onAccountDeleted}
-      />
-
-      <View style={[styles.landingContent, { height: contentHeight }]}>
-        <View
-          onLayout={handleCardLayout}
-          style={[
-            styles.landingCard,
-            {
-              gap: layout.cardGap,
-              padding: layout.padding,
-              paddingBottom: 10,
-            },
-          ]}
-        >
-          <LandingCardBottomGlow width={cardWidth} />
-          <LandingCardGradientBorder
-            height={cardSize.height}
-            width={cardWidth}
-          />
-
-          <View style={[styles.landingHero, { height: layout.heroHeight }]}>
-            <Animated.Image
-              accessibilityIgnoresInvertColors
-              onError={startLandingReveal}
-              onLoad={() => {
-                if (revealToken !== null) {
-                  revealFrameRef.current = requestAnimationFrame(() => {
-                    revealFrameRef.current = null;
-                    startLandingReveal();
-                  });
-                }
-              }}
-              resizeMode="stretch"
-              source={require("./assets/images/HomeGraphic.png")}
-              style={[
-                styles.landingHeroBaseImage,
-                {
-                  opacity: heroOpacity,
-                  transform: [
-                    { scale: heroScale },
-                    { translateY: heroTranslateY },
-                  ],
-                },
-              ]}
-            />
-          </View>
-
-          <View style={[styles.landingCardContent, { gap: layout.contentGap }]}>
-            <Animated.View
-              style={{
-                opacity: copyOpacity,
-                transform: [{ translateY: copyTranslateY }],
-              }}
-            >
-              <View style={[styles.landingCopy, { gap: layout.copyGap }]}>
-                <Text style={styles.landingTitle}>Get better replies</Text>
-                <Text style={styles.landingBody} numberOfLines={2}>
-                  Upload a screenshot. We’ll read the vibe.
-                </Text>
-              </View>
-            </Animated.View>
-
-            <Animated.View
-              pointerEvents={isCtaInteractive ? "auto" : "none"}
-              style={{
-                opacity: ctaOpacity,
-                transform: [{ scale: ctaScale }],
-              }}
-            >
-              <View
-                style={[
-                  styles.landingButtonShadow,
-                  styles.chooseScreenshotButtonShadow,
-                  { width: layout.contentWidth },
-                ]}
-              >
-                <Pressable
-                  accessibilityLabel="Choose Screenshot"
-                  accessibilityRole="button"
-                  onPress={() => {
-                    void Haptics.impactAsync(
-                      Haptics.ImpactFeedbackStyle.Light,
-                    ).catch(() => {});
-                    onContinue();
-                  }}
-                  style={({ pressed }) => [
-                    styles.landingButton,
-                    styles.chooseScreenshotButton,
-                    pressed && styles.landingButtonPressed,
-                  ]}
-                >
-                  <LandingButtonSurface
-                    borderColor="#2563EB"
-                    fill="#1D4ED8"
-                    width={layout.contentWidth}
-                  />
-                  <View style={styles.landingButtonContent}>
-                    <GallerySend color="#FFFFFF" size={20} />
-                    <Text style={styles.landingButtonText}>
-                      Choose Screenshot
-                    </Text>
-                  </View>
-                </Pressable>
-              </View>
-            </Animated.View>
-          </View>
-        </View>
-      </View>
-    </View>
   );
 }
 
@@ -2226,14 +1927,6 @@ const styles = StyleSheet.create({
   landingBackgroundGlow: {
     position: "absolute",
   },
-  landingBody: {
-    color: "#D4D4D4",
-    fontFamily: FONTS.displayMedium,
-    fontSize: 14,
-    fontWeight: "500",
-    lineHeight: 17,
-    maxWidth: 288,
-  },
   landingButton: {
     alignItems: "center",
     backgroundColor: COLORS.indigo800,
@@ -2243,12 +1936,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     position: "relative",
     width: "100%",
-  },
-  chooseScreenshotButton: {
-    backgroundColor: "#1D4ED8",
-  },
-  chooseScreenshotButtonShadow: {
-    backgroundColor: "#1D4ED8",
   },
   landingButtonShadow: {
     backgroundColor: COLORS.indigo800,
@@ -2299,66 +1986,11 @@ const styles = StyleSheet.create({
     position: "absolute",
     zIndex: 0,
   },
-  landingCardContent: {
-    position: "relative",
-    width: "100%",
-    zIndex: 5,
-  },
   landingCardGradientBorder: {
     left: 0,
     position: "absolute",
     top: 0,
     zIndex: 4,
-  },
-  landingContent: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 16,
-    position: "relative",
-    width: "100%",
-  },
-  landingCopy: {
-    paddingHorizontal: 8,
-  },
-  landingHeader: {
-    alignItems: "center",
-    height: 60,
-    justifyContent: "center",
-    paddingHorizontal: 16,
-    width: "100%",
-  },
-  landingHero: {
-    backgroundColor: "#0D0D0D",
-    borderRadius: 20,
-    overflow: "hidden",
-    position: "relative",
-    width: "100%",
-    zIndex: 1,
-  },
-  landingHeroBaseImage: {
-    height: "100%",
-    width: "100%",
-  },
-  landingLogo: {
-    color: COLORS.blue,
-    fontFamily: FONTS.display,
-    fontSize: 20,
-    fontWeight: "700",
-    lineHeight: 24,
-  },
-  landingScreen: {
-    alignItems: "center",
-    backgroundColor: COLORS.background,
-    flex: 1,
-    overflow: "hidden",
-    position: "relative",
-  },
-  landingTitle: {
-    color: "#FAFAFA",
-    fontFamily: FONTS.display,
-    fontSize: 18,
-    fontWeight: "600",
-    lineHeight: 22,
   },
   loadingScreen: {
     flex: 1,

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { FoundationsPreview } from "./FoundationsPreview";
+import { HomePreview } from "./HomePreview";
 
 export type PreviewEntry = {
   id: string;
@@ -16,5 +17,20 @@ export const PREVIEWS: PreviewEntry[] = [
     id: "foundations",
     title: "Foundations (fonts, colors, assets)",
     render: () => <FoundationsPreview />,
+  },
+  {
+    id: "home",
+    title: "Home · both cards",
+    render: () => <HomePreview showStartConversation />,
+  },
+  {
+    id: "home-production",
+    title: "Home · production (Get Replies only)",
+    render: () => <HomePreview showStartConversation={false} />,
+  },
+  {
+    id: "home-reveal",
+    title: "Home · entry animation",
+    render: () => <HomePreview animated showStartConversation />,
   },
 ];
