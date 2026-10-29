@@ -50,6 +50,8 @@ export const colors = {
 // Fills the design uses as raw rgba values rather than variables.
 export const surfaces = {
   actionBar: "rgba(38, 38, 38, 0.5)",
+  // Layer behind the dialogs: stone/900 at 30%, on top of a background blur.
+  dialogBackdrop: "rgba(28, 25, 23, 0.3)",
   cardShadow: "rgba(0, 0, 0, 0.25)",
   iconChip: "rgba(28, 25, 23, 0.35)",
   vibeCheckBorder: "rgba(49, 46, 129, 0.3)",
