@@ -11,25 +11,21 @@ import {
   initialWindowMetrics,
 } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
-import * as Haptics from "expo-haptics";
 import {
   Component,
   type ComponentType,
   type ReactNode,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import {
   AltArrowDown,
-  ArrowRight,
   Bolt,
   CheckCircle,
   ChatRound,
   Copy,
   Heart,
-  Refresh,
   ShieldWarning,
   StarsMinimalistic,
 } from "@solar-icons/react-native/Linear";
@@ -39,15 +35,10 @@ import Svg, {
   Ellipse,
   FeGaussianBlur,
   Filter,
-  LinearGradient,
-  Rect,
-  Stop,
 } from "react-native-svg";
 import {
   Alert,
-  Animated,
   Image,
-  type LayoutChangeEvent,
   Modal,
   Platform,
   Pressable,
@@ -104,7 +95,9 @@ import {
 import { LaunchSplash } from "./components/LaunchSplash";
 import { chooseSemanticReplacement } from "./lib/screenshot-analysis-error";
 import { fontFamilies } from "./theme";
+import { ChooseScreenshotScreen } from "./screens/ChooseScreenshotScreen";
 import { HomeScreen } from "./screens/HomeScreen";
+import { ScreenshotChosenScreen } from "./screens/ScreenshotChosenScreen";
 
 const DEBUG_BOOT_PROBE = false;
 
@@ -147,117 +140,6 @@ const COLORS = {
   indigo800: "#3730A3",
 };
 
-// The Figma ellipse is the unblurred source layer. As with the reply-card
-// glows, the oversized SVG gives the Gaussian filter room to render and the
-// card itself is the clipping boundary.
-const LANDING_CARD = {
-  baseline: {
-    contentGap: 16,
-    copyGap: 6,
-    height: 303,
-    padding: 10,
-    width: 328,
-  },
-  narrow: {
-    contentGap: 12,
-    copyGap: 4,
-    padding: 8,
-    widthThreshold: 280,
-  },
-} as const;
-
-const LANDING_CARD_BOTTOM_GLOW = {
-  ellipse: {
-    bottomBelowCard: 20,
-    fill: "#A5B4FC",
-    height: 47,
-    left: -14,
-    opacity: 0.5,
-    width: 353,
-  },
-  filterPadding: 150,
-  stdDeviation: 75,
-} as const;
-
-const LANDING_BUTTON = {
-  borderRadius: 20,
-  height: 45,
-  strokeWidth: 1,
-  width: 308,
-} as const;
-
-const LANDING_BUTTON_SHADOW = {
-  color: "#000000",
-  offsetY: 4,
-  opacity: 0.72,
-  radius: 4,
-} as const;
-
-const UPLOAD_SCREENSHOT_PREVIEW = {
-  inset: 14,
-  screenshotRadius: 16,
-} as const;
-
-const LANDING_BACKGROUND_GLOW = {
-  ellipse: {
-    fill: "#4338CA",
-    heightRatio: 0.84,
-    opacity: 0.32,
-    width: 315,
-    widthRatio: 0.68,
-  },
-  filterPadding: 150,
-  screenOverscan: 54,
-  stdDeviation: 70,
-} as const;
-
-function getLandingCardLayout(cardWidth: number) {
-  const isNarrow = cardWidth < LANDING_CARD.narrow.widthThreshold;
-  const padding = isNarrow
-    ? LANDING_CARD.narrow.padding
-    : LANDING_CARD.baseline.padding;
-  const contentWidth = Math.max(0, cardWidth - padding * 2);
-
-  return {
-    cardGap: isNarrow
-      ? LANDING_CARD.narrow.contentGap
-      : LANDING_CARD.baseline.contentGap,
-    contentGap: isNarrow
-      ? LANDING_CARD.narrow.contentGap
-      : LANDING_CARD.baseline.contentGap,
-    contentWidth,
-    copyGap: isNarrow
-      ? LANDING_CARD.narrow.copyGap
-      : LANDING_CARD.baseline.copyGap,
-    heroHeight:
-      (contentWidth / LANDING_BUTTON.width) * LANDING_CARD.baseline.height,
-    padding,
-  };
-}
-
-function getLandingCardBottomGlowCanvas(cardWidth: number) {
-  const scale = cardWidth / LANDING_CARD.baseline.width;
-  const ellipse = {
-    bottomBelowCard: LANDING_CARD_BOTTOM_GLOW.ellipse.bottomBelowCard * scale,
-    height: LANDING_CARD_BOTTOM_GLOW.ellipse.height * scale,
-    left: LANDING_CARD_BOTTOM_GLOW.ellipse.left * scale,
-    width: LANDING_CARD_BOTTOM_GLOW.ellipse.width * scale,
-  };
-  const filterPadding = LANDING_CARD_BOTTOM_GLOW.filterPadding * scale;
-
-  return {
-    bottom: -ellipse.bottomBelowCard - filterPadding,
-    ellipse,
-    filterPadding,
-    height: ellipse.height + filterPadding * 2,
-    left: ellipse.left - filterPadding,
-    stdDeviation: LANDING_CARD_BOTTOM_GLOW.stdDeviation * scale,
-    width: ellipse.width + filterPadding * 2,
-    x: filterPadding + ellipse.width / 2,
-    y: filterPadding + ellipse.height / 2,
-  };
-}
-
 const REPLIES_SCREEN = {
   actionBarBottomOffset: 40,
   actionBarFallbackHeight: 61,
@@ -291,7 +173,13 @@ const REPLIES_BACKGROUND_BLUR_CANVAS = {
     REPLIES_BACKGROUND_BLUR.ellipse.height / 2,
 } as const;
 
-type Screen = "onboarding" | "landing" | "upload" | "analyzing" | "replies";
+type Screen =
+  | "onboarding"
+  | "landing"
+  | "choose"
+  | "upload"
+  | "analyzing"
+  | "replies";
 type MetricVariant = "interest" | "energy" | "risk" | "move";
 
 type BootErrorBoundaryProps = {
@@ -721,7 +609,7 @@ function WingrApp() {
 
           {screen === "landing" ? (
             <HomeScreen
-              onGetReplies={handlePickScreenshotForUpload}
+              onGetReplies={() => setScreen("choose")}
               onAccountDeleted={handleAccountDeleted}
               onRevealStarted={(revealToken) => {
                 setLandingRevealToken((currentToken) =>
@@ -732,17 +620,24 @@ function WingrApp() {
             />
           ) : null}
 
+          {screen === "choose" ? (
+            <ChooseScreenshotScreen
+              onBack={() => setScreen("landing")}
+              onChooseScreenshot={handlePickScreenshotForUpload}
+            />
+          ) : null}
+
           {screen === "upload" ? (
-            <UploadScreenshotScreen
+            <ScreenshotChosenScreen
               errorMessage={
                 error?.kind === "analysis" &&
                 error.errorCode !== "unusable_screenshot"
                   ? getReplyErrorPresentation(error).message
                   : null
               }
-              onBack={() => setScreen("landing")}
+              onBack={() => setScreen("choose")}
               onChangeScreenshot={handlePickScreenshotForUpload}
-              onCheckVibe={handleCheckSelectedScreenshot}
+              onGetReplies={handleCheckSelectedScreenshot}
               onRevealStarted={(revealToken) => {
                 setUploadRevealToken((currentToken) =>
                   currentToken === revealToken ? null : currentToken,
@@ -784,606 +679,6 @@ function WingrApp() {
         </SafeAreaView>
       </BootErrorBoundary>
     </PostHogProvider>
-  );
-}
-
-function LandingButtonSurface({
-  borderColor = "#4338CA",
-  fill = COLORS.indigo800,
-  width,
-}: {
-  borderColor?: string;
-  fill?: string;
-  width: number;
-}) {
-  return (
-    <Svg
-      height={LANDING_BUTTON.height}
-      pointerEvents="none"
-      viewBox={`0 0 ${width} ${LANDING_BUTTON.height}`}
-      width={width}
-    >
-      <Defs>
-        <LinearGradient
-          gradientUnits="userSpaceOnUse"
-          id="landing-button-border-gradient"
-          x1={0}
-          x2={0}
-          y1={0}
-          y2={LANDING_BUTTON.height}
-        >
-          <Stop offset="0%" stopColor={borderColor} />
-          <Stop offset="100%" stopColor={borderColor} stopOpacity="0" />
-        </LinearGradient>
-      </Defs>
-      <Rect
-        fill={fill}
-        height={LANDING_BUTTON.height - LANDING_BUTTON.strokeWidth}
-        rx={LANDING_BUTTON.borderRadius - LANDING_BUTTON.strokeWidth / 2}
-        ry={LANDING_BUTTON.borderRadius - LANDING_BUTTON.strokeWidth / 2}
-        stroke="url(#landing-button-border-gradient)"
-        strokeWidth={LANDING_BUTTON.strokeWidth}
-        width={Math.max(0, width - LANDING_BUTTON.strokeWidth)}
-        x={LANDING_BUTTON.strokeWidth / 2}
-        y={LANDING_BUTTON.strokeWidth / 2}
-      />
-    </Svg>
-  );
-}
-
-function LandingCardGradientBorder({
-  height,
-  width,
-}: {
-  height: number;
-  width: number;
-}) {
-  return (
-    <Svg
-      height={height}
-      pointerEvents="none"
-      style={styles.landingCardGradientBorder}
-      width={width}
-    >
-      <Defs>
-        <LinearGradient
-          gradientUnits="userSpaceOnUse"
-          id="landing-card-border-gradient"
-          x1={0}
-          x2={0}
-          y1={0}
-          y2={height}
-        >
-          <Stop offset="0%" stopColor="#262626" />
-          <Stop offset="100%" stopColor="#262626" stopOpacity="0" />
-        </LinearGradient>
-      </Defs>
-      <Rect
-        fill="none"
-        height={Math.max(0, height - 1)}
-        rx="20"
-        ry="20"
-        stroke="url(#landing-card-border-gradient)"
-        strokeWidth="1"
-        width={Math.max(0, width - 1)}
-        x="0.5"
-        y="0.5"
-      />
-    </Svg>
-  );
-}
-
-function LandingCardBottomGlow({ width }: { width: number }) {
-  const canvas = getLandingCardBottomGlowCanvas(width);
-
-  return (
-    <Svg
-      height={canvas.height}
-      pointerEvents="none"
-      style={[
-        styles.landingCardBottomGlow,
-        {
-          bottom: canvas.bottom,
-          height: canvas.height,
-          left: canvas.left,
-          width: canvas.width,
-        },
-      ]}
-      width={canvas.width}
-    >
-      <Defs>
-        <Filter
-          filterUnits="userSpaceOnUse"
-          height={canvas.height}
-          id="landing-card-bottom-glow"
-          primitiveUnits="userSpaceOnUse"
-          width={canvas.width}
-          x={0}
-          y={0}
-        >
-          <FeGaussianBlur stdDeviation={canvas.stdDeviation} />
-        </Filter>
-      </Defs>
-      <Ellipse
-        cx={canvas.x}
-        cy={canvas.y}
-        fill={LANDING_CARD_BOTTOM_GLOW.ellipse.fill}
-        filter="url(#landing-card-bottom-glow)"
-        opacity={LANDING_CARD_BOTTOM_GLOW.ellipse.opacity}
-        rx={canvas.ellipse.width / 2}
-        ry={canvas.ellipse.height / 2}
-      />
-    </Svg>
-  );
-}
-
-function LandingBackgroundGlow() {
-  const { height: viewportHeight, width: viewportWidth } =
-    useWindowDimensions();
-  const glowHeight =
-    viewportHeight + LANDING_BACKGROUND_GLOW.screenOverscan * 2;
-  const canvasWidth =
-    LANDING_BACKGROUND_GLOW.ellipse.width +
-    LANDING_BACKGROUND_GLOW.filterPadding * 2;
-  const canvasHeight = glowHeight + LANDING_BACKGROUND_GLOW.filterPadding * 2;
-  const ellipseWidth =
-    LANDING_BACKGROUND_GLOW.ellipse.width *
-    LANDING_BACKGROUND_GLOW.ellipse.widthRatio;
-  const ellipseHeight =
-    glowHeight * LANDING_BACKGROUND_GLOW.ellipse.heightRatio;
-
-  return (
-    <View
-      pointerEvents="none"
-      style={[
-        styles.landingBackgroundGlow,
-        {
-          height: canvasHeight,
-          left:
-            (viewportWidth - LANDING_BACKGROUND_GLOW.ellipse.width) / 2 -
-            LANDING_BACKGROUND_GLOW.filterPadding,
-          top:
-            -LANDING_BACKGROUND_GLOW.screenOverscan -
-            LANDING_BACKGROUND_GLOW.filterPadding,
-          width: canvasWidth,
-        },
-      ]}
-    >
-      <Svg height={canvasHeight} width={canvasWidth}>
-        <Defs>
-          <Filter
-            filterUnits="userSpaceOnUse"
-            height={canvasHeight}
-            id="landing-background-blur"
-            primitiveUnits="userSpaceOnUse"
-            width={canvasWidth}
-            x={0}
-            y={0}
-          >
-            <FeGaussianBlur
-              stdDeviation={LANDING_BACKGROUND_GLOW.stdDeviation}
-            />
-          </Filter>
-        </Defs>
-        <Ellipse
-          cx={
-            LANDING_BACKGROUND_GLOW.filterPadding +
-            LANDING_BACKGROUND_GLOW.ellipse.width / 2
-          }
-          cy={LANDING_BACKGROUND_GLOW.filterPadding + glowHeight / 2}
-          fill={LANDING_BACKGROUND_GLOW.ellipse.fill}
-          filter="url(#landing-background-blur)"
-          opacity={LANDING_BACKGROUND_GLOW.ellipse.opacity}
-          rx={ellipseWidth / 2}
-          ry={ellipseHeight / 2}
-        />
-      </Svg>
-    </View>
-  );
-}
-
-function UploadScreenshotScreen({
-  errorMessage,
-  onBack,
-  onChangeScreenshot,
-  onCheckVibe,
-  onRevealStarted,
-  revealToken,
-  selectedScreenshotUri,
-}: {
-  errorMessage?: string | null;
-  onBack: () => void;
-  onChangeScreenshot: () => void;
-  onCheckVibe: () => void;
-  onRevealStarted: (revealToken: number) => void;
-  revealToken: number | null;
-  selectedScreenshotUri: string | null;
-}) {
-  const { width: viewportWidth } = useWindowDimensions();
-  const maxCardWidth = Math.min(
-    LANDING_CARD.baseline.width,
-    Math.max(0, viewportWidth - 32),
-  );
-  const [cardSize, setCardSize] = useState({
-    height: 487,
-    width: maxCardWidth,
-  });
-  const [changeScreenshotButtonSize, setChangeScreenshotButtonSize] = useState({
-    height: 0,
-    width: 0,
-  });
-  const [previewSize, setPreviewSize] = useState({ height: 0, width: 0 });
-  const [screenshotAspectRatio, setScreenshotAspectRatio] = useState<
-    number | null
-  >(null);
-  const screenshotOpacity = useRef(new Animated.Value(1)).current;
-  const screenshotScale = useRef(new Animated.Value(1)).current;
-  const screenshotTranslateY = useRef(new Animated.Value(0)).current;
-  const ctaOpacity = useRef(new Animated.Value(1)).current;
-  const ctaScale = useRef(new Animated.Value(1)).current;
-  const preparedRevealTokenRef = useRef<number | null>(null);
-  const startedRevealTokenRef = useRef<number | null>(null);
-  const revealAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
-  const revealFrameRef = useRef<number | null>(null);
-  const [isCtaInteractive, setIsCtaInteractive] = useState(
-    revealToken === null,
-  );
-  const cardWidth = Math.min(cardSize.width, maxCardWidth);
-  const layout = getLandingCardLayout(cardWidth);
-  const previewContentWidth = Math.max(
-    0,
-    previewSize.width - UPLOAD_SCREENSHOT_PREVIEW.inset * 2,
-  );
-  const previewContentHeight = Math.max(
-    0,
-    previewSize.height - UPLOAD_SCREENSHOT_PREVIEW.inset * 2,
-  );
-  const screenshotSize = screenshotAspectRatio
-    ? previewContentWidth / previewContentHeight > screenshotAspectRatio
-      ? {
-          height: previewContentHeight,
-          width: previewContentHeight * screenshotAspectRatio,
-        }
-      : {
-          height: previewContentWidth / screenshotAspectRatio,
-          width: previewContentWidth,
-        }
-    : null;
-
-  useEffect(() => {
-    setScreenshotAspectRatio(null);
-  }, [selectedScreenshotUri]);
-
-  useLayoutEffect(() => {
-    if (
-      revealToken === null ||
-      preparedRevealTokenRef.current === revealToken
-    ) {
-      return;
-    }
-
-    revealAnimationRef.current?.stop();
-    if (revealFrameRef.current !== null) {
-      cancelAnimationFrame(revealFrameRef.current);
-      revealFrameRef.current = null;
-    }
-
-    preparedRevealTokenRef.current = revealToken;
-    screenshotOpacity.setValue(0);
-    screenshotScale.setValue(0.82);
-    screenshotTranslateY.setValue(8);
-    ctaOpacity.setValue(0);
-    ctaScale.setValue(0.92);
-    setIsCtaInteractive(false);
-  }, [
-    ctaOpacity,
-    ctaScale,
-    revealToken,
-    screenshotOpacity,
-    screenshotScale,
-    screenshotTranslateY,
-  ]);
-
-  useEffect(
-    () => () => {
-      revealAnimationRef.current?.stop();
-      if (revealFrameRef.current !== null) {
-        cancelAnimationFrame(revealFrameRef.current);
-      }
-    },
-    [],
-  );
-
-  const startUploadReveal = () => {
-    if (
-      revealToken === null ||
-      preparedRevealTokenRef.current !== revealToken ||
-      startedRevealTokenRef.current === revealToken
-    ) {
-      return;
-    }
-
-    startedRevealTokenRef.current = revealToken;
-    onRevealStarted(revealToken);
-
-    const screenshotLanding = Animated.parallel([
-      Animated.timing(screenshotOpacity, {
-        duration: 130,
-        toValue: 1,
-        useNativeDriver: true,
-      }),
-      Animated.spring(screenshotScale, {
-        friction: 9,
-        tension: 160,
-        toValue: 1,
-        useNativeDriver: true,
-      }),
-      Animated.spring(screenshotTranslateY, {
-        friction: 9,
-        tension: 160,
-        toValue: 0,
-        useNativeDriver: true,
-      }),
-    ]);
-    const ctaReveal = Animated.sequence([
-      Animated.delay(100),
-      Animated.parallel([
-        Animated.timing(ctaOpacity, {
-          duration: 160,
-          toValue: 1,
-          useNativeDriver: true,
-        }),
-        Animated.spring(ctaScale, {
-          friction: 12,
-          tension: 130,
-          toValue: 1,
-          useNativeDriver: true,
-        }),
-      ]),
-    ]);
-
-    const revealAnimation = Animated.parallel([screenshotLanding, ctaReveal]);
-    revealAnimationRef.current = revealAnimation;
-    revealAnimation.start(({ finished }) => {
-      if (finished) {
-        setIsCtaInteractive(true);
-      }
-    });
-  };
-
-  const handleCardLayout = ({ nativeEvent }: LayoutChangeEvent) => {
-    const { height, width } = nativeEvent.layout;
-
-    setCardSize((currentSize) =>
-      Math.abs(currentSize.height - height) < 0.5 &&
-      Math.abs(currentSize.width - width) < 0.5
-        ? currentSize
-        : { height, width },
-    );
-  };
-
-  return (
-    <View className="relative flex-1 overflow-hidden bg-[#080808] px-4 pt-4">
-      <LandingBackgroundGlow />
-      <View className="flex-row items-center justify-between">
-        <BackButton onPress={onBack} />
-
-        <Text style={styles.repliesHeaderTitle}>Upload Screenshot</Text>
-
-        <View className="h-9 w-9" />
-      </View>
-
-      <View className="mt-9 items-center">
-        <View
-          onLayout={handleCardLayout}
-          style={[
-            styles.landingCard,
-            styles.uploadSelectedCard,
-            { gap: layout.cardGap, padding: layout.padding, paddingBottom: 10 },
-          ]}
-        >
-          <LandingCardBottomGlow width={cardWidth} />
-          <LandingCardGradientBorder
-            height={cardSize.height}
-            width={cardWidth}
-          />
-
-          <View style={styles.uploadSelectedCardContent}>
-            <View style={styles.changeScreenshotButtonShadow}>
-              <Pressable
-                accessibilityLabel="Change Screenshot"
-                accessibilityRole="button"
-                className="relative self-center flex-row items-center justify-center gap-[9px] px-3"
-                onLayout={({ nativeEvent }) => {
-                  const { height, width } = nativeEvent.layout;
-
-                  setChangeScreenshotButtonSize((currentSize) =>
-                    Math.abs(currentSize.height - height) < 0.5 &&
-                    Math.abs(currentSize.width - width) < 0.5
-                      ? currentSize
-                      : { height, width },
-                  );
-                }}
-                onPress={onChangeScreenshot}
-                style={{ paddingVertical: 10 }}
-              >
-                {changeScreenshotButtonSize.height > 0 &&
-                changeScreenshotButtonSize.width > 0 ? (
-                  <NeutralGradientStroke {...changeScreenshotButtonSize} />
-                ) : null}
-                <Refresh color="#E5E5E5" size={17} />
-                <Text className="font-body text-[14px] font-semibold leading-[18px] text-neutral-200">
-                  Change Screenshot
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-
-          <View
-            className="aspect-[288/332] w-full items-center justify-center overflow-hidden rounded-[20px] bg-[#101010]"
-            onLayout={({ nativeEvent }) => {
-              const { height, width } = nativeEvent.layout;
-
-              setPreviewSize((currentSize) =>
-                Math.abs(currentSize.height - height) < 0.5 &&
-                Math.abs(currentSize.width - width) < 0.5
-                  ? currentSize
-                  : { height, width },
-              );
-            }}
-            style={styles.uploadSelectedCardContent}
-          >
-            {selectedScreenshotUri ? (
-              <>
-                <Image
-                  accessibilityIgnoresInvertColors
-                  resizeMode="cover"
-                  source={require("./assets/images/uploadedscreenshotgraphic.png")}
-                  style={styles.uploadScreenshotBackground}
-                />
-                <View
-                  style={[
-                    styles.uploadScreenshotMask,
-                    screenshotSize
-                      ? {
-                          height: screenshotSize.height,
-                          width: screenshotSize.width,
-                        }
-                      : styles.uploadScreenshotMaskLoading,
-                  ]}
-                >
-                  <Animated.Image
-                    accessibilityIgnoresInvertColors
-                    onLoad={({ nativeEvent }) => {
-                      const { height, width } = nativeEvent.source;
-
-                      if (height > 0 && width > 0) {
-                        setScreenshotAspectRatio(width / height);
-                      }
-
-                      if (revealToken !== null) {
-                        revealFrameRef.current = requestAnimationFrame(() => {
-                          revealFrameRef.current = null;
-                          startUploadReveal();
-                        });
-                      }
-                    }}
-                    onError={startUploadReveal}
-                    resizeMode="contain"
-                    source={{ uri: selectedScreenshotUri }}
-                    style={[
-                      styles.uploadScreenshotImage,
-                      !screenshotSize && styles.uploadScreenshotImageLoading,
-                      {
-                        opacity: screenshotOpacity,
-                        transform: [
-                          { scale: screenshotScale },
-                          { translateY: screenshotTranslateY },
-                        ],
-                      },
-                    ]}
-                  />
-                </View>
-              </>
-            ) : (
-              <View className="h-full w-full items-center justify-center bg-[#101010] px-6">
-                <Text className="text-center font-bodyRegular text-[15px] leading-[20px] text-[#A1A1AA]">
-                  No screenshot selected
-                </Text>
-              </View>
-            )}
-          </View>
-
-          <View
-            pointerEvents="box-none"
-            style={[styles.uploadSelectedCardContent, styles.uploadSelectedCta]}
-          >
-            <Animated.View
-              pointerEvents={isCtaInteractive ? "auto" : "none"}
-              style={{
-                opacity: ctaOpacity,
-                transform: [{ scale: ctaScale }],
-              }}
-            >
-              <View
-                style={[
-                  styles.landingButtonShadow,
-                  { width: layout.contentWidth },
-                ]}
-              >
-                <Pressable
-                  accessibilityLabel="Check the vibe"
-                  accessibilityRole="button"
-                  onPress={() => {
-                    void Haptics.impactAsync(
-                      Haptics.ImpactFeedbackStyle.Light,
-                    ).catch(() => {});
-                    onCheckVibe();
-                  }}
-                  style={({ pressed }) => [
-                    styles.landingButton,
-                    pressed && styles.landingButtonPressed,
-                  ]}
-                >
-                  <LandingButtonSurface width={layout.contentWidth} />
-                  <View style={styles.landingButtonContent}>
-                    <Text style={styles.landingButtonText}>Check the vibe</Text>
-                    <ArrowRight color="#FFFFFF" size={20} />
-                  </View>
-                </Pressable>
-              </View>
-            </Animated.View>
-          </View>
-        </View>
-        {errorMessage ? (
-          <Text style={[styles.errorText, styles.uploadFlowError]}>
-            {errorMessage}
-          </Text>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
-function NeutralGradientStroke({
-  height,
-  width,
-}: {
-  height: number;
-  width: number;
-}) {
-  return (
-    <Svg
-      height={height}
-      pointerEvents="none"
-      style={styles.changeScreenshotGradientStroke}
-      viewBox={`0 0 ${width} ${height}`}
-      width={width}
-    >
-      <Defs>
-        <LinearGradient
-          id="change-screenshot-border-gradient"
-          x1="0%"
-          x2="0%"
-          y1="0%"
-          y2="100%"
-        >
-          <Stop offset="0%" stopColor="#525252" />
-          <Stop offset="100%" stopColor="#525252" stopOpacity="0" />
-        </LinearGradient>
-      </Defs>
-      <Rect
-        fill="#404040"
-        height={height - 1}
-        rx={(height - 1) / 2}
-        ry={(height - 1) / 2}
-        stroke="url(#change-screenshot-border-gradient)"
-        strokeWidth="1"
-        width={width - 1}
-        x={0.5}
-        y={0.5}
-      />
-    </Svg>
   );
 }
 
@@ -1904,17 +1199,6 @@ function ToneBottomSheet({
 }
 
 const styles = StyleSheet.create({
-  changeScreenshotButtonShadow: {
-    alignSelf: "center",
-    backgroundColor: "#404040",
-    borderRadius: 999,
-    elevation: 4,
-    overflow: "visible",
-    shadowColor: "#000000",
-    shadowOffset: { height: 4, width: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-  },
   changeScreenshotGradientStroke: {
     left: 0,
     position: "absolute",
@@ -1923,74 +1207,6 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: COLORS.background,
-  },
-  landingBackgroundGlow: {
-    position: "absolute",
-  },
-  landingButton: {
-    alignItems: "center",
-    backgroundColor: COLORS.indigo800,
-    borderRadius: LANDING_BUTTON.borderRadius,
-    flex: 1,
-    justifyContent: "center",
-    overflow: "hidden",
-    position: "relative",
-    width: "100%",
-  },
-  landingButtonShadow: {
-    backgroundColor: COLORS.indigo800,
-    borderRadius: LANDING_BUTTON.borderRadius,
-    elevation: 8,
-    flexShrink: 0,
-    height: LANDING_BUTTON.height,
-    maxWidth: "100%",
-    overflow: "visible",
-    shadowColor: LANDING_BUTTON_SHADOW.color,
-    shadowOffset: { height: LANDING_BUTTON_SHADOW.offsetY, width: 0 },
-    shadowOpacity: LANDING_BUTTON_SHADOW.opacity,
-    shadowRadius: LANDING_BUTTON_SHADOW.radius,
-    width: LANDING_BUTTON.width,
-  },
-  landingButtonContent: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 6,
-    justifyContent: "center",
-    zIndex: 2,
-  },
-  landingButtonPressed: {
-    opacity: 0.86,
-    transform: [{ scale: 0.99 }],
-  },
-  landingButtonText: {
-    color: "#FFFFFF",
-    fontFamily: FONTS.display,
-    fontSize: 20,
-    fontWeight: "600",
-    lineHeight: 25,
-  },
-  landingCard: {
-    backgroundColor: "#171717",
-    borderRadius: 20,
-    maxWidth: 328,
-    overflow: "hidden",
-    position: "relative",
-    shadowColor: "#4338CA",
-    shadowOffset: { height: 7, width: 0 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    width: "100%",
-  },
-  landingCardBottomGlow: {
-    position: "absolute",
-    zIndex: 0,
-  },
-  landingCardGradientBorder: {
-    left: 0,
-    position: "absolute",
-    top: 0,
-    zIndex: 4,
   },
   loadingScreen: {
     flex: 1,
@@ -2041,53 +1257,12 @@ const styles = StyleSheet.create({
     gap: 14,
     marginTop: 14,
   },
-  uploadSelectedCard: {
-    overflow: "hidden",
-  },
-  uploadSelectedCardContent: {
-    position: "relative",
-    zIndex: 5,
-  },
-  uploadSelectedCta: {
-    zIndex: 5,
-  },
-  uploadFlowError: {
-    marginTop: 12,
-    maxWidth: 328,
-    textAlign: "center",
-  },
-  uploadScreenshotBackground: {
-    ...StyleSheet.absoluteFillObject,
-    height: "100%",
-    width: "100%",
-  },
-  uploadScreenshotImage: {
-    height: "100%",
-    width: "100%",
-  },
-  uploadScreenshotImageLoading: {
-    opacity: 0,
-  },
-  uploadScreenshotMask: {
-    borderRadius: UPLOAD_SCREENSHOT_PREVIEW.screenshotRadius,
-    overflow: "hidden",
-  },
-  uploadScreenshotMaskLoading: {
-    height: "100%",
-    width: "100%",
-  },
   sectionTitle: {
     color: COLORS.blue,
     fontFamily: FONTS.display,
     fontSize: 27,
     fontWeight: "700",
     lineHeight: 33,
-  },
-  errorText: {
-    color: COLORS.red,
-    fontFamily: FONTS.bodyRegular,
-    fontSize: 14,
-    lineHeight: 19,
   },
   uploadButton: {
     alignItems: "center",
