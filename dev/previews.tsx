@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { ChoosePreview } from "./ChoosePreview";
 import { ChosenPreview } from "./ChosenPreview";
+import { ErrorDialogPreview } from "./ErrorDialogPreview";
 import { FoundationsPreview } from "./FoundationsPreview";
 import { HomePreview } from "./HomePreview";
 import { PreviewModalPreview } from "./PreviewModalPreview";
@@ -85,5 +86,35 @@ export const PREVIEWS: PreviewEntry[] = [
     id: "preview-modal-wide",
     title: "Screenshot Preview · landscape",
     render: () => <PreviewModalPreview sample="wide" />,
+  },
+  {
+    id: "error-unreadable",
+    title: "Error dialog · can't read screenshot",
+    render: () => <ErrorDialogPreview reason="unreadable_image" />,
+  },
+  {
+    id: "error-no-conversation",
+    title: "Error dialog · no readable conversation",
+    render: () => <ErrorDialogPreview reason="no_conversation" />,
+  },
+  {
+    id: "error-context",
+    title: "Error dialog · need more context",
+    render: () => <ErrorDialogPreview reason="ownership_unclear" />,
+  },
+  {
+    id: "error-unknown",
+    title: "Error dialog · couldn't analyze",
+    render: () => <ErrorDialogPreview reason="unknown" />,
+  },
+  {
+    id: "error-tips",
+    title: "Error dialog · screenshot tips",
+    render: () => <ErrorDialogPreview initialPage="tips" reason="unknown" />,
+  },
+  {
+    id: "error-onboarding",
+    title: "Error dialog · onboarding (Choose New Screenshot)",
+    render: () => <ErrorDialogPreview onboarding reason="unreadable_image" />,
   },
 ];

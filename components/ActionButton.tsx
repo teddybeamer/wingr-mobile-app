@@ -12,6 +12,7 @@ export function ActionButton({
   label,
   leading,
   onPress,
+  size = "default",
   trailing,
   variant,
 }: {
@@ -20,6 +21,8 @@ export function ActionButton({
   label: string;
   leading?: ReactNode;
   onPress: () => void;
+  // "compact" is the 14 px label used inside the dialogs.
+  size?: "compact" | "default";
   trailing?: ReactNode;
   variant: "primary" | "secondary";
 }) {
@@ -45,6 +48,7 @@ export function ActionButton({
         numberOfLines={1}
         style={[
           styles.label,
+          size === "compact" && styles.labelCompact,
           isPrimary ? styles.labelPrimary : styles.labelSecondary,
         ]}
       >
@@ -68,6 +72,7 @@ const styles = StyleSheet.create({
   },
   disabled: { opacity: 0.6 },
   label: { ...typography.titleSemibold16, flexShrink: 1 },
+  labelCompact: { ...typography.buttonLabel14 },
   labelPrimary: { color: colors.stone50 },
   labelSecondary: { color: colors.stone200 },
   primary: { backgroundColor: colors.primaryBlue },

@@ -9,19 +9,16 @@ import {
 
 test("semantic reasons map to the approved popup copy", () => {
   assert.deepEqual(getScreenshotErrorPresentation("unreadable_image"), {
-    button: "Choose another screenshot",
     message:
       "The messages aren’t clear enough to read. Try a sharper screenshot.",
     title: "Can’t read screenshot",
   });
   assert.deepEqual(getScreenshotErrorPresentation("no_conversation"), {
-    button: "Choose another screenshot",
     message:
       "We couldn’t find readable chat messages in this image. Try a screenshot showing your conversation.",
-    title: "No readable conversation found",
+    title: "No readable conversation",
   });
   const context = {
-    button: "Choose another screenshot",
     message:
       "Try a screenshot that shows the latest messages in your conversation.",
     title: "Need a bit more context",
@@ -35,7 +32,6 @@ test("semantic reasons map to the approved popup copy", () => {
     context,
   );
   assert.deepEqual(getScreenshotErrorPresentation("unknown"), {
-    button: "Choose another screenshot",
     message: "We couldn’t read that conversation. Try another screenshot.",
     title: "Couldn’t analyze screenshot",
   });

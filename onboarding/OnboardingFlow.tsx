@@ -28,7 +28,7 @@ import type {
   OnboardingScreenProps,
   OnboardingStepId,
 } from "./types/onboarding";
-import { ScreenshotErrorPopup } from "../components/conversation/ScreenshotErrorPopup";
+import { ScreenshotErrorDialog } from "../components/conversation/ScreenshotErrorDialog";
 import { chooseSemanticReplacement } from "../lib/screenshot-analysis-error";
 
 type OnboardingFlowProps = {
@@ -290,7 +290,7 @@ function OnboardingFlowContent({
         selectedChoiceId={selectedChoiceId}
         totalSteps={totalSteps}
       />
-      <ScreenshotErrorPopup
+      <ScreenshotErrorDialog
         error={conversation.error}
         onChooseAnotherScreenshot={chooseReplacementFromSemanticError}
       />

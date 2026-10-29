@@ -72,7 +72,7 @@ import {
   VibeCheckCard,
 } from "./components/conversation/ConversationContent";
 import { ReplyLoadingScreen } from "./components/conversation/ReplyLoadingScreen";
-import { ScreenshotErrorPopup } from "./components/conversation/ScreenshotErrorPopup";
+import { ScreenshotErrorDialog } from "./components/conversation/ScreenshotErrorDialog";
 import {
   getRevenueCatCustomerInfo,
   hasProEntitlement,
@@ -93,7 +93,6 @@ import {
   type LaunchRoute,
 } from "./lib/launch-routing";
 import { LaunchSplash } from "./components/LaunchSplash";
-import { chooseSemanticReplacement } from "./lib/screenshot-analysis-error";
 import { fontFamilies } from "./theme";
 import { ChooseScreenshotScreen } from "./screens/ChooseScreenshotScreen";
 import { HomeScreen } from "./screens/HomeScreen";
@@ -482,17 +481,6 @@ function WingrApp() {
     setScreen("upload");
   };
 
-  const handleSemanticScreenshotReplacement = async () => {
-    await chooseSemanticReplacement({
-      pickScreenshot,
-      onSelected: () => {
-        uploadRevealVersionRef.current += 1;
-        setUploadRevealToken(uploadRevealVersionRef.current);
-        setScreen("upload");
-      },
-    });
-  };
-
   const handleEnterLanding = async () => {
     if (authenticatedUserId) {
       await markOnboardingCompleted(authenticatedUserId).catch(() => {});
@@ -672,10 +660,8 @@ function WingrApp() {
               selectedTone={selectedTone}
             />
           ) : null}
-          <ScreenshotErrorPopup
-            error={error}
-            onChooseAnotherScreenshot={handleSemanticScreenshotReplacement}
-          />
+          {/* "Got it" just closes: Screenshot Chosen has Change Screenshot. */}
+          <ScreenshotErrorDialog error={error} />
         </SafeAreaView>
       </BootErrorBoundary>
     </PostHogProvider>

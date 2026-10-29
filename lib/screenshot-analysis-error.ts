@@ -2,12 +2,9 @@ import type { ConversationFlowError } from "../hooks/useConversationFlow";
 import type { UnusableScreenshotReason } from "../supabase/functions/_shared_v2/conversation";
 
 export type ScreenshotErrorPresentation = {
-  button: "Choose another screenshot";
   message: string;
   title: string;
 };
-
-const CHOOSE_ANOTHER = "Choose another screenshot" as const;
 
 export function getScreenshotErrorPresentation(
   reason: UnusableScreenshotReason,
@@ -15,29 +12,25 @@ export function getScreenshotErrorPresentation(
   switch (reason) {
     case "unreadable_image":
       return {
-        button: CHOOSE_ANOTHER,
         message:
           "The messages aren’t clear enough to read. Try a sharper screenshot.",
         title: "Can’t read screenshot",
       };
     case "no_conversation":
       return {
-        button: CHOOSE_ANOTHER,
         message:
           "We couldn’t find readable chat messages in this image. Try a screenshot showing your conversation.",
-        title: "No readable conversation found",
+        title: "No readable conversation",
       };
     case "ownership_unclear":
     case "no_replyable_message":
       return {
-        button: CHOOSE_ANOTHER,
         message:
           "Try a screenshot that shows the latest messages in your conversation.",
         title: "Need a bit more context",
       };
     case "unknown":
       return {
-        button: CHOOSE_ANOTHER,
         message: "We couldn’t read that conversation. Try another screenshot.",
         title: "Couldn’t analyze screenshot",
       };
