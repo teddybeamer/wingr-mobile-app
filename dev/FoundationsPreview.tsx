@@ -20,7 +20,7 @@ const TYPE_SPECIMENS: { label: string; token: TypographyToken }[] = [
   { label: "Chat message · Clash Display Semibold 22", token: "chatMessage" },
   { label: "Timestamp · Clash Display Regular 12", token: "timestamp" },
   { label: "Summary · Clash Display Medium 16", token: "summaryMedium16" },
-  { label: "Metric label · Uncut Sans Medium 13", token: "metricLabel" },
+  { label: "Metric label · Clash Display Medium 14", token: "metricLabel" },
 ];
 
 const ASSETS = [

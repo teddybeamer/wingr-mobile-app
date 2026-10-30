@@ -1,5 +1,4 @@
 import * as Clipboard from "expo-clipboard";
-import * as Haptics from "expo-haptics";
 import { BlurView } from "expo-blur";
 import { posthog } from "../../lib/posthog";
 import { BottomSheet } from "../BottomSheet";
@@ -11,6 +10,7 @@ import Reanimated, {
   LinearTransition,
   useAnimatedStyle,
   useSharedValue,
+  withSequence,
   withTiming,
 } from "react-native-reanimated";
 import {
@@ -58,6 +58,19 @@ import type {
   ToneOption,
   VibeCheck,
 } from "../../types/wingr";
+import {
+  colors,
+  fontFamilies,
+  surfaces,
+  toneStyles,
+  typography,
+} from "../../theme";
+import { pressHaptic, successHaptic, tapHaptic } from "../../lib/haptics";
+import { GlowEllipse } from "../GlowEllipse";
+import { WingrTypingBubble } from "../WingrTypingBubble";
+
+// Vertical radius of the reply-card glow ellipse (Figma: 40 tall).
+const GLOW_RY = 20;
 
 const COLORS = {
   blue: "#1970FD",
@@ -67,20 +80,14 @@ const COLORS = {
   white: "#F6F7FB",
 };
 
-const REPLY_SURFACE_COLORS = {
-  blue950: "#172554",
-  neutral600: "#525252",
-  neutral800: "#262626",
-  neutral900: "#171717",
-};
-
 const REPLY_CARD_PRESS_SCALE = 0.985;
-const REPLY_CARD_PRESS_OVERLAY_OPACITY = 0.12;
+const REPLY_CARD_PRESS_STROKE_OPACITY = 0.55;
+// Figma: the pill's two controls are 40 px high with a 20 px radius; their
+// widths follow their content.
 const STICKY_ACTION_BUTTON = {
-  height: 45,
-  newReplyWidth: 166,
-  radius: 24,
-  toneWidth: 140,
+  height: 40,
+  newReplyMinWidth: 160,
+  radius: 20,
 } as const;
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const AnimatedTouchableOpacity =
@@ -97,91 +104,10 @@ const VIBE_CHECK_METRICS_EXITING = FadeOut.duration(120).easing(
   ReanimatedEasing.out(ReanimatedEasing.cubic),
 );
 
-// This is the unblurred Figma source layer. The canvas adds three standard
-// deviations of transparent space on every side, so the SVG filter has room
-// to render the blur while the reply card remains the only clipping boundary.
-const REPLY_CARD_BOTTOM_GLOW = {
-  ellipse: {
-    fill: "#404040",
-    height: 40,
-    right: -19,
-    topAboveCardBottom: 39,
-    width: 400,
-  },
-  filterPadding: 300,
-  stdDeviation: 40,
-} as const;
-
-const REPLY_CARD_BOTTOM_GLOW_SOURCE_BOTTOM =
-  REPLY_CARD_BOTTOM_GLOW.ellipse.height -
-  REPLY_CARD_BOTTOM_GLOW.ellipse.topAboveCardBottom;
-
-const REPLY_CARD_BOTTOM_GLOW_CANVAS = {
-  bottom:
-    -REPLY_CARD_BOTTOM_GLOW_SOURCE_BOTTOM -
-    REPLY_CARD_BOTTOM_GLOW.filterPadding,
-  height:
-    REPLY_CARD_BOTTOM_GLOW.ellipse.height +
-    REPLY_CARD_BOTTOM_GLOW.filterPadding * 2,
-  right:
-    REPLY_CARD_BOTTOM_GLOW.ellipse.right - REPLY_CARD_BOTTOM_GLOW.filterPadding,
-  width:
-    REPLY_CARD_BOTTOM_GLOW.ellipse.width +
-    REPLY_CARD_BOTTOM_GLOW.filterPadding * 2,
-  x:
-    REPLY_CARD_BOTTOM_GLOW.filterPadding +
-    REPLY_CARD_BOTTOM_GLOW.ellipse.width / 2,
-  y:
-    REPLY_CARD_BOTTOM_GLOW.filterPadding +
-    REPLY_CARD_BOTTOM_GLOW.ellipse.height / 2,
-} as const;
-
-const PLAYFUL_REPLY_CARD_BOTTOM_GLOW = {
-  ...REPLY_CARD_BOTTOM_GLOW,
-  ellipse: {
-    ...REPLY_CARD_BOTTOM_GLOW.ellipse,
-    fill: "#F59E0B",
-  },
-} as const;
-
-const SMALL_TALK_REPLY_CARD_BOTTOM_GLOW = {
-  ...REPLY_CARD_BOTTOM_GLOW,
-  ellipse: {
-    ...REPLY_CARD_BOTTOM_GLOW.ellipse,
-    fill: "#14B8A6",
-  },
-} as const;
-
-const DIRECT_REPLY_CARD_BOTTOM_GLOW = {
-  ...REPLY_CARD_BOTTOM_GLOW,
-  ellipse: {
-    ...REPLY_CARD_BOTTOM_GLOW.ellipse,
-    fill: "#3B82F6",
-  },
-} as const;
-
 const TONE_EMOJIS: Record<ReplyTone, string> = {
   playful: "🔥",
   direct: "🎯",
   casualSmallTalk: "😊",
-};
-
-const TONE_CHIP_STYLES: Record<
-  ReplyTone,
-  { backgroundColor: string; borderColor: string }
-> = {
-  playful: {
-    backgroundColor: "rgba(120, 53, 15, 0.5)",
-    borderColor: "#78350F",
-  },
-  direct: {
-    backgroundColor: "rgba(30, 58, 138, 0.5)",
-    borderColor: "#1E3A8A",
-  },
-  casualSmallTalk: {
-    backgroundColor: "rgba(19, 78, 74, 0.5)",
-    borderColor: "#115E59",
-  },
 };
 
 const TONE_OPTIONS: ToneOption[] = [
@@ -260,35 +186,35 @@ const INLINE_VIBE_METRIC_VARIANTS: Record<
 > = {
   interest: {
     backgroundColor: "rgba(30, 27, 75, 0.3)",
-    borderColor: "#1D4ED8",
+    borderColor: "rgba(30, 58, 138, 0.5)",
     iconBackgroundColor: "#1D4ED8",
     iconColor: "#E0E7FF",
     labelColor: "#E0E7FF",
-    valueColor: "#3B82F6",
+    valueColor: colors.blue500,
   },
   energy: {
     backgroundColor: "rgba(69, 26, 3, 0.3)",
-    borderColor: "#B45309",
+    borderColor: "rgba(120, 53, 15, 0.5)",
     iconBackgroundColor: "#B45309",
     iconColor: "#FEF3C7",
     labelColor: "#FEF3C7",
-    valueColor: "#F59E0B",
+    valueColor: colors.amber500,
   },
   risk: {
     backgroundColor: "rgba(69, 10, 10, 0.3)",
-    borderColor: "#B91C1C",
+    borderColor: "rgba(127, 29, 29, 0.5)",
     iconBackgroundColor: "#B91C1C",
     iconColor: "#FEE2E2",
     labelColor: "#FEE2E2",
-    valueColor: "#EF4444",
+    valueColor: colors.red500,
   },
   move: {
     backgroundColor: "rgba(4, 47, 46, 0.3)",
-    borderColor: "#0F766E",
+    borderColor: "rgba(19, 78, 74, 0.5)",
     iconBackgroundColor: "#0F766E",
     iconColor: "#CCFBF1",
     labelColor: "#CCFBF1",
-    valueColor: "#14B8A6",
+    valueColor: colors.teal500,
   },
 };
 
@@ -401,14 +327,22 @@ export function InlineErrorCard({
 export type VibeCheckCardPresentation = "default" | "inlineExpandable";
 
 export function VibeCheckCard({
+  defaultExpanded = false,
   vibeCheck,
   presentation = "default",
 }: {
+  // Starts the inline card open (the dev preview uses it to show that state).
+  defaultExpanded?: boolean;
   vibeCheck: VibeCheck;
   presentation?: VibeCheckCardPresentation;
 }) {
   if (presentation === "inlineExpandable") {
-    return <InlineExpandableVibeCheckCard vibeCheck={vibeCheck} />;
+    return (
+      <InlineExpandableVibeCheckCard
+        defaultExpanded={defaultExpanded}
+        vibeCheck={vibeCheck}
+      />
+    );
   }
 
   return (
@@ -448,23 +382,20 @@ export function VibeCheckCard({
 }
 
 function InlineExpandableVibeCheckCard({
+  defaultExpanded,
   vibeCheck,
 }: {
+  defaultExpanded: boolean;
   vibeCheck: VibeCheck;
 }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const chevronStrokeId = useRef("inline-vibe-check-chevron-stroke").current;
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const chevronRotation = useSharedValue(0);
   const pressScale = useSharedValue(1);
-  const pressOverlayOpacity = useSharedValue(0);
   const animatedChevronStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${chevronRotation.value}deg` }],
   }));
   const animatedPressStyle = useAnimatedStyle(() => ({
     transform: [{ scale: pressScale.value }],
-  }));
-  const animatedPressOverlayStyle = useAnimatedStyle(() => ({
-    opacity: pressOverlayOpacity.value,
   }));
 
   useEffect(() => {
@@ -474,21 +405,15 @@ function InlineExpandableVibeCheckCard({
     });
   }, [chevronRotation, isExpanded]);
 
+  // The little press-in is a quick pulse that plays on a real tap (expand or
+  // collapse), not when a finger lands to scroll.
   const toggleExpanded = () => {
-    setIsExpanded((current) => !current);
-  };
-
-  const animatePressedState = (isPressed: boolean) => {
-    const duration = isPressed ? 80 : 140;
     const easing = ReanimatedEasing.out(ReanimatedEasing.cubic);
-    pressScale.value = withTiming(isPressed ? REPLY_CARD_PRESS_SCALE : 1, {
-      duration,
-      easing,
-    });
-    pressOverlayOpacity.value = withTiming(
-      isPressed ? REPLY_CARD_PRESS_OVERLAY_OPACITY : 0,
-      { duration, easing },
+    pressScale.value = withSequence(
+      withTiming(REPLY_CARD_PRESS_SCALE, { duration: 80, easing }),
+      withTiming(1, { duration: 140, easing }),
     );
+    setIsExpanded((current) => !current);
   };
 
   return (
@@ -500,22 +425,31 @@ function InlineExpandableVibeCheckCard({
       accessibilityState={{ expanded: isExpanded }}
       layout={VIBE_CHECK_LAYOUT_TRANSITION}
       onPress={toggleExpanded}
-      onPressIn={() => animatePressedState(true)}
-      onPressOut={() => animatePressedState(false)}
       style={[styles.inlineVibeCardOuter, animatedPressStyle]}
     >
       <Reanimated.View
         layout={VIBE_CHECK_LAYOUT_TRANSITION}
         style={styles.inlineVibeCard}
       >
-        <Reanimated.View
-          pointerEvents="none"
-          style={[
-            styles.replyCardPressOverlay,
-            styles.inlineVibePressOverlay,
-            animatedPressOverlayStyle,
-          ]}
-        />
+        {isExpanded ? (
+          <GlowEllipse
+            blur={75}
+            fill={colors.indigo950}
+            opacity={0.3}
+            rotation={-0.7}
+            rx={232.5}
+            ry={182}
+            style={styles.inlineVibeExpandedGlow}
+          />
+        ) : (
+          <GlowEllipse
+            blur={50}
+            fill={colors.indigo600}
+            rx={232.5}
+            ry={11}
+            style={styles.inlineVibeBottomGlow}
+          />
+        )}
         <View style={styles.inlineVibeCardContent}>
           <View style={styles.inlineVibeHeader}>
             <View style={styles.inlineVibeEmojiChip}>
@@ -523,36 +457,6 @@ function InlineExpandableVibeCheckCard({
             </View>
             <Text style={styles.inlineVibeTitle}>Vibe Check</Text>
             <View style={styles.inlineVibeChevronChip}>
-              <Svg
-                height="100%"
-                pointerEvents="none"
-                style={styles.inlineVibeChevronGradientBorder}
-                width="100%"
-              >
-                <Defs>
-                  <LinearGradient
-                    id={chevronStrokeId}
-                    x1="0%"
-                    x2="0%"
-                    y1="0%"
-                    y2="100%"
-                  >
-                    <Stop offset="0%" stopColor="#4F46E5" />
-                    <Stop offset="100%" stopColor="#4F46E5" stopOpacity="0" />
-                  </LinearGradient>
-                </Defs>
-                <Rect
-                  fill="none"
-                  height="99.5%"
-                  rx="14.5"
-                  ry="14.5"
-                  stroke={`url(#${chevronStrokeId})`}
-                  strokeWidth="1"
-                  width="99.5%"
-                  x="0.5"
-                  y="0.5"
-                />
-              </Svg>
               <Reanimated.View
                 style={[styles.inlineVibeChevronIcon, animatedChevronStyle]}
               >
@@ -560,7 +464,12 @@ function InlineExpandableVibeCheckCard({
               </Reanimated.View>
             </View>
           </View>
-          <Text style={styles.inlineVibeSummary}>
+          {/* One truncated line while closed; the whole analysis once open. */}
+          <Text
+            ellipsizeMode="tail"
+            numberOfLines={isExpanded ? undefined : 1}
+            style={styles.inlineVibeSummary}
+          >
             {vibeCheck.summary || "WiNGR read the vibe."}
           </Text>
 
@@ -863,9 +772,6 @@ export function RepliesContent({
     if (didCopy) {
       setCopiedReplyId(reply.id);
       setCopyAnimationVersion((version) => version + 1);
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
-        () => {},
-      );
       posthog.capture("reply_copied", { tone: reply.tone });
     }
   };
@@ -906,10 +812,7 @@ export function RepliesContent({
       ))}
 
       {showTypingIndicator && isGenerating ? (
-        <TypingBubble
-          onLayout={handleReplyLayout}
-          presentation={presentation}
-        />
+        <WingrTypingBubble onLayout={handleReplyLayout} />
       ) : null}
     </View>
   );
@@ -933,21 +836,16 @@ export function ReplyActionBar({
   variant = "sticky",
 }: ReplyActionBarProps) {
   const [isToneSheetOpen, setIsToneSheetOpen] = useState(false);
-  const refreshBorderId = useRef("sticky-refresh-button-border").current;
-  const toneBorderId = useRef("sticky-tone-button-border").current;
   const isSticky = variant === "sticky";
   const newReplyPressAnimation = useActionButtonPressAnimation();
   const tonePressAnimation = useActionButtonPressAnimation();
 
   const refreshReplies = async () => {
-    if (isSticky) {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
-        () => {},
-      );
-    }
-
     const succeeded = await onRefreshReplies();
-    if (succeeded) onReplyGenerated?.();
+    if (succeeded) {
+      if (isSticky) successHaptic();
+      onReplyGenerated?.();
+    }
   };
 
   const changeTone = async (tone: ReplyTone) => {
@@ -978,7 +876,14 @@ export function ReplyActionBar({
           onPress={() => {
             void refreshReplies();
           }}
-          onPressIn={isSticky ? newReplyPressAnimation.onPressIn : undefined}
+          onPressIn={
+            isSticky
+              ? () => {
+                  pressHaptic();
+                  newReplyPressAnimation.onPressIn();
+                }
+              : undefined
+          }
           onPressOut={isSticky ? newReplyPressAnimation.onPressOut : undefined}
           style={[
             isSticky ? styles.stickyNewRepliesButton : styles.newRepliesButton,
@@ -986,19 +891,12 @@ export function ReplyActionBar({
             isSticky && newReplyPressAnimation.style,
           ]}
         >
-          {isSticky ? (
-            <ActionButtonGradientBorder
-              color="#2563EB"
-              gradientId={refreshBorderId}
-              width={STICKY_ACTION_BUTTON.newReplyWidth}
-            />
-          ) : null}
           {isGenerating ? (
             <ActivityIndicator color="#E0E7FF" size="small" />
           ) : (
             <>
               {isSticky ? (
-                <Repeat color="#E0E7FF" size={20} />
+                <Repeat color={colors.indigo100} size={16} />
               ) : (
                 <Refresh color={COLORS.white} size={16} />
               )}
@@ -1033,13 +931,6 @@ export function ReplyActionBar({
           ]}
         >
           {isSticky ? (
-            <ActionButtonGradientBorder
-              color="#525252"
-              gradientId={toneBorderId}
-              width={STICKY_ACTION_BUTTON.toneWidth}
-            />
-          ) : null}
-          {isSticky ? (
             <Text style={styles.stickyToneEmoji}>
               {TONE_EMOJIS[selectedTone]}
             </Text>
@@ -1055,7 +946,10 @@ export function ReplyActionBar({
           >
             {getToneLabel(selectedTone)}
           </Text>
-          <AltArrowDown color="#D6D6DB" size={isSticky ? 18 : 16} />
+          <AltArrowDown
+            color={isSticky ? colors.neutral200 : "#D6D6DB"}
+            size={16}
+          />
         </AnimatedTouchableOpacity>
       </View>
       <ToneBottomSheet
@@ -1092,43 +986,6 @@ function useActionButtonPressAnimation() {
     onPressOut: () => animateTo(1, 140),
     style: { transform: [{ scale }] },
   };
-}
-
-function ActionButtonGradientBorder({
-  color,
-  gradientId,
-  width,
-}: {
-  color: string;
-  gradientId: string;
-  width: number;
-}) {
-  return (
-    <Svg
-      height={STICKY_ACTION_BUTTON.height}
-      pointerEvents="none"
-      style={styles.stickyActionButtonGradientBorder}
-      width={width}
-    >
-      <Defs>
-        <LinearGradient id={gradientId} x1="0%" x2="0%" y1="0%" y2="100%">
-          <Stop offset="0%" stopColor={color} />
-          <Stop offset="100%" stopColor={color} stopOpacity="0" />
-        </LinearGradient>
-      </Defs>
-      <Rect
-        fill="none"
-        height={STICKY_ACTION_BUTTON.height - 1}
-        rx={STICKY_ACTION_BUTTON.radius}
-        ry={STICKY_ACTION_BUTTON.radius}
-        stroke={`url(#${gradientId})`}
-        strokeWidth="1"
-        width={width - 1}
-        x="0.5"
-        y="0.5"
-      />
-    </Svg>
-  );
 }
 
 function ReplyCard({
@@ -1253,145 +1110,65 @@ function MainFeedReplyCard({
   onCopy: () => void;
   reply: SuggestedReply;
 }) {
-  const toneChipStyle = TONE_CHIP_STYLES[reply.tone];
-
-  if (reply.tone === "playful") {
-    return (
-      <PlayfulMainFeedReplyCard
-        copied={copied}
-        copyAnimationVersion={copyAnimationVersion}
-        onCopy={onCopy}
-        reply={reply}
-      />
-    );
-  }
-
-  if (reply.tone === "casualSmallTalk") {
-    return (
-      <SmallTalkMainFeedReplyCard
-        copied={copied}
-        copyAnimationVersion={copyAnimationVersion}
-        onCopy={onCopy}
-        reply={reply}
-      />
-    );
-  }
-
-  if (reply.tone === "direct") {
-    return (
-      <DirectMainFeedReplyCard
-        copied={copied}
-        copyAnimationVersion={copyAnimationVersion}
-        onCopy={onCopy}
-        reply={reply}
-      />
-    );
-  }
-
-  return (
-    <GlassMaterialCard
-      materialId={`reply-${reply.id}`}
-      contentStyle={styles.mainFeedReplyContent}
-    >
-      <View style={styles.mainFeedReplyHeader}>
-        <View style={[styles.mainFeedToneChip, toneChipStyle]}>
-          <Text style={styles.mainFeedToneEmoji}>
-            {TONE_EMOJIS[reply.tone]}
-          </Text>
-        </View>
-        <TouchableOpacity
-          accessibilityLabel={copied ? "Reply copied" : "Copy reply"}
-          accessibilityRole="button"
-          onPress={onCopy}
-          style={styles.mainFeedCopyButton}
-        >
-          {copied ? (
-            <CheckCircle color="#D6D6DB" size={16} />
-          ) : (
-            <Copy color="#D6D6DB" size={16} />
-          )}
-          <Text style={styles.mainFeedCopyButtonText}>
-            {copied ? "Copied" : "Copy"}
-          </Text>
-        </TouchableOpacity>
-      </View>
-      <Text style={styles.mainFeedReplyText}>
-        {reply.text || "Reply unavailable"}
-      </Text>
-    </GlassMaterialCard>
-  );
-}
-
-function PlayfulMainFeedReplyCard({
-  copied,
-  copyAnimationVersion,
-  onCopy,
-  reply,
-}: {
-  copied: boolean;
-  copyAnimationVersion: number;
-  onCopy: () => void;
-  reply: SuggestedReply;
-}) {
-  const bottomGlowId = useRef(`playful-reply-bottom-glow-${reply.id}`).current;
-  const strokeId = useRef(`playful-reply-stroke-${reply.id}`).current;
+  const tone = toneStyles[reply.tone];
   const pressAnimation = useReplyCardPressAnimation();
 
   return (
     <AnimatedPressable
       accessibilityLabel={copied ? "Reply copied" : "Copy reply"}
       accessibilityRole="button"
-      onPress={onCopy}
-      onPressIn={pressAnimation.onPressIn}
-      onPressOut={pressAnimation.onPressOut}
-      style={[styles.playfulMainFeedReplyCardOuter, pressAnimation.cardStyle]}
+      onPress={() => {
+        // Only a real tap (not the start of a scroll) gives feedback.
+        tapHaptic();
+        pressAnimation.pulse();
+        onCopy();
+      }}
+      style={[styles.mainFeedReplyCardOuter, pressAnimation.cardStyle]}
     >
-      <View style={styles.playfulMainFeedReplyCard}>
-        <ReplyCardBottomGlow
-          fill={PLAYFUL_REPLY_CARD_BOTTOM_GLOW.ellipse.fill}
-          filterId={bottomGlowId}
-          style={styles.playfulMainFeedReplyBottomGlow}
+      <View
+        style={[styles.mainFeedReplyCard, { borderColor: tone.cardBorder }]}
+      >
+        <GlowEllipse
+          blur={100}
+          fill={tone.glow}
+          rotation={-31.97}
+          rx={tone.glowRx}
+          ry={GLOW_RY}
+          style={{
+            // Canvas edges that put the glow's centre where Figma has it.
+            bottom: tone.glowFromBottom - (GLOW_RY * 2 + 400) / 2,
+            left: tone.glowCenterX - (tone.glowRx * 2 + 400) / 2,
+            zIndex: 0,
+          }}
         />
-        <ReplyCardPressOverlay
-          color="#B45309"
-          opacity={pressAnimation.overlayOpacity}
+        <ReplyCardPressStroke
+          color={tone.accent}
+          opacity={pressAnimation.strokeOpacity}
         />
-        <Svg
-          height="100%"
-          pointerEvents="none"
-          style={styles.playfulMainFeedGradientBorder}
-          width="100%"
-        >
-          <Defs>
-            <LinearGradient id={strokeId} x1="0%" x2="0%" y1="0%" y2="100%">
-              <Stop offset="0%" stopColor="#B45309" />
-              <Stop offset="100%" stopColor="#B45309" stopOpacity="0" />
-            </LinearGradient>
-          </Defs>
-          <Rect
-            fill="none"
-            height="99.5%"
-            rx="14"
-            ry="14"
-            stroke={`url(#${strokeId})`}
-            strokeWidth="1"
-            width="99.5%"
-            x="0.5"
-            y="0.5"
-          />
-        </Svg>
-        <View style={styles.playfulMainFeedReplyContent}>
-          <View style={styles.playfulMainFeedReplyHeader}>
-            <View style={styles.playfulMainFeedToneChip}>
-              <Text style={styles.playfulMainFeedToneEmoji}>🔥</Text>
+        <View style={styles.mainFeedReplyContent}>
+          <View style={styles.mainFeedReplyHeader}>
+            <View
+              style={[
+                styles.mainFeedToneChip,
+                {
+                  backgroundColor: tone.chipBackground,
+                  borderColor: tone.chipBorder ?? "transparent",
+                },
+              ]}
+            >
+              <Text style={styles.mainFeedToneEmoji}>{tone.emoji}</Text>
             </View>
             <ToneMainFeedCopyBadge
               copied={copied}
               copyAnimationVersion={copyAnimationVersion}
-              style={styles.playfulMainFeedCopyButton}
+              iconColor={tone.accent}
+              style={[
+                styles.mainFeedCopyBadge,
+                { backgroundColor: tone.chipBackground },
+              ]}
             />
           </View>
-          <Text style={styles.playfulMainFeedReplyText}>
+          <Text maxFontSizeMultiplier={1.2} style={styles.mainFeedReplyText}>
             {reply.text || "Reply unavailable"}
           </Text>
         </View>
@@ -1400,204 +1177,54 @@ function PlayfulMainFeedReplyCard({
   );
 }
 
-function SmallTalkMainFeedReplyCard({
-  copied,
-  copyAnimationVersion,
-  onCopy,
-  reply,
-}: {
-  copied: boolean;
-  copyAnimationVersion: number;
-  onCopy: () => void;
-  reply: SuggestedReply;
-}) {
-  const bottomGlowId = useRef(
-    `small-talk-reply-bottom-glow-${reply.id}`,
-  ).current;
-  const strokeId = useRef(`small-talk-reply-stroke-${reply.id}`).current;
-  const pressAnimation = useReplyCardPressAnimation();
-
-  return (
-    <AnimatedPressable
-      accessibilityLabel={copied ? "Reply copied" : "Copy reply"}
-      accessibilityRole="button"
-      onPress={onCopy}
-      onPressIn={pressAnimation.onPressIn}
-      onPressOut={pressAnimation.onPressOut}
-      style={[styles.smallTalkMainFeedReplyCardOuter, pressAnimation.cardStyle]}
-    >
-      <View style={styles.smallTalkMainFeedReplyCard}>
-        <ReplyCardBottomGlow
-          fill={SMALL_TALK_REPLY_CARD_BOTTOM_GLOW.ellipse.fill}
-          filterId={bottomGlowId}
-          style={styles.smallTalkMainFeedReplyBottomGlow}
-        />
-        <ReplyCardPressOverlay
-          color="#0F766E"
-          opacity={pressAnimation.overlayOpacity}
-        />
-        <Svg
-          height="100%"
-          pointerEvents="none"
-          style={styles.smallTalkMainFeedGradientBorder}
-          width="100%"
-        >
-          <Defs>
-            <LinearGradient id={strokeId} x1="0%" x2="0%" y1="0%" y2="100%">
-              <Stop offset="0%" stopColor="#0F766E" />
-              <Stop offset="100%" stopColor="#0F766E" stopOpacity="0" />
-            </LinearGradient>
-          </Defs>
-          <Rect
-            fill="none"
-            height="99.5%"
-            rx="14"
-            ry="14"
-            stroke={`url(#${strokeId})`}
-            strokeWidth="1"
-            width="99.5%"
-            x="0.5"
-            y="0.5"
-          />
-        </Svg>
-        <View style={styles.smallTalkMainFeedReplyContent}>
-          <View style={styles.smallTalkMainFeedReplyHeader}>
-            <View style={styles.smallTalkMainFeedToneChip}>
-              <Text style={styles.smallTalkMainFeedToneEmoji}>😊</Text>
-            </View>
-            <ToneMainFeedCopyBadge
-              copied={copied}
-              copyAnimationVersion={copyAnimationVersion}
-              style={styles.smallTalkMainFeedCopyButton}
-            />
-          </View>
-          <Text style={styles.smallTalkMainFeedReplyText}>
-            {reply.text || "Reply unavailable"}
-          </Text>
-        </View>
-      </View>
-    </AnimatedPressable>
-  );
-}
-
-function DirectMainFeedReplyCard({
-  copied,
-  copyAnimationVersion,
-  onCopy,
-  reply,
-}: {
-  copied: boolean;
-  copyAnimationVersion: number;
-  onCopy: () => void;
-  reply: SuggestedReply;
-}) {
-  const bottomGlowId = useRef(`direct-reply-bottom-glow-${reply.id}`).current;
-  const strokeId = useRef(`direct-reply-stroke-${reply.id}`).current;
-  const pressAnimation = useReplyCardPressAnimation();
-
-  return (
-    <AnimatedPressable
-      accessibilityLabel={copied ? "Reply copied" : "Copy reply"}
-      accessibilityRole="button"
-      onPress={onCopy}
-      onPressIn={pressAnimation.onPressIn}
-      onPressOut={pressAnimation.onPressOut}
-      style={[styles.directMainFeedReplyCardOuter, pressAnimation.cardStyle]}
-    >
-      <View style={styles.directMainFeedReplyCard}>
-        <ReplyCardBottomGlow
-          fill={DIRECT_REPLY_CARD_BOTTOM_GLOW.ellipse.fill}
-          filterId={bottomGlowId}
-          style={styles.directMainFeedReplyBottomGlow}
-        />
-        <ReplyCardPressOverlay
-          color="#1D4ED8"
-          opacity={pressAnimation.overlayOpacity}
-        />
-        <Svg
-          height="100%"
-          pointerEvents="none"
-          style={styles.directMainFeedGradientBorder}
-          width="100%"
-        >
-          <Defs>
-            <LinearGradient id={strokeId} x1="0%" x2="0%" y1="0%" y2="100%">
-              <Stop offset="0%" stopColor="#1D4ED8" />
-              <Stop offset="100%" stopColor="#1D4ED8" stopOpacity="0" />
-            </LinearGradient>
-          </Defs>
-          <Rect
-            fill="none"
-            height="99.5%"
-            rx="14"
-            ry="14"
-            stroke={`url(#${strokeId})`}
-            strokeWidth="1"
-            width="99.5%"
-            x="0.5"
-            y="0.5"
-          />
-        </Svg>
-        <View style={styles.directMainFeedReplyContent}>
-          <View style={styles.directMainFeedReplyHeader}>
-            <View style={styles.directMainFeedToneChip}>
-              <Text style={styles.directMainFeedToneEmoji}>🎯</Text>
-            </View>
-            <ToneMainFeedCopyBadge
-              copied={copied}
-              copyAnimationVersion={copyAnimationVersion}
-              style={styles.directMainFeedCopyButton}
-            />
-          </View>
-          <Text style={styles.directMainFeedReplyText}>
-            {reply.text || "Reply unavailable"}
-          </Text>
-        </View>
-      </View>
-    </AnimatedPressable>
-  );
-}
-
+// Tap feedback of a reply card: it settles in a little and its outline lights
+// up in the tone colour, then both ease back. It plays when the tap is
+// registered (not when a finger lands, which may be the start of a scroll), and
+// there is no fill, so the card never changes colour.
 function useReplyCardPressAnimation() {
   const cardScale = useRef(new Animated.Value(1)).current;
-  const overlayOpacity = useRef(new Animated.Value(0)).current;
+  const strokeOpacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     return () => {
       cardScale.stopAnimation();
-      overlayOpacity.stopAnimation();
+      strokeOpacity.stopAnimation();
     };
-  }, [cardScale, overlayOpacity]);
+  }, [cardScale, strokeOpacity]);
 
-  const animateTo = (scale: number, opacity: number, duration: number) => {
+  const pulse = () => {
     cardScale.stopAnimation();
-    overlayOpacity.stopAnimation();
-    Animated.parallel([
-      Animated.timing(cardScale, {
-        duration,
-        easing: Easing.out(Easing.cubic),
-        toValue: scale,
-        useNativeDriver: true,
-      }),
-      Animated.timing(overlayOpacity, {
-        duration,
-        easing: Easing.out(Easing.cubic),
-        toValue: opacity,
-        useNativeDriver: true,
-      }),
+    strokeOpacity.stopAnimation();
+    const to = (scale: number, opacity: number, duration: number) =>
+      Animated.parallel([
+        Animated.timing(cardScale, {
+          duration,
+          easing: Easing.out(Easing.cubic),
+          toValue: scale,
+          useNativeDriver: true,
+        }),
+        Animated.timing(strokeOpacity, {
+          duration,
+          easing: Easing.out(Easing.cubic),
+          toValue: opacity,
+          useNativeDriver: true,
+        }),
+      ]);
+    Animated.sequence([
+      to(REPLY_CARD_PRESS_SCALE, REPLY_CARD_PRESS_STROKE_OPACITY, 90),
+      to(1, 0, 220),
     ]).start();
   };
 
   return {
     cardStyle: { transform: [{ scale: cardScale }] },
-    onPressIn: () =>
-      animateTo(REPLY_CARD_PRESS_SCALE, REPLY_CARD_PRESS_OVERLAY_OPACITY, 80),
-    onPressOut: () => animateTo(1, 0, 140),
-    overlayOpacity,
+    pulse,
+    strokeOpacity,
   };
 }
 
-function ReplyCardPressOverlay({
+// A 1 px outline drawn over the card's own border, faded in while pressed.
+function ReplyCardPressStroke({
   color,
   opacity,
 }: {
@@ -1607,10 +1234,7 @@ function ReplyCardPressOverlay({
   return (
     <Animated.View
       pointerEvents="none"
-      style={[
-        styles.replyCardPressOverlay,
-        { backgroundColor: color, opacity },
-      ]}
+      style={[styles.replyCardPressStroke, { borderColor: color, opacity }]}
     />
   );
 }
@@ -1618,10 +1242,12 @@ function ReplyCardPressOverlay({
 function ToneMainFeedCopyBadge({
   copied,
   copyAnimationVersion,
+  iconColor,
   style,
 }: {
   copied: boolean;
   copyAnimationVersion: number;
+  iconColor: string;
   style: StyleProp<ViewStyle>;
 }) {
   const badgeScale = useRef(new Animated.Value(1)).current;
@@ -1695,189 +1321,8 @@ function ToneMainFeedCopyBadge({
           Copied
         </Animated.Text>
       ) : null}
-      <Copy color="#FFFFFF" size={18} />
+      <Copy color={iconColor} size={18} />
     </Animated.View>
-  );
-}
-
-function ReplyCardBottomGlow({
-  fill,
-  filterId,
-  style,
-}: {
-  fill: string;
-  filterId: string;
-  style: StyleProp<ViewStyle>;
-}) {
-  return (
-    <Svg
-      height={REPLY_CARD_BOTTOM_GLOW_CANVAS.height}
-      pointerEvents="none"
-      style={style}
-      width={REPLY_CARD_BOTTOM_GLOW_CANVAS.width}
-    >
-      <Defs>
-        <Filter
-          filterUnits="userSpaceOnUse"
-          height={REPLY_CARD_BOTTOM_GLOW_CANVAS.height}
-          id={filterId}
-          primitiveUnits="userSpaceOnUse"
-          width={REPLY_CARD_BOTTOM_GLOW_CANVAS.width}
-          x={0}
-          y={0}
-        >
-          <FeGaussianBlur stdDeviation={REPLY_CARD_BOTTOM_GLOW.stdDeviation} />
-        </Filter>
-      </Defs>
-      <Ellipse
-        cx={REPLY_CARD_BOTTOM_GLOW_CANVAS.x}
-        cy={REPLY_CARD_BOTTOM_GLOW_CANVAS.y}
-        fill={fill}
-        filter={`url(#${filterId})`}
-        rx={REPLY_CARD_BOTTOM_GLOW.ellipse.width / 2}
-        ry={REPLY_CARD_BOTTOM_GLOW.ellipse.height / 2}
-      />
-    </Svg>
-  );
-}
-
-function GlassMaterialCard({
-  children,
-  contentStyle,
-  materialId,
-}: {
-  children: ReactNode;
-  contentStyle: StyleProp<ViewStyle>;
-  materialId: string;
-}) {
-  const sanitizedId = materialId.replace(/[^a-zA-Z0-9_-]/g, "");
-  const gradientId = useRef(`glass-card-stroke-${sanitizedId}`).current;
-  const bottomGlowId = useRef(`glass-card-bottom-glow-${sanitizedId}`).current;
-
-  return (
-    <View style={styles.mainFeedReplyCardOuter}>
-      <View style={styles.mainFeedReplyCard}>
-        <ReplyCardBottomGlow
-          fill={REPLY_CARD_BOTTOM_GLOW.ellipse.fill}
-          filterId={bottomGlowId}
-          style={styles.mainFeedReplyBottomGlow}
-        />
-        <BlurView
-          blurReductionFactor={1}
-          experimentalBlurMethod={
-            Platform.OS === "android" ? "dimezisBlurView" : undefined
-          }
-          intensity={26}
-          pointerEvents="none"
-          style={styles.mainFeedReplyBlur}
-          tint="dark"
-        />
-        <View pointerEvents="none" style={styles.mainFeedReplyTint} />
-        <Svg
-          height="100%"
-          pointerEvents="none"
-          style={styles.mainFeedGradientBorder}
-          width="100%"
-        >
-          <Defs>
-            <LinearGradient id={gradientId} x1="0%" x2="0%" y1="0%" y2="100%">
-              <Stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.23" />
-              <Stop offset="48%" stopColor="#FFFFFF" stopOpacity="0.11" />
-              <Stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.02" />
-            </LinearGradient>
-          </Defs>
-          <Rect
-            fill="none"
-            height="99.5%"
-            rx="14"
-            ry="14"
-            stroke={`url(#${gradientId})`}
-            strokeWidth="1"
-            width="99.5%"
-            x="0.5"
-            y="0.5"
-          />
-        </Svg>
-
-        <View style={contentStyle}>{children}</View>
-      </View>
-    </View>
-  );
-}
-
-function TypingBubble({
-  onLayout,
-  presentation = "default",
-}: {
-  onLayout: (event: LayoutChangeEvent) => void;
-  presentation?: RepliesContentPresentation;
-}) {
-  return (
-    <View
-      accessible
-      accessibilityLabel="WiNGR is typing"
-      onLayout={onLayout}
-      style={[
-        styles.typingBubble,
-        presentation === "mainFeed" && styles.mainFeedTypingBubble,
-      ]}
-    >
-      <TypingDot delay={0} />
-      <TypingDot delay={120} />
-      <TypingDot delay={240} />
-    </View>
-  );
-}
-
-function TypingDot({ delay }: { delay: number }) {
-  const progress = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const activeDuration = 300;
-    const cycleDuration = 900;
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.delay(delay),
-        Animated.timing(progress, {
-          duration: activeDuration / 2,
-          easing: Easing.out(Easing.quad),
-          toValue: 1,
-          useNativeDriver: true,
-        }),
-        Animated.timing(progress, {
-          duration: activeDuration / 2,
-          easing: Easing.in(Easing.quad),
-          toValue: 0,
-          useNativeDriver: true,
-        }),
-        Animated.delay(cycleDuration - delay - activeDuration),
-      ]),
-    );
-
-    animation.start();
-    return () => animation.stop();
-  }, [delay, progress]);
-
-  return (
-    <Animated.View
-      style={[
-        styles.typingDot,
-        {
-          opacity: progress.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0.42, 1],
-          }),
-          transform: [
-            {
-              translateY: progress.interpolate({
-                inputRange: [0, 1],
-                outputRange: [2, -2],
-              }),
-            },
-          ],
-        },
-      ]}
-    />
   );
 }
 
@@ -1904,15 +1349,10 @@ function ToneBottomSheet({
               accessibilityState={{ selected }}
               key={option.value}
               onPress={() => onSelect(option.value)}
-              style={[
-                styles.toneOption,
-                selected && styles.toneOptionSelected,
-              ]}
+              style={[styles.toneOption, selected && styles.toneOptionSelected]}
             >
               <View style={styles.toneOptionLeft}>
-                <Text style={styles.toneOptionEmoji}>
-                  {option.emoji}
-                </Text>
+                <Text style={styles.toneOptionEmoji}>{option.emoji}</Text>
                 <Text
                   style={[
                     styles.toneOptionText,
@@ -1922,9 +1362,7 @@ function ToneBottomSheet({
                   {option.label}
                 </Text>
               </View>
-              {selected ? (
-                <CheckCircle color={COLORS.blue} size={21} />
-              ) : null}
+              {selected ? <CheckCircle color={COLORS.blue} size={21} /> : null}
             </TouchableOpacity>
           );
         })}
@@ -1934,6 +1372,119 @@ function ToneBottomSheet({
 }
 
 const styles = StyleSheet.create({
+  stickyNewRepliesButton: {
+    alignItems: "center",
+    backgroundColor: colors.primaryBlue,
+    borderRadius: STICKY_ACTION_BUTTON.radius,
+    flexDirection: "row",
+    gap: 6,
+    height: STICKY_ACTION_BUTTON.height,
+    justifyContent: "center",
+    minWidth: STICKY_ACTION_BUTTON.newReplyMinWidth,
+    paddingHorizontal: 12,
+  },
+  stickyNewRepliesButtonShadow: {
+    backgroundColor: colors.primaryBlue,
+    borderRadius: STICKY_ACTION_BUTTON.radius,
+    elevation: 4,
+    shadowColor: "#000000",
+    shadowOffset: { height: 4, width: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 2,
+  },
+  stickyNewRepliesButtonText: {
+    ...typography.titleSemibold16,
+    color: colors.indigo100,
+  },
+  stickyReplyActionBar: {
+    alignItems: "center",
+  },
+  stickyToneEmoji: {
+    fontSize: 18,
+    lineHeight: 22,
+  },
+  stickyToneSelector: {
+    alignItems: "center",
+    backgroundColor: colors.stone600,
+    // The shared toneSelector style has a border and a fixed width; in the
+    // sticky bar the button hugs its content instead.
+    borderWidth: 0,
+    borderRadius: STICKY_ACTION_BUTTON.radius,
+    flexDirection: "row",
+    gap: 4,
+    height: STICKY_ACTION_BUTTON.height,
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    width: "auto",
+  },
+  stickyToneSelectorShadow: {
+    backgroundColor: colors.stone600,
+    borderRadius: STICKY_ACTION_BUTTON.radius,
+    elevation: 4,
+    shadowColor: "#000000",
+    shadowOffset: { height: 4, width: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 2,
+  },
+  stickyToneSelectorText: {
+    ...typography.titleSemibold16,
+    color: colors.neutral200,
+    flexShrink: 1,
+  },
+  mainFeedCopyBadge: {
+    alignItems: "center",
+    borderRadius: 20,
+    flexDirection: "row",
+    gap: 4,
+    height: 30,
+    justifyContent: "center",
+    width: 34,
+  },
+  mainFeedRepliesContent: {
+    gap: 12,
+  },
+  mainFeedReplyCard: {
+    backgroundColor: colors.stone900,
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: "hidden",
+    position: "relative",
+  },
+  mainFeedReplyCardOuter: {
+    borderRadius: 14,
+    position: "relative",
+    shadowColor: "#000000",
+    shadowOffset: { height: 4, width: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  mainFeedReplyContent: {
+    gap: 12,
+    padding: 16,
+    position: "relative",
+    zIndex: 2,
+  },
+  mainFeedReplyHeader: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  mainFeedReplyText: {
+    ...typography.replyText,
+    color: colors.stone50,
+  },
+  mainFeedToneChip: {
+    alignItems: "center",
+    borderRadius: 20,
+    borderWidth: 1,
+    height: 30,
+    justifyContent: "center",
+    width: 30,
+  },
+  mainFeedToneEmoji: {
+    fontSize: 18,
+    lineHeight: 22,
+  },
   copyButton: {
     alignItems: "center",
     backgroundColor: COLORS.blue,
@@ -2018,9 +1569,12 @@ const styles = StyleSheet.create({
     height: 44,
     justifyContent: "center",
   },
+  // Glow centres from the Figma frame: (162.5, 113) closed, and a big soft
+  // ellipse just left of the middle, 287 px down, when open.
+  inlineVibeBottomGlow: { left: -170, top: 2 },
   inlineVibeCard: {
-    backgroundColor: "rgba(49, 46, 129, 0.2)",
-    borderColor: "#4338CA",
+    backgroundColor: colors.stone900,
+    borderColor: surfaces.vibeCheckBorder,
     borderRadius: 14,
     borderWidth: 1,
     overflow: "hidden",
@@ -2040,7 +1594,7 @@ const styles = StyleSheet.create({
   },
   inlineVibeChevronChip: {
     alignItems: "center",
-    backgroundColor: "#4338CA",
+    backgroundColor: colors.indigo700,
     borderRadius: 20,
     height: 30,
     justifyContent: "center",
@@ -2048,13 +1602,10 @@ const styles = StyleSheet.create({
     position: "relative",
     width: 34,
   },
-  inlineVibeChevronGradientBorder: {
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-    zIndex: 1,
+  inlineVibeExpandedGlow: {
+    left: "50%",
+    marginLeft: -383.5,
+    top: -45,
   },
   inlineVibeChevronIcon: {
     zIndex: 2,
@@ -2065,10 +1616,8 @@ const styles = StyleSheet.create({
   },
   inlineVibeEmojiChip: {
     alignItems: "center",
-    backgroundColor: "rgba(49, 46, 129, 0.5)",
-    borderColor: "#3730A3",
+    backgroundColor: colors.indigo900,
     borderRadius: 20,
-    borderWidth: 1,
     height: 30,
     justifyContent: "center",
     width: 34,
@@ -2109,10 +1658,8 @@ const styles = StyleSheet.create({
     width: 34,
   },
   inlineVibeMetricLabel: {
-    fontFamily: "ClashGrotesk",
-    fontSize: 13,
-    fontWeight: "500",
-    lineHeight: 16,
+    ...typography.metricLabel,
+    lineHeight: 17,
   },
   inlineVibeMetricValue: {
     fontFamily: "ClashDisplay",
@@ -2125,23 +1672,18 @@ const styles = StyleSheet.create({
     marginTop: 12,
     width: "100%",
   },
-  inlineVibePressOverlay: {
-    backgroundColor: "#4338CA",
-  },
   inlineVibeSummary: {
-    color: "#FFFFFF",
-    fontFamily: "ClashDisplay",
-    fontSize: 16,
-    fontWeight: "500",
+    ...typography.summaryMedium16,
+    color: colors.stone50,
     lineHeight: 20,
     marginTop: 12,
   },
   inlineVibeTitle: {
-    color: COLORS.white,
+    color: colors.indigo50,
     flex: 1,
-    fontFamily: "ClashDisplay",
+    fontFamily: fontFamilies.display,
     fontSize: 18,
-    fontWeight: "700",
+    fontWeight: "600",
     lineHeight: 22,
     textAlign: "center",
   },
@@ -2197,343 +1739,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  mainFeedCopyButton: {
-    alignItems: "center",
-    backgroundColor: "#404040",
-    borderColor: "#525252",
-    borderRadius: 999,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 8,
-    height: 25,
-    justifyContent: "center",
-    paddingHorizontal: 8,
-  },
-  mainFeedCopyButtonText: {
-    color: "#D6D6DB",
-    fontFamily: "ClashDisplay",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  mainFeedGradientBorder: {
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-    zIndex: 4,
-  },
-  mainFeedRepliesContent: {
-    gap: 8,
-  },
-  mainFeedReplyCard: {
-    borderRadius: 14,
-    overflow: "hidden",
-    position: "relative",
-    zIndex: 1,
-  },
-  mainFeedReplyBottomGlow: {
-    bottom: REPLY_CARD_BOTTOM_GLOW_CANVAS.bottom,
-    height: REPLY_CARD_BOTTOM_GLOW_CANVAS.height,
-    position: "absolute",
-    right: REPLY_CARD_BOTTOM_GLOW_CANVAS.right,
-    width: REPLY_CARD_BOTTOM_GLOW_CANVAS.width,
-    zIndex: 3,
-  },
-  mainFeedReplyBlur: {
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-    zIndex: 1,
-  },
-  mainFeedReplyContent: {
-    paddingBottom: 24,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    position: "relative",
-    zIndex: 5,
-  },
-  mainFeedReplyCardOuter: {
-    borderRadius: 14,
-    position: "relative",
-    shadowColor: "#000000",
-    shadowOffset: { height: 4, width: 0 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-  },
   mainFeedReplyCardWrapper: {
     position: "relative",
-  },
-  mainFeedReplyHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    height: 28,
-    justifyContent: "space-between",
-  },
-  mainFeedReplyText: {
-    color: "#F6F7FB",
-    fontFamily: "ClashDisplay",
-    fontSize: 18,
-    fontWeight: "600",
-    lineHeight: 22,
-    marginTop: 16,
-  },
-  mainFeedReplyTint: {
-    backgroundColor: REPLY_SURFACE_COLORS.neutral900,
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-    zIndex: 2,
-  },
-  mainFeedToneChip: {
-    alignItems: "center",
-    borderRadius: 999,
-    borderWidth: 1,
-    height: 28,
-    justifyContent: "center",
-    width: 34,
-  },
-  mainFeedToneEmoji: {
-    fontSize: 18,
-    lineHeight: 18,
-  },
-  mainFeedTypingBubble: {
-    backgroundColor: REPLY_SURFACE_COLORS.neutral900,
-    borderColor: REPLY_SURFACE_COLORS.neutral800,
-    height: 36,
-    minWidth: 62,
-  },
-  directMainFeedCopyButton: {
-    alignItems: "center",
-    backgroundColor: "#1D4ED8",
-    borderColor: "#2563EB",
-    borderRadius: 20,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 4,
-    height: 30,
-    justifyContent: "center",
-    width: 34,
-  },
-  directMainFeedGradientBorder: {
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-    zIndex: 3,
-  },
-  directMainFeedReplyBottomGlow: {
-    bottom: REPLY_CARD_BOTTOM_GLOW_CANVAS.bottom,
-    height: REPLY_CARD_BOTTOM_GLOW_CANVAS.height,
-    position: "absolute",
-    right: REPLY_CARD_BOTTOM_GLOW_CANVAS.right,
-    width: REPLY_CARD_BOTTOM_GLOW_CANVAS.width,
-    zIndex: 1,
-  },
-  directMainFeedReplyCard: {
-    backgroundColor: "rgba(30, 58, 138, 0.38)",
-    borderRadius: 14,
-    overflow: "hidden",
-    position: "relative",
-  },
-  directMainFeedReplyCardOuter: {
-    borderRadius: 14,
-    position: "relative",
-    shadowColor: "#000000",
-    shadowOffset: { height: 4, width: 0 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-  },
-  directMainFeedReplyContent: {
-    paddingBottom: 24,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    position: "relative",
-    zIndex: 2,
-  },
-  directMainFeedReplyHeader: {
-    alignItems: "flex-start",
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  directMainFeedReplyText: {
-    color: "#FFFFFF",
-    fontFamily: "ClashDisplay",
-    fontSize: 18,
-    fontWeight: "600",
-    lineHeight: 22,
-    marginTop: 16,
-  },
-  directMainFeedToneChip: {
-    alignItems: "center",
-    backgroundColor: "rgba(30, 58, 138, 0.5)",
-    borderColor: "#1E3A8A",
-    borderRadius: 20,
-    borderWidth: 1,
-    height: 30,
-    justifyContent: "center",
-    width: 30,
-  },
-  directMainFeedToneEmoji: {
-    fontSize: 18,
-    lineHeight: 22,
-  },
-  playfulMainFeedCopyButton: {
-    alignItems: "center",
-    backgroundColor: "#B45309",
-    borderColor: "#D97706",
-    borderRadius: 20,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 4,
-    height: 30,
-    justifyContent: "center",
-    width: 34,
-  },
-  playfulMainFeedReplyBottomGlow: {
-    bottom: REPLY_CARD_BOTTOM_GLOW_CANVAS.bottom,
-    height: REPLY_CARD_BOTTOM_GLOW_CANVAS.height,
-    position: "absolute",
-    right: REPLY_CARD_BOTTOM_GLOW_CANVAS.right,
-    width: REPLY_CARD_BOTTOM_GLOW_CANVAS.width,
-    zIndex: 1,
-  },
-  playfulMainFeedReplyCard: {
-    backgroundColor: "rgba(124, 45, 18, 0.38)",
-    borderRadius: 14,
-    overflow: "hidden",
-    position: "relative",
-  },
-  playfulMainFeedReplyCardOuter: {
-    borderRadius: 14,
-    position: "relative",
-    shadowColor: "#000000",
-    shadowOffset: { height: 4, width: 0 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-  },
-  playfulMainFeedReplyContent: {
-    paddingBottom: 24,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    position: "relative",
-    zIndex: 2,
-  },
-  playfulMainFeedGradientBorder: {
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-    zIndex: 3,
-  },
-  playfulMainFeedReplyHeader: {
-    alignItems: "flex-start",
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  playfulMainFeedReplyText: {
-    color: "#FFFFFF",
-    fontFamily: "ClashDisplay",
-    fontSize: 18,
-    fontWeight: "600",
-    lineHeight: 22,
-    marginTop: 16,
-  },
-  playfulMainFeedToneChip: {
-    alignItems: "center",
-    backgroundColor: "rgba(120, 53, 15, 0.5)",
-    borderColor: "#78350F",
-    borderRadius: 20,
-    borderWidth: 1,
-    height: 30,
-    justifyContent: "center",
-    width: 30,
-  },
-  playfulMainFeedToneEmoji: {
-    fontSize: 18,
-    lineHeight: 22,
-  },
-  smallTalkMainFeedCopyButton: {
-    alignItems: "center",
-    backgroundColor: "#0F766E",
-    borderColor: "#0D9488",
-    borderRadius: 20,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 4,
-    height: 30,
-    justifyContent: "center",
-    width: 34,
-  },
-  smallTalkMainFeedGradientBorder: {
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-    zIndex: 3,
-  },
-  smallTalkMainFeedReplyBottomGlow: {
-    bottom: REPLY_CARD_BOTTOM_GLOW_CANVAS.bottom,
-    height: REPLY_CARD_BOTTOM_GLOW_CANVAS.height,
-    position: "absolute",
-    right: REPLY_CARD_BOTTOM_GLOW_CANVAS.right,
-    width: REPLY_CARD_BOTTOM_GLOW_CANVAS.width,
-    zIndex: 1,
-  },
-  smallTalkMainFeedReplyCard: {
-    backgroundColor: "rgba(19, 78, 74, 0.38)",
-    borderRadius: 14,
-    overflow: "hidden",
-    position: "relative",
-  },
-  smallTalkMainFeedReplyCardOuter: {
-    borderRadius: 14,
-    position: "relative",
-    shadowColor: "#000000",
-    shadowOffset: { height: 4, width: 0 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-  },
-  smallTalkMainFeedReplyContent: {
-    paddingBottom: 24,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    position: "relative",
-    zIndex: 2,
-  },
-  smallTalkMainFeedReplyHeader: {
-    alignItems: "flex-start",
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  smallTalkMainFeedReplyText: {
-    color: "#FFFFFF",
-    fontFamily: "ClashDisplay",
-    fontSize: 18,
-    fontWeight: "600",
-    lineHeight: 22,
-    marginTop: 16,
-  },
-  smallTalkMainFeedToneChip: {
-    alignItems: "center",
-    backgroundColor: "rgba(19, 78, 74, 0.5)",
-    borderColor: "#115E59",
-    borderRadius: 20,
-    borderWidth: 1,
-    height: 30,
-    justifyContent: "center",
-    width: 30,
-  },
-  smallTalkMainFeedToneEmoji: {
-    fontSize: 18,
-    lineHeight: 22,
   },
   toneMainFeedCopyButtonCopied: {
     paddingHorizontal: 8,
@@ -2627,13 +1834,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 10,
   },
-  replyCardPressOverlay: {
-    bottom: 0,
-    left: 0,
+  replyCardPressStroke: {
+    // Covers the card's own 1 px border (the card clips to its border box).
+    borderRadius: 14,
+    borderWidth: 1,
+    bottom: -1,
+    left: -1,
     position: "absolute",
-    right: 0,
-    top: 0,
-    zIndex: 1,
+    right: -1,
+    top: -1,
+    zIndex: 3,
   },
   replyCardBody: {
     gap: 18,
@@ -2646,85 +1856,6 @@ const styles = StyleSheet.create({
     fontSize: 23,
     fontWeight: "700",
     lineHeight: 30,
-  },
-  stickyNewRepliesButton: {
-    alignItems: "center",
-    backgroundColor: "#1D4ED8",
-    borderRadius: STICKY_ACTION_BUTTON.radius,
-    flexDirection: "row",
-    gap: 8,
-    height: STICKY_ACTION_BUTTON.height,
-    justifyContent: "center",
-    overflow: "hidden",
-    paddingHorizontal: 12,
-    position: "relative",
-    width: STICKY_ACTION_BUTTON.newReplyWidth,
-  },
-  stickyNewRepliesButtonShadow: {
-    backgroundColor: "#1D4ED8",
-    borderRadius: STICKY_ACTION_BUTTON.radius,
-    elevation: 4,
-    height: STICKY_ACTION_BUTTON.height,
-    overflow: "visible",
-    shadowColor: "#000000",
-    shadowOffset: { height: 4, width: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    width: STICKY_ACTION_BUTTON.newReplyWidth,
-  },
-  stickyNewRepliesButtonText: {
-    color: "#E0E7FF",
-    fontFamily: "ClashGrotesk",
-    fontSize: 16,
-    fontWeight: "500",
-    lineHeight: 20,
-  },
-  stickyReplyActionBar: {
-    alignItems: "center",
-    height: STICKY_ACTION_BUTTON.height,
-    width: "100%",
-  },
-  stickyActionButtonGradientBorder: {
-    left: 0,
-    position: "absolute",
-    top: 0,
-  },
-  stickyToneEmoji: {
-    fontSize: 20,
-    lineHeight: 24,
-  },
-  stickyToneSelector: {
-    backgroundColor: "#404040",
-    borderColor: "transparent",
-    borderRadius: STICKY_ACTION_BUTTON.radius,
-    borderWidth: 0,
-    gap: 6,
-    height: STICKY_ACTION_BUTTON.height,
-    justifyContent: "flex-start",
-    overflow: "hidden",
-    paddingHorizontal: 12,
-    position: "relative",
-    width: STICKY_ACTION_BUTTON.toneWidth,
-  },
-  stickyToneSelectorShadow: {
-    backgroundColor: "#404040",
-    borderRadius: STICKY_ACTION_BUTTON.radius,
-    elevation: 4,
-    height: STICKY_ACTION_BUTTON.height,
-    overflow: "visible",
-    shadowColor: "#000000",
-    shadowOffset: { height: 4, width: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    width: STICKY_ACTION_BUTTON.toneWidth,
-  },
-  stickyToneSelectorText: {
-    color: "#D4D4D4",
-    flexShrink: 1,
-    fontFamily: "ClashGrotesk",
-    fontSize: 16,
-    fontWeight: "500",
-    lineHeight: 20,
   },
   toneOption: {
     alignItems: "center",
@@ -2781,26 +1912,6 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     fontFamily: "ClashGroteskRegular",
     fontSize: 13,
-  },
-  typingBubble: {
-    alignItems: "center",
-    alignSelf: "flex-start",
-    backgroundColor: "#151515",
-    borderColor: "#2B2B2F",
-    borderRadius: 999,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 6,
-    height: 38,
-    justifyContent: "center",
-    minWidth: 64,
-    paddingHorizontal: 14,
-  },
-  typingDot: {
-    backgroundColor: "#C7CAD2",
-    borderRadius: 999,
-    height: 7,
-    width: 7,
   },
   uploadBox: {
     alignItems: "center",

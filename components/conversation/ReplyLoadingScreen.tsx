@@ -19,6 +19,7 @@ import {
 import { colors, layout, radii, spacing, typography } from "../../theme";
 import { ScreenHeader } from "../ScreenHeader";
 import { WingrLogoMark } from "../WingrLogoMark";
+import { TypingDots } from "../WingrTypingBubble";
 
 const BANNER_IMAGE = require("../../assets/images/redesign/loading/banner.png");
 
@@ -189,53 +190,6 @@ function ChatRow({
   );
 }
 
-// ". . ." as a wave: each dot brightens a moment after the one before it.
-function TypingDots() {
-  const dots = useRef([
-    new Animated.Value(0.35),
-    new Animated.Value(0.35),
-    new Animated.Value(0.35),
-  ]).current;
-
-  useEffect(() => {
-    const wave = Animated.loop(
-      Animated.stagger(
-        160,
-        dots.map((dot) =>
-          Animated.sequence([
-            Animated.timing(dot, {
-              duration: 260,
-              toValue: 1,
-              useNativeDriver: true,
-            }),
-            Animated.timing(dot, {
-              duration: 260,
-              toValue: 0.35,
-              useNativeDriver: true,
-            }),
-          ]),
-        ),
-      ),
-    );
-    wave.start();
-    return () => wave.stop();
-  }, [dots]);
-
-  return (
-    <View style={styles.dots}>
-      {dots.map((opacity, index) => (
-        <Animated.Text
-          key={index}
-          maxFontSizeMultiplier={1.2}
-          style={[styles.dot, { opacity }]}
-        >
-          .
-        </Animated.Text>
-      ))}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   area: {
     flex: 1,
@@ -272,8 +226,6 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   chat: { gap: spacing.lg },
-  dot: { ...typography.chatMessage, color: colors.stone500 },
-  dots: { flexDirection: "row", gap: spacing.xs },
   message: { flexDirection: "row", gap: spacing.xs },
   messageText: { ...typography.chatMessage, color: colors.stone100 },
   row: { gap: spacing.xxs },

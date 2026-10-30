@@ -7,6 +7,11 @@ import { FoundationsPreview } from "./FoundationsPreview";
 import { HomePreview } from "./HomePreview";
 import { LoadingPreview } from "./LoadingPreview";
 import { PreviewModalPreview } from "./PreviewModalPreview";
+import {
+  RepliesScreenPreview,
+  ReplyCardsPreview,
+  VibeCheckPreview,
+} from "./RepliesPreview";
 
 export type PreviewEntry = {
   id: string;
@@ -122,5 +127,50 @@ export const PREVIEWS: PreviewEntry[] = [
     id: "loading",
     title: "Loading screen (chat with typewriter)",
     render: () => <LoadingPreview />,
+  },
+  {
+    id: "vibe-collapsed",
+    title: "Vibe Check · collapsed",
+    render: () => <VibeCheckPreview expanded={false} />,
+  },
+  {
+    id: "vibe-expanded",
+    title: "Vibe Check · expanded",
+    render: () => <VibeCheckPreview expanded />,
+  },
+  {
+    id: "reply-cards",
+    title: "Vibe Check + reply cards",
+    render: () => <ReplyCardsPreview />,
+  },
+  {
+    id: "reply-cards-generating",
+    title: "Reply cards · generating (typing bubble)",
+    render: () => <ReplyCardsPreview generating />,
+  },
+  {
+    id: "reply-cards-onboarding",
+    title: "Reply cards · onboarding style (1 reply)",
+    render: () => <ReplyCardsPreview maxReplies={1} />,
+  },
+  {
+    id: "replies-screen",
+    title: "Get Replies · full screen",
+    render: () => <RepliesScreenPreview />,
+  },
+  {
+    id: "replies-screen-generating",
+    title: "Get Replies · generating a new reply",
+    render: () => <RepliesScreenPreview generating />,
+  },
+  {
+    id: "replies-screen-error",
+    title: "Get Replies · error card",
+    render: () => <RepliesScreenPreview error />,
+  },
+  {
+    id: "replies-screen-no-screenshot",
+    title: "Get Replies · no screenshot",
+    render: () => <RepliesScreenPreview noScreenshot />,
   },
 ];

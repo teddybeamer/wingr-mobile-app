@@ -39,6 +39,12 @@ export const typography = {
     fontSize: 14,
     fontWeight: "600",
   },
+  // Reply text on the Get Replies cards.
+  replyText: {
+    fontFamily: fontFamilies.display,
+    fontSize: 22,
+    fontWeight: "600",
+  },
   // Loading chat: WiNGR's messages (and the typing dots) and their timestamps.
   chatMessage: {
     fontFamily: fontFamilies.display,
@@ -55,9 +61,10 @@ export const typography = {
     fontFamily: fontFamilies.displayMedium,
     fontSize: 16,
   },
+  // Vibe Check metric titles ("Their interest", "Risk", ...).
   metricLabel: {
-    fontFamily: fontFamilies.body,
-    fontSize: 13,
+    fontFamily: fontFamilies.displayMedium,
+    fontSize: 14,
   },
 } as const satisfies Record<string, TextStyle>;
 

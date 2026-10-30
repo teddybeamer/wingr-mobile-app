@@ -23,8 +23,11 @@ export const colors = {
   stone900: "#1C1917",
   stone950: "#0C0A09",
 
+  blue300: "#93C5FD",
   blue400: "#60A5FA",
+  blue500: "#3B82F6",
   blue600: "#2563EB",
+  blue700: "#1D4ED8",
   blue900: "#1E3A8A",
 
   indigo50: "#EEF2FF",
@@ -35,16 +38,31 @@ export const colors = {
   indigo900: "#312E81",
   indigo950: "#1E1B4B",
 
+  amber100: "#FEF3C7",
+  amber300: "#FCD34D",
   amber500: "#F59E0B",
+  amber600: "#D97706",
+  amber700: "#B45309",
+  amber900: "#78350F",
+
+  teal100: "#CCFBF1",
+  teal300: "#5EEAD4",
   teal400: "#2DD4BF",
   teal500: "#14B8A6",
+  teal600: "#0D9488",
+  teal700: "#0F766E",
+  teal900: "#134E4A",
 
   green200: "#BBF7D0",
   green500: "#22C55E",
 
+  red100: "#FEE2E2",
   red200: "#FECACA",
+  red300: "#FCA5A5",
   red400: "#F87171",
   red500: "#EF4444",
+  red700: "#B91C1C",
+  red900: "#7F1D1D",
 } as const;
 
 // Fills the design uses as raw rgba values rather than variables.
