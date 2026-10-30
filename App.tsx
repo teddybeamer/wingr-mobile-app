@@ -344,12 +344,16 @@ function WingrApp() {
     );
   }
 
+  const playUploadReveal = () => {
+    uploadRevealVersionRef.current += 1;
+    setUploadRevealToken(uploadRevealVersionRef.current);
+  };
+
   const handlePickScreenshotForUpload = async () => {
     const screenshotUri = await pickScreenshot();
     if (!screenshotUri) return;
 
-    uploadRevealVersionRef.current += 1;
-    setUploadRevealToken(uploadRevealVersionRef.current);
+    playUploadReveal();
     setScreen("upload");
   };
 
@@ -523,6 +527,8 @@ function WingrApp() {
               isGeneratingReplies={repliesStatus === "generating"}
               lastGeneratedReplyId={lastGeneratedReplyId}
               onBack={() => {
+                // Screenshot Chosen remounts, so replay its entrance.
+                playUploadReveal();
                 setScreen("upload");
               }}
               onRefreshReplies={handleRefreshReplies}
