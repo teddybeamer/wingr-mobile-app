@@ -17,7 +17,8 @@ const TYPE_SPECIMENS: { label: string; token: TypographyToken }[] = [
   { label: "Body · Uncut Sans Medium 15", token: "body" },
   { label: "Title · Clash Display Semibold 16", token: "titleSemibold16" },
   { label: "Button · Clash Display Semibold 14", token: "buttonLabel14" },
-  { label: "Loading quote · Semibold 18", token: "loadingQuote" },
+  { label: "Chat message · Clash Display Semibold 22", token: "chatMessage" },
+  { label: "Timestamp · Clash Display Regular 12", token: "timestamp" },
   { label: "Summary · Clash Display Medium 16", token: "summaryMedium16" },
   { label: "Metric label · Uncut Sans Medium 13", token: "metricLabel" },
 ];
@@ -52,8 +53,8 @@ const ASSETS = [
     source: require("../assets/images/redesign/tips/tip-visible.png"),
   },
   {
-    label: "Loading jet",
-    source: require("../assets/images/redesign/loading/jet.jpg"),
+    label: "Loading banner",
+    source: require("../assets/images/redesign/loading/banner.png"),
   },
 ];
 

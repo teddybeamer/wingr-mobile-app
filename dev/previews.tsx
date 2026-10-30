@@ -5,6 +5,7 @@ import { ChosenPreview } from "./ChosenPreview";
 import { ErrorDialogPreview } from "./ErrorDialogPreview";
 import { FoundationsPreview } from "./FoundationsPreview";
 import { HomePreview } from "./HomePreview";
+import { LoadingPreview } from "./LoadingPreview";
 import { PreviewModalPreview } from "./PreviewModalPreview";
 
 export type PreviewEntry = {
@@ -116,5 +117,10 @@ export const PREVIEWS: PreviewEntry[] = [
     id: "error-onboarding",
     title: "Error dialog · onboarding (Choose New Screenshot)",
     render: () => <ErrorDialogPreview onboarding reason="unreadable_image" />,
+  },
+  {
+    id: "loading",
+    title: "Loading screen (chat with typewriter)",
+    render: () => <LoadingPreview />,
   },
 ];

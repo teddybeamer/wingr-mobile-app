@@ -39,10 +39,16 @@ export const typography = {
     fontSize: 14,
     fontWeight: "600",
   },
-  loadingQuote: {
+  // Loading chat: WiNGR's messages (and the typing dots) and their timestamps.
+  chatMessage: {
     fontFamily: fontFamilies.display,
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: "600",
+  },
+  timestamp: {
+    fontFamily: fontFamilies.display,
+    fontSize: 12,
+    fontWeight: "400",
   },
   // Vibe Check summary (collapsed and expanded).
   summaryMedium16: {
