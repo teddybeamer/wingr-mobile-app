@@ -87,7 +87,7 @@ export function DevPreviewLauncher() {
           </View>
         </ScrollView>
       ) : (
-        <View style={styles.list}>
+        <ScrollView contentContainerStyle={styles.list}>
           {PREVIEWS.map((entry) => (
             <Pressable
               key={entry.id}
@@ -97,7 +97,7 @@ export function DevPreviewLauncher() {
               <Text style={styles.listItemText}>{entry.title}</Text>
             </Pressable>
           ))}
-        </View>
+        </ScrollView>
       )}
     </View>
   );
@@ -134,7 +134,8 @@ const styles = StyleSheet.create({
     // Device width when no override is chosen.
     width: Dimensions.get("window").width,
   },
-  list: { gap: 8, padding: 16 },
+  // Room at the bottom so the last entry clears the home indicator.
+  list: { gap: 8, padding: 16, paddingBottom: 48 },
   listItem: {
     backgroundColor: colors.stone900,
     borderRadius: 12,
