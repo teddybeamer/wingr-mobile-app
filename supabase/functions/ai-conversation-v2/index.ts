@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { handleConversationRequest } from "../_shared_v2/analyze-conversation.ts";
+import { createSupabaseConsentVerifier } from "../_shared/ai-consent.ts";
 import { createRevenueCatEntitlementVerifier } from "../_shared/revenuecat-entitlement.ts";
 import { parseModel, parseReasoningEffort } from "../_shared_v2/openrouter.ts";
 import { createSupabaseUsageLimiter } from "../_shared_v2/usage-limit.ts";
@@ -65,6 +66,10 @@ function createOnboardingTrialManager() {
 }
 
 const onboardingTrialManager = createOnboardingTrialManager();
+const consentVerifier = createSupabaseConsentVerifier({
+  publishableKey,
+  supabaseUrl,
+});
 // This client has no administrative credentials. getClaims verifies the caller's
 // JWT before its subject is used as the RevenueCat App User ID.
 const callerClient = createClient(supabaseUrl, publishableKey, {
@@ -73,6 +78,7 @@ const callerClient = createClient(supabaseUrl, publishableKey, {
 
 Deno.serve((request) =>
   handleConversationRequest(request, Deno.env.get("OPENROUTER_API_KEY") ?? "", {
+    consentVerifier,
     entitlementVerifier,
     async getVerifiedUserId(accessToken) {
       const { data, error } = await callerClient.auth.getClaims(accessToken);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { handleConversationRequest } from "./analyze-conversation.ts";
+import { handleConversationRequest as handleConversationRequestCore } from "./analyze-conversation.ts";
 import { ConversationError, parseConversationRequest } from "./conversation.ts";
 import {
   createDeviceCheckOnboardingTrialManager,
@@ -16,6 +16,17 @@ import {
   providerResult,
   result,
 } from "./test-fixtures.ts";
+import { consentGranted } from "../_shared/test-fixtures.ts";
+
+const handleConversationRequest = (
+  request: Request,
+  apiKey: string,
+  options: Parameters<typeof handleConversationRequestCore>[2] = {},
+) =>
+  handleConversationRequestCore(request, apiKey, {
+    consentVerifier: consentGranted,
+    ...options,
+  });
 
 const USER_ID = "00000000-0000-4000-8000-000000000001";
 const TRIAL_ID = "00000000-0000-4000-8000-000000000001";

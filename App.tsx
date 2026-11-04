@@ -69,6 +69,7 @@ import type {
 import { OnboardingFlow } from "./onboarding/OnboardingFlow";
 import { BackButton } from "./components/BackButton";
 import { MoreButton } from "./components/MoreButton";
+import { AiConsentProvider, useAiConsent } from "./components/AiConsentProvider";
 import { HomeMoreSheet } from "./components/HomeMoreSheet";
 import {
   useConversationFlow,
@@ -399,7 +400,9 @@ export default function App() {
 
   return (
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-      <WingrApp />
+      <AiConsentProvider>
+        <WingrApp />
+      </AiConsentProvider>
       {showLaunchSplash ? (
         <LaunchSplash onFinish={() => setShowLaunchSplash(false)} />
       ) : null}
@@ -431,6 +434,7 @@ function WingrApp() {
   const [uploadRevealToken, setUploadRevealToken] = useState<number | null>(
     null,
   );
+  const { ensureConsent, invalidate: invalidateAiConsent } = useAiConsent();
   const conversation = useConversationFlow("pro");
   const {
     error,
@@ -453,6 +457,15 @@ function WingrApp() {
   useEffect(() => {
     if (error?.kind === "permission")
       Alert.alert("Photo access needed", error.message);
+  }, [error?.id]);
+
+  // The server refused an AI request because there is no (current) consent: the
+  // saved answer was stale or the choice was withdrawn. Forget it and ask again;
+  // the user can retry once they have accepted.
+  useEffect(() => {
+    if (error?.errorCode !== "ai_consent_required") return;
+    conversation.clearError();
+    void invalidateAiConsent().then(() => ensureConsent());
   }, [error?.id]);
 
   useEffect(() => {
@@ -637,6 +650,20 @@ function WingrApp() {
     }
   };
 
+  // Asks for AI consent when it is missing. Nothing is sent without it (the
+  // server refuses), and a declined or unverifiable answer leaves the user where
+  // they are with the rest of the app working.
+  const requireAiConsent = async () => {
+    const consent = await ensureConsent();
+    if (consent === "unavailable") {
+      Alert.alert(
+        "Couldn’t check your AI sharing choice",
+        "Please check your connection and try again.",
+      );
+    }
+    return consent === "granted";
+  };
+
   const handleCheckSelectedScreenshot = async () => {
     if (__DEV__) {
       console.info("[Wingr flow] check vibe pressed", {
@@ -649,6 +676,8 @@ function WingrApp() {
       await handlePickScreenshotForUpload();
       return;
     }
+
+    if (!(await requireAiConsent())) return;
 
     setScreen("analyzing");
     const result = await conversation.analyzeScreenshot();
@@ -668,6 +697,7 @@ function WingrApp() {
   };
 
   const handleRefreshReplies = async () => {
+    if (!(await requireAiConsent())) return false;
     return refreshReplies();
   };
 

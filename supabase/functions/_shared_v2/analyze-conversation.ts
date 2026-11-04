@@ -6,12 +6,18 @@ import {
   UnusableScreenshotError,
   type UnusableScreenshotReason,
 } from "./conversation.ts";
+import {
+  ConsentVerificationError,
+  CONSENT_COVERED_PROVIDERS,
+  type ConsentVerifier,
+} from "../_shared/ai-consent.ts";
 import { handleCors } from "../_shared/cors.ts";
 import { error, json } from "../_shared/http.ts";
 import {
   analyzeWithGemini,
   DEFAULT_MODEL,
   DEFAULT_REASONING_EFFORT,
+  providerForModel,
   type ProviderLatencyMeasurement,
 } from "./openrouter.ts";
 import { RevenueCatVerificationError } from "../_shared/revenuecat-entitlement.ts";
@@ -49,6 +55,10 @@ export type ConversationHandlerOptions = Omit<
   GeminiOptions,
   "onProviderDispatch" | "onProviderLatency" | "signal"
 > & {
+  consentVerifier?: ConsentVerifier;
+  // Providers the consent text names. Only tests set this (to exercise another
+  // preset); production always uses the list in _shared/ai-consent.ts.
+  consentCoveredProviders?: readonly string[];
   entitlementVerifier?: RevenueCatEntitlementVerifier;
   getVerifiedUserId?: (accessToken: string) => Promise<string | null>;
   onboardingTrialManager?: OnboardingTrialManager;
@@ -104,6 +114,7 @@ function recordSettlement({
 // reason are read back from the response only if they are known values.
 type OutcomeStage =
   | "auth"
+  | "consent"
   | "body"
   | "entitlement"
   | "quota"
@@ -117,8 +128,11 @@ type OutcomeGeneration = "onboarding" | "subscription" | "unknown";
 type RequestTrace = { generation: OutcomeGeneration; stage: OutcomeStage };
 
 const OUTCOME_CATEGORIES = {
+  ai_consent_required: "consent",
+  ai_provider_not_disclosed: "technical",
   authentication_verification_unavailable: "technical",
   generation_in_progress: "quota",
+  consent_verification_unavailable: "technical",
   generation_protection_unavailable: "technical",
   invalid_output: "provider",
   invalid_request: "client_input",
@@ -296,8 +310,23 @@ async function readRequestBodyWithinLimit(request: Request): Promise<string> {
 }
 
 const ACCESS_ERRORS = {
+  ai_consent_required: {
+    message:
+      "Please allow WiNGR to share your screenshot with its AI providers to use this feature.",
+    status: 403,
+  },
+  ai_provider_not_disclosed: {
+    message:
+      "WiNGR could not start the AI service right now. Please try again.",
+    status: 503,
+  },
   authentication_verification_unavailable: {
     message: "Wingr could not verify your account right now. Please try again.",
+    status: 503,
+  },
+  consent_verification_unavailable: {
+    message:
+      "Wingr could not check your AI sharing choice right now. Please try again.",
     status: 503,
   },
   subscription_required: {
@@ -403,6 +432,8 @@ async function handleRequest(
   if (request.method !== "POST") return error("Method not allowed.", 405);
 
   const {
+    consentCoveredProviders = CONSENT_COVERED_PROVIDERS,
+    consentVerifier,
     entitlementVerifier,
     getVerifiedUserId,
     onboardingTrialManager,
@@ -423,6 +454,33 @@ async function handleRequest(
   }
   const authenticatedUserId = userId?.trim() ?? "";
   if (!isUuid(authenticatedUserId)) return accessError("unauthorized");
+
+  // Consent comes before anything that could spend or send something: it runs
+  // before the body is read, the onboarding DeviceCheck trial is prepared, the
+  // entitlement is looked up, a quota lease is taken, and the screenshot goes to
+  // a provider. A user without consent therefore uses up nothing and keeps their
+  // free generation for when they accept.
+  trace.stage = "consent";
+  // The provider this deployment would use must be one the consent names. If
+  // the model or routing is ever changed to an undisclosed provider, the request
+  // stops here instead of silently sending data there.
+  if (
+    !consentCoveredProviders.includes(
+      providerForModel(geminiOptions.model ?? DEFAULT_MODEL),
+    )
+  )
+    return accessError("ai_provider_not_disclosed");
+  if (!consentVerifier) return accessError("consent_verification_unavailable");
+  try {
+    if (
+      !(await consentVerifier.hasConsent(request.headers.get("authorization")))
+    )
+      return accessError("ai_consent_required");
+  } catch (failure) {
+    if (failure instanceof ConsentVerificationError)
+      return accessError("consent_verification_unavailable");
+    throw failure;
+  }
   trace.stage = "body";
 
   const requestStartedAt = Date.now();

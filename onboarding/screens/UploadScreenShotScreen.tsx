@@ -12,8 +12,10 @@ const GRAPHIC_ENTRANCE = FadeInDown.duration(350)
   .easing(Easing.out(Easing.cubic));
 
 export function UploadScreenShotScreen(props: OnboardingScreenProps) {
-  const { conversation, onScreenshotSelected, onSkip } = props;
+  const { conversation, onBeforeChooseScreenshot, onScreenshotSelected, onSkip } =
+    props;
   const actions = createOnboardingUploadActions({
+    ensureConsent: onBeforeChooseScreenshot,
     onScreenshotSelected,
     onSkip,
     pickScreenshot: conversation.pickScreenshot,

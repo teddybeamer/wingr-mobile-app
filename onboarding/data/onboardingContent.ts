@@ -66,16 +66,6 @@ export const onboardingContent: Record<
       { id: "inspiration", title: "I'd use it for inspiration" },
     ],
   },
-  privacy: {
-    id: "privacy",
-    title: "Your conversations stay private",
-    titleParts: [
-      { text: "Your conversations " },
-      { color: "blue", text: "stay private" },
-    ],
-    body: "Your screenshot is securely processed to analyze your conversation and generate replies. WiNGR doesn’t save your screenshots or conversations, and they’re not used to train AI models.",
-    ctaLabel: "Continue with WiNGR",
-  },
   uploadScreenshot: {
     id: "uploadScreenshot",
     title: "Try WiNGR on a real chat",
@@ -83,7 +73,7 @@ export const onboardingContent: Record<
       { text: "Try WiNGR on " },
       { color: "blue", text: "a real chat" },
     ],
-    body: "Upload a screenshot and WiNGR will read the vibe, spot what’s really going on, and suggest replies you can actually send. Your chats stay private.",
+    body: "Upload a screenshot and WiNGR will read the vibe, spot what’s really going on, and suggest replies you can actually send.",
     ctaLabel: "Next",
   },
   vibecheck: {

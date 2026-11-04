@@ -1,3 +1,4 @@
+import { clearAiConsentCache } from "./ai-consent";
 import {
   clearOnboardingCompletion,
   clearOnboardingReplyProgress,
@@ -13,6 +14,7 @@ export async function clearAccountLocalState() {
   });
   await clearSupabaseAuthSession();
   await clearOnboardingReplyProgress();
+  await clearAiConsentCache();
   await clearOnboardingCompletion();
   // This intentionally runs after server-side account deletion has succeeded.
   posthog.reset();

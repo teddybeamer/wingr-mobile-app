@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Alert } from "react-native";
+import { useAiConsent } from "../components/AiConsentProvider";
 import { posthog } from "../lib/posthog";
 import {
   getOnboardingAnalysisFailureAlert,
@@ -16,7 +17,6 @@ import { useConversationFlow } from "../hooks/useConversationFlow";
 import { ChangeScreen } from "./screens/ChangeScreen";
 import { PaywallScreen } from "./screens/PaywallScreen";
 import { ProblemScreen } from "./screens/ProblemScreen";
-import { PrivacyScreen } from "./screens/PrivacyScreen";
 import { RepliesScreen } from "./screens/RepliesScreen";
 import { TestimonialsScreen } from "./screens/TestimonialsScreen";
 import { UploadScreenShotScreen } from "./screens/UploadScreenShotScreen";
@@ -45,7 +45,6 @@ const screenMap: Record<
 > = {
   change: ChangeScreen,
   paywall: PaywallScreen,
-  privacy: PrivacyScreen,
   problem: ProblemScreen,
   replies: RepliesScreen,
   testimonials: TestimonialsScreen,
@@ -102,6 +101,7 @@ function OnboardingFlowContent({
   userId,
 }: OnboardingFlowProps & { initialStepId?: OnboardingStepId }) {
   const conversation = useConversationFlow("onboarding");
+  const { ensureConsent, invalidate: invalidateAiConsent } = useAiConsent();
   const [analysisFailureCount, setAnalysisFailureCount] = useState(0);
   useEffect(() => {
     if (conversation.error?.kind === "permission")
@@ -145,8 +145,26 @@ function OnboardingFlowContent({
 
   const analyzeScreenshotForOnboarding = useCallback(
     async (screenshotUri?: string) => {
-      const result =
+      let result =
         await conversation.analyzeOnboardingScreenshot(screenshotUri);
+
+      // The server is the authority on consent. If it refuses (the choice was
+      // withdrawn, or the saved answer was stale), ask again instead of failing;
+      // the refusal happens before anything is sent or the free reply is used.
+      if (
+        typeof result === "object" &&
+        result.status === "error" &&
+        result.error.errorCode === "ai_consent_required"
+      ) {
+        await invalidateAiConsent();
+        conversation.clearError();
+        if ((await ensureConsent()) !== "granted") {
+          setAnalysisFailureCount(0);
+          goToStep("testimonials", { replaceCurrent: true });
+          return "declined" as const;
+        }
+        result = await conversation.analyzeOnboardingScreenshot(screenshotUri);
+      }
 
       if (typeof result === "object" && result.status === "error") {
         const recoveryStep = await recoverOnboardingReplyUsed({
@@ -170,8 +188,25 @@ function OnboardingFlowContent({
 
       return result;
     },
-    [conversation, goToStep, userId],
+    [conversation, ensureConsent, goToStep, invalidateAiConsent, userId],
   );
+
+  // True when AI may be used. When consent is missing this shows the consent
+  // popup (once per tap). "No, thanks" leaves the user on the same screen with
+  // nothing recorded or sent, and the popup comes back the next time they tap
+  // Choose Screenshot. When the choice cannot be checked the user also stays
+  // where they are and can try again.
+  const consentGranted = async () => {
+    const consent = await ensureConsent();
+    if (consent === "granted") return true;
+    if (consent === "unavailable") {
+      Alert.alert(
+        "Couldn’t check your AI sharing choice",
+        "Please check your connection and try again.",
+      );
+    }
+    return false;
+  };
 
   const handlePrimaryAction = async () => {
     if (!stepCanContinue || ctaLoading) {
@@ -185,6 +220,7 @@ function OnboardingFlowContent({
     });
 
     if (isUploadStep) {
+      if (!(await consentGranted())) return;
       goNext();
       await analyzeScreenshotForOnboarding();
       return;
@@ -199,6 +235,7 @@ function OnboardingFlowContent({
   };
 
   const handleScreenshotSelected = async (screenshotUri: string) => {
+    if (!(await consentGranted())) return;
     setAnalysisFailureCount(0);
     goNext(true);
     const result = await analyzeScreenshotForOnboarding(screenshotUri);
@@ -271,6 +308,7 @@ function OnboardingFlowContent({
         isLastStep={isLastStep}
         moreVisible={moreVisible}
         onBack={goBack}
+        onBeforeChooseScreenshot={consentGranted}
         onComplete={completeOnboarding}
         onDevicePreviewUsed={handleDevicePreviewUsed}
         onMore={onMore}

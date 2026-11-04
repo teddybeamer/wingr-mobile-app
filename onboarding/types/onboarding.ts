@@ -5,7 +5,6 @@ export type OnboardingStepId =
   | "problem"
   | "change"
   | "wouldYouSend"
-  | "privacy"
   | "uploadScreenshot"
   | "vibecheck"
   | "replies"
@@ -61,6 +60,10 @@ export type OnboardingScreenProps = {
   ctaLoading?: boolean;
   analysisFailureCount?: number;
   onBack: () => void;
+  // Runs when "Choose Screenshot" is tapped, before the image picker opens. It
+  // shows the AI consent popup when consent is missing; false means do not open
+  // the picker (the user said "No, thanks" or the choice could not be checked).
+  onBeforeChooseScreenshot?: () => Promise<boolean>;
   onComplete: () => void | Promise<void>;
   onDevicePreviewUsed?: () => void;
   onMore?: () => void;

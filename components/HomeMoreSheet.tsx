@@ -4,10 +4,11 @@ import {
   DocumentText,
   Letter,
   Lock,
+  ShieldCross,
   TrashBinTrash,
 } from "@solar-icons/react-native/Linear";
 import * as Clipboard from "expo-clipboard";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Linking,
@@ -18,6 +19,7 @@ import {
 } from "react-native";
 import { deleteWingrAccount } from "../lib/account-deletion";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAiConsent } from "./AiConsentProvider";
 import { BottomSheet } from "./BottomSheet";
 
 const PRIVACY_URL = "https://trywingr.com/privacy";
@@ -37,12 +39,53 @@ export function HomeMoreSheet({
   onRestorePurchases?: () => Promise<void>;
 }) {
   const insets = useSafeAreaInsets();
+  const { checkState, withdraw } = useAiConsent();
+  // Only offered while a consent exists; consent is asked for when an AI feature
+  // is used.
+  const [hasAiConsent, setHasAiConsent] = useState(false);
   const pendingDestination = useRef<
     "privacy" | "terms" | "support" | null
   >(null);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isRestoringPurchases, setIsRestoringPurchases] = useState(false);
   const restoreInFlight = useRef(false);
+
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    void checkState().then((state) => {
+      if (!cancelled) setHasAiConsent(state === "granted");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [checkState, visible]);
+
+  const confirmWithdrawAiConsent = () => {
+    Alert.alert(
+      "Withdraw AI consent?",
+      "WiNGR will stop sharing your screenshots with OpenRouter and Google Vertex AI. AI features stay off until you allow it again.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Withdraw",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              if (await withdraw()) {
+                setHasAiConsent(false);
+              } else {
+                Alert.alert(
+                  "Couldn’t withdraw consent",
+                  "Please try again shortly.",
+                );
+              }
+            })();
+          },
+        },
+      ],
+    );
+  };
 
   const closeSheet = () => {
     if (!restoreInFlight.current) onClose();
@@ -176,6 +219,21 @@ export function HomeMoreSheet({
             <ArrowRightUp color="#A3A3A3" size={24} />
           </TouchableOpacity>
         ))}
+        {hasAiConsent ? (
+          <TouchableOpacity
+            accessibilityHint="Stops WiNGR from sharing your screenshots with its AI providers"
+            accessibilityLabel="Withdraw AI consent"
+            accessibilityRole="button"
+            activeOpacity={0.7}
+            disabled={!visible}
+            onPress={confirmWithdrawAiConsent}
+            style={styles.row}
+          >
+            <ShieldCross color="#A3A3A3" size={24} />
+            <Text style={styles.label}>Withdraw AI consent</Text>
+            <ArrowRightUp color="#A3A3A3" size={24} />
+          </TouchableOpacity>
+        ) : null}
         {onRestorePurchases ? (
           <TouchableOpacity
             accessibilityLabel="Restore Purchases"
