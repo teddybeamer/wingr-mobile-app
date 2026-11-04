@@ -18,8 +18,8 @@ export { AI_CONSENT_RECIPIENTS, AI_CONSENT_VERSION };
 export const AI_CONSENT_TITLE = "Your chats. Your choice.";
 export const AI_CONSENT_PARAGRAPHS = [
   "WiNGR uses AI to read the vibe and help you craft better replies.",
-  "Your screenshots are shared with OpenRouter and Google Vertex AI for AI processing.",
-  "We use Zero Data Retention to help keep your conversations private.",
+  "Your screenshots and the conversations in them are shared with OpenRouter and Google Vertex AI to generate your replies.",
+  "These providers may keep content for safety and abuse prevention, even after processing. According to their policies, it isn’t used to train AI models.",
   "Tap I Accept to allow this. You can change your mind anytime in the three-dot menu.",
 ] as const;
 export const PRIVACY_POLICY_URL = "https://trywingr.com/privacy";

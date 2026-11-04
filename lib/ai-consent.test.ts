@@ -185,8 +185,16 @@ test("the popup copy is exactly what the product specifies", () => {
   assert.equal(AI_CONSENT_TITLE, "Your chats. Your choice.");
   assert.deepEqual([...AI_CONSENT_PARAGRAPHS], [
     "WiNGR uses AI to read the vibe and help you craft better replies.",
-    "Your screenshots are shared with OpenRouter and Google Vertex AI for AI processing.",
-    "We use Zero Data Retention to help keep your conversations private.",
+    "Your screenshots and the conversations in them are shared with OpenRouter and Google Vertex AI to generate your replies.",
+    "These providers may keep content for safety and abuse prevention, even after processing. According to their policies, it isn’t used to train AI models.",
     "Tap I Accept to allow this. You can change your mind anytime in the three-dot menu.",
   ]);
+});
+
+test("the consent text makes no zero-retention claim and discloses provider retention and training", () => {
+  const text = AI_CONSENT_PARAGRAPHS.join(" ");
+  assert.ok(!/zero data retention|\bZDR\b|zero.retention|no retention|not stored|never stored/i.test(text));
+  assert.ok(/may keep content for safety and abuse prevention, even after processing/.test(text));
+  assert.ok(/isn’t used to train AI models/.test(text));
+  assert.ok(/conversations in them are shared with/.test(text));
 });
