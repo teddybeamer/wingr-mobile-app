@@ -149,7 +149,13 @@ export function BottomSheet({
     >
       <Animated.View
         pointerEvents={visible ? "auto" : "none"}
-        style={[styles.backdrop, { opacity: backdropOpacity }]}
+        style={[
+          styles.backdrop,
+          // Dev preview only: the sheet layer is as wide as the preview frame and
+          // sits in its left side, so the frame's edges can be judged.
+          previewWidth !== null && { width: previewWidth },
+          { opacity: backdropOpacity },
+        ]}
       >
         <Pressable
           accessibilityLabel={`Close ${title} sheet`}
@@ -167,12 +173,6 @@ export function BottomSheet({
               marginBottom: FLOATING_INSET,
               marginHorizontal: FLOATING_INSET,
               width: "auto",
-            },
-            previewWidth !== null && {
-              alignSelf: "center",
-              width: floating
-                ? previewWidth - FLOATING_INSET * 2
-                : previewWidth,
             },
             {
               maxHeight:

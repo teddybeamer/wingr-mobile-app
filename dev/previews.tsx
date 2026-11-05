@@ -7,6 +7,7 @@ import { FoundationsPreview } from "./FoundationsPreview";
 import { HomePreview } from "./HomePreview";
 import { LoadingPreview } from "./LoadingPreview";
 import { MoreSheetPreview } from "./MoreSheetPreview";
+import { ToneSheetPreview } from "./ToneSheetPreview";
 import { PreviewModalPreview } from "./PreviewModalPreview";
 import {
   RepliesScreenPreview,
@@ -128,6 +129,11 @@ export const PREVIEWS: PreviewEntry[] = [
     id: "more-sheet",
     title: "More sheet (paywall, with Restore Purchases)",
     render: () => <MoreSheetPreview />,
+  },
+  {
+    id: "tone-sheet",
+    title: "Choose Tone sheet (pick a tone to see it turn blue)",
+    render: () => <ToneSheetPreview />,
   },
   {
     id: "loading",
