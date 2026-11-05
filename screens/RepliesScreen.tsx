@@ -10,7 +10,6 @@ import {
 } from "react-native";
 
 import { FittedScreenshot } from "../components/FittedScreenshot";
-import { GlowEllipse } from "../components/GlowEllipse";
 import { HeaderBackButton } from "../components/HeaderBackButton";
 import { ScreenHeader, ScreenHeaderTitle } from "../components/ScreenHeader";
 import {
@@ -42,12 +41,6 @@ const REPLIES_SCREEN = {
   actionBarScrollGap: 24,
   revealGap: 16,
 };
-
-// The soft indigo light down the middle of the screen (Figma "BG BLUR").
-const BACKGROUND_GLOW = { blur: 75, rx: 93.5, ry: 325, top: 40 } as const;
-const BACKGROUND_GLOW_WIDTH = BACKGROUND_GLOW.rx * 2 + BACKGROUND_GLOW.blur * 4;
-const BACKGROUND_GLOW_HEIGHT =
-  BACKGROUND_GLOW.ry * 2 + BACKGROUND_GLOW.blur * 4;
 
 export function RepliesScreen({
   isGeneratingReplies,
@@ -172,14 +165,6 @@ export function RepliesScreen({
 
   return (
     <View style={styles.screen}>
-      <GlowEllipse
-        blur={BACKGROUND_GLOW.blur}
-        fill={colors.indigo950}
-        rx={BACKGROUND_GLOW.rx}
-        ry={BACKGROUND_GLOW.ry}
-        style={styles.backgroundGlow}
-      />
-
       <ScreenHeader
         center={<ScreenHeaderTitle>Get Replies</ScreenHeaderTitle>}
         left={<HeaderBackButton onPress={onBack} />}
@@ -329,12 +314,6 @@ const styles = StyleSheet.create({
   actionBarTint: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: surfaces.actionBar,
-  },
-  // Centred horizontally, top edge at the Figma ellipse position.
-  backgroundGlow: {
-    left: "50%",
-    marginLeft: -BACKGROUND_GLOW_WIDTH / 2,
-    top: BACKGROUND_GLOW.top + BACKGROUND_GLOW.ry - BACKGROUND_GLOW_HEIGHT / 2,
   },
   conversation: { gap: spacing.lg, width: "100%" },
   scrollContent: { paddingHorizontal: layout.pageGutter },
