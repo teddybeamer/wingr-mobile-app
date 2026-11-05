@@ -71,6 +71,8 @@ export const surfaces = {
   // Layer behind the dialogs: stone/900 at 30%, on top of a background blur.
   dialogBackdrop: "rgba(28, 25, 23, 0.3)",
   cardShadow: "rgba(0, 0, 0, 0.25)",
+  // Selected row in the Choose Tone sheet: blue/950 at 50 %.
+  toneSelected: "rgba(23, 37, 84, 0.5)",
   iconChip: "rgba(28, 25, 23, 0.35)",
   vibeCheckBorder: "rgba(49, 46, 129, 0.3)",
   // Popup card: Figma uses #f5f5f4 as a raw fill, same value as stone100.

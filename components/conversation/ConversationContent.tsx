@@ -1,7 +1,7 @@
 import * as Clipboard from "expo-clipboard";
 import { BlurView } from "expo-blur";
 import { posthog } from "../../lib/posthog";
-import { BottomSheet } from "../BottomSheet";
+import { FloatingSheet } from "../FloatingSheet";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import Reanimated, {
   Easing as ReanimatedEasing,
@@ -24,6 +24,7 @@ import {
   Repeat,
   ShieldWarning,
   StarsMinimalistic,
+  Unread,
 } from "@solar-icons/react-native/Linear";
 import type { Icon as SolarIcon } from "@solar-icons/react-native/lib/index";
 import Svg, {
@@ -1326,7 +1327,7 @@ function ToneMainFeedCopyBadge({
   );
 }
 
-function ToneBottomSheet({
+export function ToneBottomSheet({
   onClose,
   onSelect,
   selectedTone,
@@ -1338,36 +1339,54 @@ function ToneBottomSheet({
   visible: boolean;
 }) {
   return (
-    <BottomSheet title="Choose tone" visible={visible} onClose={onClose}>
-      <View style={styles.toneOptions}>
-        {TONE_OPTIONS.map((option) => {
-          const selected = option.value === selectedTone;
+    <FloatingSheet
+      borderColor={colors.stone900}
+      bottomPadding={20}
+      cornerRadius={40}
+      horizontalPadding={20}
+      onClose={onClose}
+      title="Choose tone"
+      visible={visible}
+    >
+      <View style={styles.toneSheetContent}>
+        <Text accessibilityRole="header" style={styles.toneSheetTitle}>
+          Choose Tone
+        </Text>
+        <View style={styles.toneOptions}>
+          {TONE_OPTIONS.map((option) => {
+            const selected = option.value === selectedTone;
 
-          return (
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
-              key={option.value}
-              onPress={() => onSelect(option.value)}
-              style={[styles.toneOption, selected && styles.toneOptionSelected]}
-            >
-              <View style={styles.toneOptionLeft}>
-                <Text style={styles.toneOptionEmoji}>{option.emoji}</Text>
-                <Text
-                  style={[
-                    styles.toneOptionText,
-                    selected && styles.toneOptionTextSelected,
-                  ]}
-                >
-                  {option.label}
-                </Text>
-              </View>
-              {selected ? <CheckCircle color={COLORS.blue} size={21} /> : null}
-            </TouchableOpacity>
-          );
-        })}
+            return (
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                activeOpacity={0.85}
+                key={option.value}
+                onPress={() => onSelect(option.value)}
+                style={[
+                  styles.toneOption,
+                  selected && styles.toneOptionSelected,
+                ]}
+              >
+                <View style={styles.toneOptionLeft}>
+                  <Text style={styles.toneOptionEmoji}>{option.emoji}</Text>
+                  <Text
+                    maxFontSizeMultiplier={1.2}
+                    style={[
+                      styles.toneOptionText,
+                      selected && styles.toneOptionTextSelected,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </View>
+                {selected ? <Unread color={colors.blue700} size={24} /> : null}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
-    </BottomSheet>
+    </FloatingSheet>
   );
 }
 
@@ -1857,43 +1876,45 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 30,
   },
+  // Choose Tone sheet (Figma 6752:305): 22/28 heading, 22 px rows of 51 px with
+  // 10 px between them. The 1 px border sits inside the 12 px padding.
   toneOption: {
     alignItems: "center",
-    backgroundColor: "#18181B",
-    borderColor: "#2B2B2F",
-    borderRadius: 18,
+    backgroundColor: colors.stone700,
+    // Transparent when not selected so a selected row does not change height.
+    borderColor: "transparent",
+    borderRadius: 12,
     borderWidth: 1,
     flexDirection: "row",
     justifyContent: "space-between",
-    minHeight: 64,
-    paddingHorizontal: 24,
+    minHeight: 51,
+    padding: 11,
   },
-  toneOptionLeft: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 12,
-  },
-  toneOptionEmoji: {
-    fontSize: 20,
-    lineHeight: 24,
-    textAlign: "center",
-    width: 24,
-  },
+  toneOptionEmoji: { fontSize: 22, lineHeight: 27 },
+  toneOptionLeft: { alignItems: "center", flexDirection: "row", gap: 6 },
   toneOptionSelected: {
-    backgroundColor: "#0C1427",
-    borderColor: COLORS.blue,
+    backgroundColor: surfaces.toneSelected,
+    borderColor: colors.blue600,
   },
   toneOptionText: {
-    color: "#FFFFFF",
-    fontFamily: "ClashGrotesk",
-    fontSize: 18,
-    fontWeight: "600",
+    ...typography.titleSemibold16,
+    color: colors.stone200,
+    fontSize: 22,
+    lineHeight: 27,
   },
-  toneOptionTextSelected: {
-    color: "#6EA0FF",
+  toneOptionTextSelected: { color: colors.stone50 },
+  toneOptions: { gap: 10, width: "100%" },
+  toneSheetContent: {
+    gap: 20,
+    paddingTop: 10,
+    width: "100%",
   },
-  toneOptions: {
-    gap: 12,
+  toneSheetTitle: {
+    ...typography.titleSemibold16,
+    color: colors.stone200,
+    fontSize: 22,
+    lineHeight: 28,
+    textAlign: "center",
   },
   toneSelector: {
     alignItems: "center",

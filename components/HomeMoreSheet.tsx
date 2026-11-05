@@ -16,7 +16,7 @@ import type { ConsentState } from "../lib/ai-consent";
 import { colors, fontFamilies, iconSizes, spacing, typography } from "../theme";
 import { ActionButton } from "./ActionButton";
 import { useAiConsent } from "./AiConsentProvider";
-import { BottomSheet } from "./BottomSheet";
+import { FloatingSheet } from "./FloatingSheet";
 
 const PRIVACY_URL = "https://trywingr.com/privacy";
 const TERMS_OF_SERVICE_URL =
@@ -189,20 +189,15 @@ export function HomeMoreSheet({
   };
 
   return (
-    <BottomSheet
-      bottomPadding={spacing.md}
-      floating
-      frameStyle={styles.frame}
-      handleStyle={styles.handle}
-      hideTitle
+    <FloatingSheet
       onClose={closeSheet}
       onClosed={() => {
         void openDestination();
       }}
-      panelStyle={styles.panel}
       title="More"
       visible={visible}
     >
+      {" "}
       <View style={styles.content}>
         <View style={styles.section}>
           <View style={styles.ideaCopy}>
@@ -297,7 +292,7 @@ export function HomeMoreSheet({
           />
         </View>
       </View>
-    </BottomSheet>
+    </FloatingSheet>
   );
 }
 
@@ -308,12 +303,6 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   dimmed: { opacity: 0.6 },
-  handle: {
-    backgroundColor: colors.stone700,
-    borderRadius: 2,
-    height: 3,
-    width: 80,
-  },
   ideaBody: {
     color: colors.stone400,
     fontFamily: fontFamilies.displayMedium,
@@ -321,20 +310,6 @@ const styles = StyleSheet.create({
     letterSpacing: -0.08,
   },
   ideaCopy: { gap: 2 },
-  frame: {
-    backgroundColor: colors.stone950,
-    borderColor: colors.stone800,
-    borderRadius: 40,
-    borderWidth: 1,
-    overflow: "hidden",
-  },
-  panel: {
-    backgroundColor: "transparent",
-    borderRadius: 0,
-    gap: spacing.md,
-    paddingHorizontal: 30,
-    paddingTop: spacing.xxl,
-  },
   section: { gap: spacing.md, width: "100%" },
   sectionTitle: {
     ...typography.titleSemibold16,
