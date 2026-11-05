@@ -151,6 +151,11 @@ export const PREVIEWS: PreviewEntry[] = [
     render: () => <VibeCheckPreview expanded />,
   },
   {
+    id: "vibe-expanded-long",
+    title: "Vibe Check · expanded, long text (glow grows)",
+    render: () => <VibeCheckPreview expanded longText />,
+  },
+  {
     id: "reply-cards",
     title: "Vibe Check + reply cards",
     render: () => <ReplyCardsPreview />,

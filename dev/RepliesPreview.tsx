@@ -26,13 +26,28 @@ function PreviewPage({ children }: { children: React.ReactNode }) {
 }
 
 // The Vibe Check card on its own, collapsed or open, on the screen background.
-export function VibeCheckPreview({ expanded }: { expanded: boolean }) {
+// `longText` makes the analysis three times as long, to see the open card's glow
+// grow with it.
+export function VibeCheckPreview({
+  expanded,
+  longText = false,
+}: {
+  expanded: boolean;
+  longText?: boolean;
+}) {
+  const vibeCheck = longText
+    ? {
+        ...MOCK_VIBE_CHECK,
+        summary: [1, 2, 3].map(() => MOCK_VIBE_CHECK.summary).join(" "),
+      }
+    : MOCK_VIBE_CHECK;
+
   return (
     <PreviewPage>
       <VibeCheckCard
         defaultExpanded={expanded}
         presentation="inlineExpandable"
-        vibeCheck={MOCK_VIBE_CHECK}
+        vibeCheck={vibeCheck}
       />
     </PreviewPage>
   );
