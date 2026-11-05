@@ -191,6 +191,8 @@ export function HomeMoreSheet({
   return (
     <BottomSheet
       bottomPadding={spacing.md}
+      floating
+      frameStyle={styles.frame}
       handleStyle={styles.handle}
       hideTitle
       onClose={closeSheet}
@@ -319,10 +321,16 @@ const styles = StyleSheet.create({
     letterSpacing: -0.08,
   },
   ideaCopy: { gap: 2 },
-  panel: {
+  frame: {
     backgroundColor: colors.stone950,
-    borderTopLeftRadius: 40,
-    borderTopRightRadius: 40,
+    borderColor: colors.stone800,
+    borderRadius: 40,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  panel: {
+    backgroundColor: "transparent",
+    borderRadius: 0,
     gap: spacing.md,
     paddingHorizontal: 30,
     paddingTop: spacing.xxl,

@@ -16,6 +16,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWidthOverride } from "../hooks/useResponsive";
 
+// Gap between a floating sheet and the screen edges (Figma: 4 px).
+const FLOATING_INSET = 4;
+
 export function BottomSheet({
   children,
   onClose,
@@ -26,6 +29,8 @@ export function BottomSheet({
   showHandle = true,
   showCloseButton = false,
   hideTitle = false,
+  floating = false,
+  frameStyle,
   handleStyle,
   panelStyle,
   bottomPadding = 34,
@@ -40,6 +45,13 @@ export function BottomSheet({
   showCloseButton?: boolean;
   // The title is not drawn but stays the sheet's accessibility label.
   hideTitle?: boolean;
+  // Floats FLOATING_INSET px from the sides and bottom of the screen instead of
+  // sitting flush against them. Give panelStyle the rounding for all corners.
+  floating?: boolean;
+  // The sheet's visible frame (background, stroke, rounding, overflow hidden).
+  // Unlike panelStyle it does not scroll with the content, so a sheet taller
+  // than the screen keeps its rounded, stroked outline.
+  frameStyle?: StyleProp<ViewStyle>;
   handleStyle?: StyleProp<ViewStyle>;
   panelStyle?: StyleProp<ViewStyle>;
   bottomPadding?: number;
@@ -151,14 +163,23 @@ export function BottomSheet({
           onAccessibilityEscape={onClose}
           style={[
             styles.panelAnimation,
+            floating && {
+              marginBottom: FLOATING_INSET,
+              marginHorizontal: FLOATING_INSET,
+              width: "auto",
+            },
             previewWidth !== null && {
               alignSelf: "center",
-              width: previewWidth,
+              width: floating
+                ? previewWidth - FLOATING_INSET * 2
+                : previewWidth,
             },
             {
-              maxHeight: windowHeight - insets.top,
+              maxHeight:
+                windowHeight - insets.top - (floating ? FLOATING_INSET : 0),
               transform: [{ translateY: sheetTranslateY }],
             },
+            frameStyle,
           ]}
         >
           <ScrollView
@@ -168,7 +189,13 @@ export function BottomSheet({
             contentContainerStyle={[
               styles.panel,
               panelStyle,
-              { paddingBottom: Math.max(bottomPadding, insets.bottom) },
+              {
+                // A floating sheet ends above the home indicator's area, so the
+                // content is not pushed up by the bottom inset.
+                paddingBottom: floating
+                  ? bottomPadding
+                  : Math.max(bottomPadding, insets.bottom),
+              },
             ]}
           >
             {showHandle ? <View style={[styles.handle, handleStyle]} /> : null}
