@@ -69,13 +69,13 @@ test("running the whole timeline types every message in order, then stops", () =
   assert.deepEqual(finished, [0, 1]);
   assert.equal(state.phase, "waiting");
   // first indicator + "Hi" + hold + second indicator + "Okay" + hold
-  assert.equal(
-    elapsed,
+  // (the per-letter delay is fractional, so allow for floating point rounding)
+  const expected =
     FIRST_INDICATOR_MS +
-      2 * TYPING_MS_PER_LETTER +
-      HOLD_MS +
-      NEXT_INDICATOR_MS +
-      4 * TYPING_MS_PER_LETTER +
-      HOLD_MS,
-  );
+    2 * TYPING_MS_PER_LETTER +
+    HOLD_MS +
+    NEXT_INDICATOR_MS +
+    4 * TYPING_MS_PER_LETTER +
+    HOLD_MS;
+  assert.ok(Math.abs(elapsed - expected) < 1e-6, `${elapsed} vs ${expected}`);
 });

@@ -16,7 +16,7 @@ export const LOADING_CHAT_MESSAGES = [
 // each later one.
 export const FIRST_INDICATOR_MS = 1000;
 export const NEXT_INDICATOR_MS = 700;
-export const TYPING_MS_PER_LETTER = 32;
+export const TYPING_MS_PER_LETTER = 26.7;
 // Pause after a message is fully typed.
 export const HOLD_MS = 600;
 
