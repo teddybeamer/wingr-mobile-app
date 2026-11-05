@@ -187,7 +187,7 @@ const INLINE_VIBE_METRIC_VARIANTS: Record<
 > = {
   interest: {
     backgroundColor: "rgba(30, 27, 75, 0.3)",
-    borderColor: "rgba(30, 58, 138, 0.5)",
+    borderColor: colors.blue900,
     iconBackgroundColor: "#1D4ED8",
     iconColor: "#E0E7FF",
     labelColor: "#E0E7FF",
@@ -195,7 +195,7 @@ const INLINE_VIBE_METRIC_VARIANTS: Record<
   },
   energy: {
     backgroundColor: "rgba(69, 26, 3, 0.3)",
-    borderColor: "rgba(120, 53, 15, 0.5)",
+    borderColor: colors.amber900,
     iconBackgroundColor: "#B45309",
     iconColor: "#FEF3C7",
     labelColor: "#FEF3C7",
@@ -203,7 +203,7 @@ const INLINE_VIBE_METRIC_VARIANTS: Record<
   },
   risk: {
     backgroundColor: "rgba(69, 10, 10, 0.3)",
-    borderColor: "rgba(127, 29, 29, 0.5)",
+    borderColor: colors.red900,
     iconBackgroundColor: "#B91C1C",
     iconColor: "#FEE2E2",
     labelColor: "#FEE2E2",
@@ -211,7 +211,7 @@ const INLINE_VIBE_METRIC_VARIANTS: Record<
   },
   move: {
     backgroundColor: "rgba(4, 47, 46, 0.3)",
-    borderColor: "rgba(19, 78, 74, 0.5)",
+    borderColor: colors.teal900,
     iconBackgroundColor: "#0F766E",
     iconColor: "#CCFBF1",
     labelColor: "#CCFBF1",
@@ -382,6 +382,39 @@ export function VibeCheckCard({
   );
 }
 
+// The soft glow behind an open Vibe Check (Figma "BG Blur", node 6604:1212): an
+// ellipse that fills the whole card (324 x 457 on a 328 x 456 card), blur 150
+// (a standard deviation of 75), 50 % opacity, rotated -0.7 degrees. It is drawn
+// from the card's measured size, so a longer analysis gets a taller glow.
+const VIBE_EXPANDED_GLOW = {
+  blur: 75,
+  // Figma: the ellipse is 4 px narrower and 1 px taller than the card, and its
+  // centre sits a little right of and below the card's centre.
+  centerOffsetX: 0.57,
+  centerOffsetY: 2.4,
+  heightExtra: 1.08,
+  opacity: 0.5,
+  rotation: -0.7,
+  widthInset: 4.06,
+} as const;
+
+function getVibeExpandedGlow(card: { height: number; width: number }) {
+  const { blur, centerOffsetX, centerOffsetY, heightExtra, widthInset } =
+    VIBE_EXPANDED_GLOW;
+  const radiusX = (card.width - widthInset) / 2;
+  const radiusY = (card.height + heightExtra) / 2;
+  const canvasWidth = 2 * radiusX + 4 * blur;
+  const canvasHeight = 2 * radiusY + 4 * blur;
+  const centerX = card.width / 2 + centerOffsetX;
+  const centerY = card.height / 2 + centerOffsetY;
+  return {
+    left: centerX - canvasWidth / 2,
+    radiusX,
+    radiusY,
+    top: centerY - canvasHeight / 2,
+  };
+}
+
 function InlineExpandableVibeCheckCard({
   defaultExpanded,
   vibeCheck,
@@ -390,6 +423,11 @@ function InlineExpandableVibeCheckCard({
   vibeCheck: VibeCheck;
 }) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  // The card's size while it is open; the glow is drawn from it.
+  const [openCardSize, setOpenCardSize] = useState<{
+    height: number;
+    width: number;
+  } | null>(null);
   const chevronRotation = useSharedValue(0);
   const pressScale = useSharedValue(1);
   const animatedChevronStyle = useAnimatedStyle(() => ({
@@ -398,6 +436,10 @@ function InlineExpandableVibeCheckCard({
   const animatedPressStyle = useAnimatedStyle(() => ({
     transform: [{ scale: pressScale.value }],
   }));
+
+  useEffect(() => {
+    if (!isExpanded) setOpenCardSize(null);
+  }, [isExpanded]);
 
   useEffect(() => {
     chevronRotation.value = withTiming(isExpanded ? 180 : 0, {
@@ -430,18 +472,21 @@ function InlineExpandableVibeCheckCard({
     >
       <Reanimated.View
         layout={VIBE_CHECK_LAYOUT_TRANSITION}
+        onLayout={(event) => {
+          if (!isExpanded) return;
+          const { height, width } = event.nativeEvent.layout;
+          setOpenCardSize((current) =>
+            current?.height === height && current?.width === width
+              ? current
+              : { height, width },
+          );
+        }}
         style={styles.inlineVibeCard}
       >
         {isExpanded ? (
-          <GlowEllipse
-            blur={75}
-            fill={colors.indigo950}
-            opacity={0.3}
-            rotation={-0.7}
-            rx={232.5}
-            ry={182}
-            style={styles.inlineVibeExpandedGlow}
-          />
+          openCardSize ? (
+            <OpenVibeGlow card={openCardSize} />
+          ) : null
         ) : (
           <GlowEllipse
             blur={50}
@@ -511,6 +556,22 @@ function InlineExpandableVibeCheckCard({
         </View>
       </Reanimated.View>
     </ReanimatedPressable>
+  );
+}
+
+function OpenVibeGlow({ card }: { card: { height: number; width: number } }) {
+  const glow = getVibeExpandedGlow(card);
+
+  return (
+    <GlowEllipse
+      blur={VIBE_EXPANDED_GLOW.blur}
+      fill={colors.indigo950}
+      opacity={VIBE_EXPANDED_GLOW.opacity}
+      rotation={VIBE_EXPANDED_GLOW.rotation}
+      rx={glow.radiusX}
+      ry={glow.radiusY}
+      style={{ left: glow.left, top: glow.top }}
+    />
   );
 }
 
@@ -1592,7 +1653,7 @@ const styles = StyleSheet.create({
   // ellipse just left of the middle, 287 px down, when open.
   inlineVibeBottomGlow: { left: -170, top: 2 },
   inlineVibeCard: {
-    backgroundColor: colors.stone900,
+    backgroundColor: colors.stone950,
     borderColor: surfaces.vibeCheckBorder,
     borderRadius: 14,
     borderWidth: 1,
@@ -1620,11 +1681,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     position: "relative",
     width: 34,
-  },
-  inlineVibeExpandedGlow: {
-    left: "50%",
-    marginLeft: -383.5,
-    top: -45,
   },
   inlineVibeChevronIcon: {
     zIndex: 2,

@@ -74,7 +74,7 @@ export const surfaces = {
   // Selected row in the Choose Tone sheet: blue/950 at 50 %.
   toneSelected: "rgba(23, 37, 84, 0.5)",
   iconChip: "rgba(28, 25, 23, 0.35)",
-  vibeCheckBorder: "rgba(49, 46, 129, 0.3)",
+  vibeCheckBorder: "rgba(49, 46, 129, 0.5)",
   // Popup card: Figma uses #f5f5f4 as a raw fill, same value as stone100.
   dialog: "#F5F5F4",
 } as const;
