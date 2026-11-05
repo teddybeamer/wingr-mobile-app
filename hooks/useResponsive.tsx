@@ -23,6 +23,13 @@ export function ResponsiveOverrideProvider({
   );
 }
 
+// The width the dev preview harness asks for, or null (always null in
+// production). For modals, which are laid out at the full window width and
+// would otherwise ignore the harness's width chips.
+export function useWidthOverride() {
+  return useContext(WidthOverrideContext)?.width ?? null;
+}
+
 // Breakpoint flags only. Do not derive sizes from width: type, button heights
 // and touch targets stay constant, and layout adapts through flex.
 export function useBreakpoints() {

@@ -6,6 +6,7 @@ import { ErrorDialogPreview } from "./ErrorDialogPreview";
 import { FoundationsPreview } from "./FoundationsPreview";
 import { HomePreview } from "./HomePreview";
 import { LoadingPreview } from "./LoadingPreview";
+import { MoreSheetPreview } from "./MoreSheetPreview";
 import { PreviewModalPreview } from "./PreviewModalPreview";
 import {
   RepliesScreenPreview,
@@ -122,6 +123,11 @@ export const PREVIEWS: PreviewEntry[] = [
     id: "error-onboarding",
     title: "Error dialog · onboarding (Choose New Screenshot)",
     render: () => <ErrorDialogPreview onboarding reason="unreadable_image" />,
+  },
+  {
+    id: "more-sheet",
+    title: "More sheet (paywall, with Restore Purchases)",
+    render: () => <MoreSheetPreview />,
   },
   {
     id: "loading",

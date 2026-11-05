@@ -1,23 +1,21 @@
 import {
-  ArrowRightUp,
   BillCheck,
-  DocumentText,
+  Document,
+  LightbulbBolt,
   Letter,
   Lock,
+  ShieldCross,
   TrashBinTrash,
 } from "@solar-icons/react-native/Linear";
 import * as Clipboard from "expo-clipboard";
-import { useRef, useState } from "react";
-import {
-  Alert,
-  Linking,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
-import { deleteWingrAccount } from "../lib/account-deletion";
+import { useEffect, useRef, useState } from "react";
+import { Alert, Linking, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { deleteWingrAccount } from "../lib/account-deletion";
+import type { ConsentState } from "../lib/ai-consent";
+import { colors, fontFamilies, iconSizes, spacing, typography } from "../theme";
+import { ActionButton } from "./ActionButton";
+import { useAiConsent } from "./AiConsentProvider";
 import { BottomSheet } from "./BottomSheet";
 
 const PRIVACY_URL = "https://trywingr.com/privacy";
@@ -37,19 +35,68 @@ export function HomeMoreSheet({
   onRestorePurchases?: () => Promise<void>;
 }) {
   const insets = useSafeAreaInsets();
-  const pendingDestination = useRef<
-    "privacy" | "terms" | "support" | null
-  >(null);
+  const { checkState, withdraw } = useAiConsent();
+  // The row is always shown; it is dimmed while there is no consent to withdraw.
+  // Consent itself is asked for when an AI feature is used.
+  const [consentState, setConsentState] = useState<ConsentState | null>(null);
+  const pendingDestination = useRef<"privacy" | "terms" | "support" | null>(
+    null,
+  );
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isRestoringPurchases, setIsRestoringPurchases] = useState(false);
   const restoreInFlight = useRef(false);
+
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    void checkState().then((state) => {
+      if (!cancelled) setConsentState(state);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [checkState, visible]);
+
+  const confirmWithdrawAiConsent = () => {
+    if (!visible) return;
+    if (consentState === "missing") {
+      Alert.alert(
+        "No AI consent given",
+        "You haven’t allowed WiNGR to share your screenshots with its AI providers, so there’s nothing to withdraw. You’ll be asked before your next AI request.",
+      );
+      return;
+    }
+    Alert.alert(
+      "Withdraw AI consent?",
+      "WiNGR will stop sharing your screenshots with OpenRouter and Google Vertex AI. AI features stay off until you allow it again.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Withdraw",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              if (await withdraw()) {
+                setConsentState("missing");
+              } else {
+                Alert.alert(
+                  "Couldn’t withdraw consent",
+                  "Please try again shortly.",
+                );
+              }
+            })();
+          },
+        },
+      ],
+    );
+  };
 
   const closeSheet = () => {
     if (!restoreInFlight.current) onClose();
   };
 
   const restorePurchases = async () => {
-    if (!onRestorePurchases || restoreInFlight.current) return;
+    if (!visible || !onRestorePurchases || restoreInFlight.current) return;
 
     restoreInFlight.current = true;
     setIsRestoringPurchases(true);
@@ -101,6 +148,13 @@ export function HomeMoreSheet({
     }
   };
 
+  // Opens after the sheet has closed (iOS cannot present over a closing Modal).
+  const openLater = (destination: "privacy" | "terms" | "support") => {
+    if (!visible || pendingDestination.current) return;
+    pendingDestination.current = destination;
+    onClose();
+  };
+
   const confirmAccountDeletion = () => {
     if (isDeletingAccount) return;
     Alert.alert(
@@ -136,120 +190,148 @@ export function HomeMoreSheet({
 
   return (
     <BottomSheet
-      title="More"
-      titleColor="#D4D4D4"
-      visible={visible}
+      bottomPadding={spacing.md}
+      handleStyle={styles.handle}
+      hideTitle
       onClose={closeSheet}
       onClosed={() => {
         void openDestination();
       }}
-      bottomPadding={Math.max(30, insets.bottom) + 10}
+      panelStyle={styles.panel}
+      title="More"
+      visible={visible}
     >
-      <View style={styles.options}>
-        {([
-          { id: "privacy", label: "Privacy", Icon: Lock },
-          { id: "terms", label: "Terms of Service", Icon: DocumentText },
-          { id: "support", label: "Contact Support", Icon: Letter },
-        ] as const).map(({ id, label, Icon }) => (
-          <TouchableOpacity
-            key={id}
-            accessibilityRole="link"
-            accessibilityLabel={label}
-            accessibilityHint={
-              id === "privacy"
-                ? "Opens the privacy policy in your browser"
-                : id === "terms"
-                  ? "Opens the Terms of Service in your browser"
-                : "Opens your email app"
-            }
-            disabled={!visible}
-            activeOpacity={0.7}
-            onPress={() => {
-              if (pendingDestination.current) return;
-              pendingDestination.current = id;
-              onClose();
-            }}
-            style={styles.row}
-          >
-            <Icon color="#A3A3A3" size={24} />
-            <Text style={styles.label}>{label}</Text>
-            <ArrowRightUp color="#A3A3A3" size={24} />
-          </TouchableOpacity>
-        ))}
-        {onRestorePurchases ? (
-          <TouchableOpacity
-            accessibilityLabel="Restore Purchases"
-            accessibilityRole="button"
-            accessibilityHint="Restores an existing WiNGR Pro purchase"
-            activeOpacity={0.7}
-            disabled={!visible || isRestoringPurchases}
-            onPress={() => void restorePurchases()}
-            style={[styles.row, isRestoringPurchases && styles.rowDisabled]}
-          >
-            <BillCheck color="#A3A3A3" size={24} />
-            <Text style={styles.label}>
-              {isRestoringPurchases
-                ? "Restoring Purchases…"
-                : "Restore Purchases"}
+      <View style={styles.content}>
+        <View style={styles.section}>
+          <View style={styles.ideaCopy}>
+            <Text style={styles.sectionTitle}>Got a great idea?</Text>
+            <Text style={styles.ideaBody}>
+              Missing a feature or got an idea to make WiNGR even better? We’re
+              all ears!
             </Text>
-            <ArrowRightUp color="#A3A3A3" size={24} />
-          </TouchableOpacity>
-        ) : null}
-        <TouchableOpacity
-          accessibilityLabel="Delete account"
-          accessibilityRole="button"
-          accessibilityHint="Permanently deletes your WiNGR account"
-          disabled={!visible || isDeletingAccount}
-          activeOpacity={0.7}
-          onPress={confirmAccountDeletion}
-          style={[
-            styles.row,
-            styles.deleteRow,
-            isDeletingAccount && styles.rowDisabled,
-          ]}
-        >
-          <TrashBinTrash color="#FF5A65" size={24} />
-          <Text style={[styles.label, styles.deleteLabel]}>
-            {isDeletingAccount ? "Deleting account…" : "Delete account"}
-          </Text>
-          <ArrowRightUp color="#FF5A65" size={24} />
-        </TouchableOpacity>
+          </View>
+          <ActionButton
+            accessibilityHint="Opens your email app"
+            label="Let us know"
+            leading={
+              <LightbulbBolt color={colors.stone50} size={iconSizes.md} />
+            }
+            onPress={() => openLater("support")}
+            variant="primary"
+          />
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Legal &amp; Support</Text>
+          <ActionButton
+            accessibilityHint="Opens the Terms of Service in your browser"
+            label="Terms of Service"
+            leading={<Document color={colors.neutral400} size={iconSizes.md} />}
+            onPress={() => openLater("terms")}
+            variant="secondary"
+          />
+          <ActionButton
+            accessibilityHint="Opens the privacy policy in your browser"
+            label="Privacy Policy"
+            leading={<Lock color={colors.neutral400} size={iconSizes.md} />}
+            onPress={() => openLater("privacy")}
+            variant="secondary"
+          />
+          <ActionButton
+            accessibilityHint="Opens your email app"
+            label="Contact Support"
+            leading={<Letter color={colors.neutral400} size={iconSizes.md} />}
+            onPress={() => openLater("support")}
+            variant="secondary"
+          />
+          {onRestorePurchases ? (
+            <ActionButton
+              accessibilityHint="Restores an existing WiNGR Pro purchase"
+              disabled={isRestoringPurchases}
+              label={
+                isRestoringPurchases
+                  ? "Restoring Purchases…"
+                  : "Restore Purchases"
+              }
+              leading={
+                <BillCheck color={colors.neutral400} size={iconSizes.md} />
+              }
+              onPress={() => void restorePurchases()}
+              variant="secondary"
+            />
+          ) : null}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>AI &amp; Privacy</Text>
+          <View style={consentState === "missing" && styles.dimmed}>
+            <ActionButton
+              accessibilityHint={
+                consentState === "missing"
+                  ? "There is no AI consent to withdraw"
+                  : "Stops WiNGR from sharing your screenshots with its AI providers"
+              }
+              label="Withdraw AI Consent"
+              leading={
+                <ShieldCross color={colors.stone400} size={iconSizes.md} />
+              }
+              onPress={confirmWithdrawAiConsent}
+              variant="secondary"
+            />
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Account Management</Text>
+          <ActionButton
+            accessibilityHint="Permanently deletes your WiNGR account"
+            disabled={isDeletingAccount}
+            label={isDeletingAccount ? "Deleting account…" : "Delete Account"}
+            leading={
+              <TrashBinTrash color={colors.red400} size={iconSizes.lg} />
+            }
+            onPress={confirmAccountDeletion}
+            variant="danger"
+          />
+        </View>
       </View>
     </BottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  options: {
-    gap: 12,
-  },
-  row: {
+  content: {
+    gap: spacing.xl,
+    paddingVertical: spacing.xxl,
     width: "100%",
-    alignItems: "center",
-    borderColor: "#A3A3A3",
-    borderRadius: 20,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 12,
-    minHeight: 64,
-    paddingHorizontal: 24,
-    paddingVertical: 8,
   },
-  label: {
-    color: "#F5F5F5",
-    flex: 1,
-    fontFamily: "ClashGrotesk",
+  dimmed: { opacity: 0.6 },
+  handle: {
+    backgroundColor: colors.stone700,
+    borderRadius: 2,
+    height: 3,
+    width: 80,
+  },
+  ideaBody: {
+    color: colors.stone400,
+    fontFamily: fontFamilies.displayMedium,
+    fontSize: 14,
+    letterSpacing: -0.08,
+  },
+  ideaCopy: { gap: 2 },
+  panel: {
+    backgroundColor: colors.stone950,
+    borderTopLeftRadius: 40,
+    borderTopRightRadius: 40,
+    gap: spacing.md,
+    paddingHorizontal: 30,
+    paddingTop: spacing.xxl,
+  },
+  section: { gap: spacing.md, width: "100%" },
+  sectionTitle: {
+    ...typography.titleSemibold16,
+    color: colors.stone300,
     fontSize: 18,
-    fontWeight: "600",
-    lineHeight: 22,
-  },
-  deleteRow: {
-    borderColor: "#FF5A65",
-  },
-  deleteLabel: {
-    color: "#FF5A65",
-  },
-  rowDisabled: {
-    opacity: 0.55,
+    lineHeight: 28,
   },
 });

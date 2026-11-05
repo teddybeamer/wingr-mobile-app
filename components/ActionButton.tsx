@@ -7,6 +7,7 @@ import { colors, radii, spacing, typography } from "../theme";
 // between label and icon. The height is fixed by padding and a 44 px minimum,
 // so it does not change with screen width.
 export function ActionButton({
+  accessibilityHint,
   accessibilityLabel,
   disabled = false,
   label,
@@ -16,6 +17,7 @@ export function ActionButton({
   trailing,
   variant,
 }: {
+  accessibilityHint?: string;
   accessibilityLabel?: string;
   disabled?: boolean;
   label: string;
@@ -24,12 +26,14 @@ export function ActionButton({
   // "compact" is the 14 px label used inside the dialogs.
   size?: "compact" | "default";
   trailing?: ReactNode;
-  variant: "primary" | "secondary";
+  variant: "primary" | "secondary" | "danger";
 }) {
   const isPrimary = variant === "primary";
+  const isDanger = variant === "danger";
 
   return (
     <TouchableOpacity
+      accessibilityHint={accessibilityHint}
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityRole="button"
       accessibilityState={{ disabled }}
@@ -38,7 +42,11 @@ export function ActionButton({
       onPress={onPress}
       style={[
         styles.button,
-        isPrimary ? styles.primary : styles.secondary,
+        isPrimary
+          ? styles.primary
+          : isDanger
+            ? styles.danger
+            : styles.secondary,
         disabled && styles.disabled,
       ]}
     >
@@ -49,7 +57,11 @@ export function ActionButton({
         style={[
           styles.label,
           size === "compact" && styles.labelCompact,
-          isPrimary ? styles.labelPrimary : styles.labelSecondary,
+          isPrimary
+            ? styles.labelPrimary
+            : isDanger
+              ? styles.labelDanger
+              : styles.labelSecondary,
         ]}
       >
         {label}
@@ -70,9 +82,11 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     width: "100%",
   },
+  danger: { backgroundColor: colors.red900 },
   disabled: { opacity: 0.6 },
   label: { ...typography.titleSemibold16, flexShrink: 1 },
   labelCompact: { ...typography.buttonLabel14 },
+  labelDanger: { color: colors.red100 },
   labelPrimary: { color: colors.stone50 },
   labelSecondary: { color: colors.stone200 },
   primary: { backgroundColor: colors.primaryBlue },

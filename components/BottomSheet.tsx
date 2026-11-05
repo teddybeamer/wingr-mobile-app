@@ -14,6 +14,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useWidthOverride } from "../hooks/useResponsive";
 
 export function BottomSheet({
   children,
@@ -24,6 +25,8 @@ export function BottomSheet({
   titleColor = "#F5F5F5",
   showHandle = true,
   showCloseButton = false,
+  hideTitle = false,
+  handleStyle,
   panelStyle,
   bottomPadding = 34,
 }: {
@@ -35,10 +38,14 @@ export function BottomSheet({
   titleColor?: string;
   showHandle?: boolean;
   showCloseButton?: boolean;
+  // The title is not drawn but stays the sheet's accessibility label.
+  hideTitle?: boolean;
+  handleStyle?: StyleProp<ViewStyle>;
   panelStyle?: StyleProp<ViewStyle>;
   bottomPadding?: number;
 }) {
   const { height: windowHeight } = useWindowDimensions();
+  const previewWidth = useWidthOverride();
   const insets = useSafeAreaInsets();
   const [isPresented, setIsPresented] = useState(visible);
   const isPresentedRef = useRef(visible);
@@ -139,10 +146,15 @@ export function BottomSheet({
           style={StyleSheet.absoluteFill}
         />
         <Animated.View
+          accessibilityLabel={hideTitle ? title : undefined}
           accessibilityViewIsModal
           onAccessibilityEscape={onClose}
           style={[
             styles.panelAnimation,
+            previewWidth !== null && {
+              alignSelf: "center",
+              width: previewWidth,
+            },
             {
               maxHeight: windowHeight - insets.top,
               transform: [{ translateY: sheetTranslateY }],
@@ -159,7 +171,7 @@ export function BottomSheet({
               { paddingBottom: Math.max(bottomPadding, insets.bottom) },
             ]}
           >
-            {showHandle ? <View style={styles.handle} /> : null}
+            {showHandle ? <View style={[styles.handle, handleStyle]} /> : null}
             {showCloseButton ? (
               <Pressable
                 accessibilityLabel={`Close ${title} sheet`}
@@ -171,16 +183,18 @@ export function BottomSheet({
                 <Text style={styles.closeButtonText}>×</Text>
               </Pressable>
             ) : null}
-            <Text
-              accessibilityRole="header"
-              style={[
-                styles.title,
-                showCloseButton && styles.titleWithClose,
-                { color: titleColor },
-              ]}
-            >
-              {title}
-            </Text>
+            {hideTitle ? null : (
+              <Text
+                accessibilityRole="header"
+                style={[
+                  styles.title,
+                  showCloseButton && styles.titleWithClose,
+                  { color: titleColor },
+                ]}
+              >
+                {title}
+              </Text>
+            )}
             {children}
           </ScrollView>
         </Animated.View>
