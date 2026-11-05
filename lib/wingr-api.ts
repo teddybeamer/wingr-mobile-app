@@ -13,7 +13,10 @@ import {
 const BACKEND_TIMEOUT_MS = 35_000;
 
 const ACCESS_ERROR_CODES = [
+  "ai_consent_required",
+  "ai_provider_not_disclosed",
   "authentication_verification_unavailable",
+  "consent_verification_unavailable",
   "subscription_required",
   "subscription_verification_unavailable",
   "unauthorized",

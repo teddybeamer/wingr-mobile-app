@@ -61,6 +61,7 @@ import {
   type LaunchRoute,
 } from "./lib/launch-routing";
 import { LaunchSplash } from "./components/LaunchSplash";
+import { AiConsentProvider, useAiConsent } from "./components/AiConsentProvider";
 import { fontFamilies } from "./theme";
 import { ChooseScreenshotScreen } from "./screens/ChooseScreenshotScreen";
 import { HomeScreen } from "./screens/HomeScreen";
@@ -165,8 +166,11 @@ export default function App() {
 
   return (
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-      <WingrApp />
-      {DevPreviewLauncher ? <DevPreviewLauncher /> : null}
+      <AiConsentProvider>
+        <WingrApp />
+        {/* Inside the provider: previews render components that use consent. */}
+        {DevPreviewLauncher ? <DevPreviewLauncher /> : null}
+      </AiConsentProvider>
       {showLaunchSplash ? (
         <LaunchSplash onFinish={() => setShowLaunchSplash(false)} />
       ) : null}
@@ -198,6 +202,7 @@ function WingrApp() {
   const [uploadRevealToken, setUploadRevealToken] = useState<number | null>(
     null,
   );
+  const { ensureConsent, invalidate: invalidateAiConsent } = useAiConsent();
   const conversation = useConversationFlow("pro");
   const {
     error,
@@ -402,6 +407,20 @@ function WingrApp() {
     }
   };
 
+  // Asks for AI consent when it is missing. Nothing is sent without it (the
+  // server refuses), and a declined or unverifiable answer leaves the user where
+  // they are with the rest of the app working.
+  const requireAiConsent = async () => {
+    const consent = await ensureConsent();
+    if (consent === "unavailable") {
+      Alert.alert(
+        "Couldn’t check your AI sharing choice",
+        "Please check your connection and try again.",
+      );
+    }
+    return consent === "granted";
+  };
+
   const handleCheckSelectedScreenshot = async () => {
     if (__DEV__) {
       console.info("[Wingr flow] check vibe pressed", {
@@ -414,6 +433,8 @@ function WingrApp() {
       await handlePickScreenshotForUpload();
       return;
     }
+
+    if (!(await requireAiConsent())) return;
 
     setScreen("analyzing");
     const result = await conversation.analyzeScreenshot();
@@ -433,6 +454,7 @@ function WingrApp() {
   };
 
   const handleRefreshReplies = async () => {
+    if (!(await requireAiConsent())) return false;
     return refreshReplies();
   };
 

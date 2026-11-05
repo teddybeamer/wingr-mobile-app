@@ -17,7 +17,7 @@ type PersistedOnboardingReplyResumeStep = "rating" | "testimonials";
 
 export type OnboardingReplyResumeStep = "testimonials";
 
-async function getDefaultStorage(): Promise<OnboardingProgressStorage> {
+export async function getDefaultStorage(): Promise<OnboardingProgressStorage> {
   if (typeof localStorage !== "undefined") {
     return {
       getItem: async (key) => localStorage.getItem(key),

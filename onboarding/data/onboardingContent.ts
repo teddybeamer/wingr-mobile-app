@@ -68,13 +68,15 @@ export const onboardingContent: Record<
   },
   privacy: {
     id: "privacy",
-    title: "Your conversations stay private",
+    title: "Your chats stay yours.",
     titleParts: [
-      { text: "Your conversations " },
-      { color: "blue", text: "stay private" },
+      { text: "Your chats " },
+      { color: "blue", text: "stay yours." },
     ],
-    body: "Your screenshot is securely processed to analyze your conversation and generate replies. WiNGR doesn’t save your screenshots or conversations, and they’re not used to train AI models.",
-    ctaLabel: "Continue with WiNGR",
+    // The consent text itself lives in lib/ai-consent (shared with the dialog
+    // and tied to what the server enforces); this body is only a fallback.
+    body: "WiNGR uses AI to give you the best possible experience and dating advice.",
+    ctaLabel: "I Accept",
   },
   uploadScreenshot: {
     id: "uploadScreenshot",
