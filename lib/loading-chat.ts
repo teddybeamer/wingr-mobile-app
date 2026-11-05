@@ -5,7 +5,6 @@
 // only runs timers and draws it.
 
 export const LOADING_CHAT_MESSAGES = [
-  "Hey man",
   "Let’s cook something up...",
   "Reading the vibe...",
   "Finding your opening...",
