@@ -241,17 +241,18 @@ assert_equal 0 "$(attempts_of "$SETTLE_INVALID_USER")" "a counted invalid screen
 run_sql "
   set session_replication_role = replica;
   insert into public.ai_generation_attempts (user_id, attempted_at)
-  select '$SETTLE_LIMIT_USER', now() - interval '1 day' from generate_series(1, 499);
+  select '$SETTLE_LIMIT_USER', now() - interval '1 hour' from generate_series(1, 199);
 " >/dev/null
+# Fair use: at most 200 settled generations in any rolling 24 hours.
 run_parallel_reserves settle-limit "$SETTLE_LIMIT_USER" 20
 assert_equal 1 "$(count_prefix allowed "$OUTPUT_DIR"/settle-limit-*)" "one near-limit reservation is allowed"
 LIMIT_LEASE="$(cat "$OUTPUT_DIR"/settle-limit-* | awk -F'|' '$1 == "allowed" { print $2 }')"
-assert_equal 499 "$(attempts_of "$SETTLE_LIMIT_USER")" "a near-limit reservation has not charged yet"
+assert_equal 199 "$(attempts_of "$SETTLE_LIMIT_USER")" "a near-limit reservation has not charged yet"
 settle "$SETTLE_LIMIT_USER" "$LIMIT_LEASE" success >/dev/null
-assert_equal 500 "$(attempts_of "$SETTLE_LIMIT_USER")" "settling the near-limit generation records attempt 500"
+assert_equal 200 "$(attempts_of "$SETTLE_LIMIT_USER")" "settling the near-limit generation records attempt 200"
 run_parallel_reserves settle-limit-after "$SETTLE_LIMIT_USER" 10
-assert_equal 10 "$(count_prefix usage_limit "$OUTPUT_DIR"/settle-limit-after-*)" "all reservations at 500 are usage-limited"
-assert_equal 500 "$(attempts_of "$SETTLE_LIMIT_USER")" "a limited burst never pushes past 500"
+assert_equal 10 "$(count_prefix usage_limit "$OUTPUT_DIR"/settle-limit-after-*)" "all reservations at the fair use limit are usage-limited"
+assert_equal 200 "$(attempts_of "$SETTLE_LIMIT_USER")" "a limited burst never pushes past 200"
 
 for index in $(seq 1 10); do
   lease="$(reserve "$SETTLE_SESSIONS_USER" | cut -d'|' -f2)"

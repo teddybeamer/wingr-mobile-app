@@ -290,7 +290,7 @@ select is(
 );
 
 -- Older attempts do not count: the former plan limits are gone.
-select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000608', true);
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000610', true);
 insert into public.ai_generation_attempts (user_id, attempted_at)
 select auth.uid(), now() - interval '25 hours' from generate_series(1, 600);
 select is(
