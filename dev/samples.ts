@@ -4,6 +4,8 @@ const SAMPLES = {
   portrait: require("./assets/sample-chat.png"),
   tall: require("./assets/sample-tall.png"),
   wide: require("./assets/sample-wide.png"),
+  // A dating profile card, for Start Conversation.
+  profile: require("./assets/sample-profile.jpg"),
 };
 
 export type SampleName = keyof typeof SAMPLES;

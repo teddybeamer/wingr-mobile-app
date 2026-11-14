@@ -38,6 +38,10 @@ import { OnboardingFlow } from "./onboarding/OnboardingFlow";
 import { BackButton } from "./components/BackButton";
 import { HomeMoreSheet } from "./components/HomeMoreSheet";
 import { useConversationFlow } from "./hooks/useConversationFlow";
+import { useOpenerFlow } from "./hooks/useOpenerFlow";
+import { TheAngleCard } from "./components/conversation/TheAngleCard";
+import { START_CONVERSATION_HERO_IMAGE } from "./lib/choose-hero";
+import { PROFILE_LOADING_CHAT_MESSAGES } from "./lib/loading-chat";
 import { getReplyErrorPresentation } from "./lib/reply-limit";
 import { ReplyLoadingScreen } from "./components/conversation/ReplyLoadingScreen";
 import { ScreenshotErrorDialog } from "./components/conversation/ScreenshotErrorDialog";
@@ -61,7 +65,10 @@ import {
   type LaunchRoute,
 } from "./lib/launch-routing";
 import { LaunchSplash } from "./components/LaunchSplash";
-import { AiConsentProvider, useAiConsent } from "./components/AiConsentProvider";
+import {
+  AiConsentProvider,
+  useAiConsent,
+} from "./components/AiConsentProvider";
 import { fontFamilies } from "./theme";
 import { ChooseScreenshotScreen } from "./screens/ChooseScreenshotScreen";
 import { HomeScreen } from "./screens/HomeScreen";
@@ -115,7 +122,12 @@ type Screen =
   | "choose"
   | "upload"
   | "analyzing"
-  | "replies";
+  | "replies"
+  // Start Conversation
+  | "startChoose"
+  | "startUpload"
+  | "startAnalyzing"
+  | "openers";
 
 type BootErrorBoundaryProps = {
   children: ReactNode;
@@ -204,6 +216,7 @@ function WingrApp() {
   );
   const { ensureConsent, invalidate: invalidateAiConsent } = useAiConsent();
   const conversation = useConversationFlow("pro");
+  const opener = useOpenerFlow();
   const {
     error,
     generatedReplies,
@@ -227,6 +240,11 @@ function WingrApp() {
     if (error?.kind === "permission")
       Alert.alert("Photo access needed", error.message);
   }, [error?.id]);
+
+  useEffect(() => {
+    if (opener.error?.kind === "permission")
+      Alert.alert("Photo access needed", opener.error.message);
+  }, [opener.error?.id]);
 
   useEffect(() => {
     let mounted = true;
@@ -449,6 +467,33 @@ function WingrApp() {
     }
   };
 
+  // Start Conversation: the same steps as Get Replies, with a profile screenshot.
+  const handlePickProfileScreenshot = async () => {
+    const screenshotUri = await opener.pickScreenshot();
+    if (!screenshotUri) return;
+    playUploadReveal();
+    setScreen("startUpload");
+  };
+
+  const handleGetStarters = async () => {
+    if (!opener.selectedScreenshotUri) {
+      await handlePickProfileScreenshot();
+      return;
+    }
+    if (!(await requireAiConsent())) return;
+
+    setScreen("startAnalyzing");
+    const result = await opener.generateStarters();
+    if (result === "cancelled") return;
+    // Screenshot Chosen shows the error, if any.
+    setScreen(result === "ready" ? "openers" : "startUpload");
+  };
+
+  const handleGetAnotherOpener = async () => {
+    if (!(await requireAiConsent())) return false;
+    return opener.getAnotherOpener();
+  };
+
   const handleToneChange = async (tone: ReplyTone) => {
     return conversation.changeTone(tone);
   };
@@ -462,6 +507,7 @@ function WingrApp() {
     launchGenerationRef.current += 1;
     await clearAccountLocalState();
     conversation.reset();
+    opener.reset();
     setAuthenticatedUserId(null);
     setOnboardingInitialStep(undefined);
     setLandingRevealToken(null);
@@ -500,6 +546,7 @@ function WingrApp() {
           {screen === "landing" ? (
             <HomeScreen
               onGetReplies={() => setScreen("choose")}
+              onStartConversation={() => setScreen("startChoose")}
               onAccountDeleted={handleAccountDeleted}
               onRevealStarted={(revealToken) => {
                 setLandingRevealToken((currentToken) =>
@@ -568,6 +615,71 @@ function WingrApp() {
               selectedTone={selectedTone}
             />
           ) : null}
+          {screen === "startChoose" ? (
+            <ChooseScreenshotScreen
+              body="Upload a screenshot of their profile. We’ll find something worth starting a conversation about."
+              heading="Let’s break the ice"
+              heroImage={START_CONVERSATION_HERO_IMAGE}
+              onBack={() => {
+                playLandingReveal();
+                setScreen("landing");
+              }}
+              onChooseScreenshot={handlePickProfileScreenshot}
+              title="Start Conversation"
+            />
+          ) : null}
+
+          {screen === "startUpload" ? (
+            <ScreenshotChosenScreen
+              continueLabel="Get Conversation Starters"
+              errorMessage={
+                opener.error?.kind === "starters"
+                  ? getReplyErrorPresentation(opener.error).message
+                  : null
+              }
+              onBack={() => setScreen("startChoose")}
+              onChangeScreenshot={handlePickProfileScreenshot}
+              onGetReplies={handleGetStarters}
+              onRevealStarted={(revealToken) => {
+                setUploadRevealToken((currentToken) =>
+                  currentToken === revealToken ? null : currentToken,
+                );
+              }}
+              revealToken={uploadRevealToken}
+              selectedScreenshotUri={opener.selectedScreenshotUri}
+              title="Start Conversation"
+            />
+          ) : null}
+
+          {screen === "startAnalyzing" ? (
+            <ReplyLoadingScreen
+              accessibilityLabel="WiNGR is reading their profile"
+              messages={PROFILE_LOADING_CHAT_MESSAGES}
+            />
+          ) : null}
+
+          {screen === "openers" && opener.angle ? (
+            <RepliesScreen
+              actionLabel="Get Opener"
+              copyEvent="opener_copied"
+              insight={<TheAngleCard angle={opener.angle} />}
+              isGeneratingReplies={opener.isGeneratingOpener}
+              lastGeneratedReplyId={opener.lastGeneratedOpenerId}
+              onBack={() => {
+                playUploadReveal();
+                setScreen("startUpload");
+              }}
+              onDismissReplyError={opener.clearError}
+              onRefreshReplies={handleGetAnotherOpener}
+              onToneChange={opener.changeTone}
+              replies={opener.openers}
+              replyError={opener.error?.kind === "opener" ? opener.error : null}
+              selectedScreenshotUri={opener.selectedScreenshotUri}
+              selectedTone={opener.selectedTone}
+              title="Start Conversation"
+            />
+          ) : null}
+
           {/* "Got it" just closes: Screenshot Chosen has Change Screenshot. */}
           <ScreenshotErrorDialog error={error} />
         </SafeAreaView>

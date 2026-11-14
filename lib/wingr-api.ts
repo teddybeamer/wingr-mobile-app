@@ -6,6 +6,10 @@ import {
   type UnusableScreenshotReason,
 } from "../supabase/functions/_shared_v2/conversation";
 import {
+  isUnusableProfileReason,
+  type UnusableProfileReason,
+} from "../supabase/functions/_shared_v2/opener";
+import {
   getSupabaseRequestAuthentication,
   type SupabaseRequestAuthentication,
 } from "./supabase-auth";
@@ -48,6 +52,8 @@ function kindForResponse(status: number, code: BackendErrorCode | undefined) {
 
 export class ConversationApiError extends ConversationError {
   readonly failureReason?: UnusableScreenshotReason;
+  // Start Conversation's reason for an unusable profile screenshot.
+  readonly profileFailureReason?: UnusableProfileReason;
 
   constructor(
     kind: ConversationErrorKind,
@@ -59,6 +65,9 @@ export class ConversationApiError extends ConversationError {
     super(kind, undefined, undefined, retryAt);
     if (kind === "unusable_screenshot") {
       this.failureReason = isUnusableScreenshotReason(reason)
+        ? reason
+        : "unknown";
+      this.profileFailureReason = isUnusableProfileReason(reason)
         ? reason
         : "unknown";
     }

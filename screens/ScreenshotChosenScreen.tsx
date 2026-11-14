@@ -27,7 +27,10 @@ const STAGE_BACKDROP = require("../assets/images/redesign/choose/stage-backdrop.
 // so its shadow has space (as in the Figma stage).
 const STAGE_PADDING = { bottom: 26, horizontal: 16, top: 18 } as const;
 
+// The chosen screenshot with the next step. Get Replies uses the defaults;
+// Start Conversation passes its own title and button label.
 export function ScreenshotChosenScreen({
+  continueLabel = "Get Replies",
   errorMessage,
   onBack,
   onChangeScreenshot,
@@ -35,7 +38,9 @@ export function ScreenshotChosenScreen({
   onRevealStarted,
   revealToken,
   selectedScreenshotUri,
+  title = "Get Replies",
 }: {
+  continueLabel?: string;
   errorMessage?: string | null;
   onBack: () => void;
   onChangeScreenshot: () => void;
@@ -43,6 +48,7 @@ export function ScreenshotChosenScreen({
   onRevealStarted: (revealToken: number) => void;
   revealToken: number | null;
   selectedScreenshotUri: string | null;
+  title?: string;
 }) {
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
   // The preview shows the screenshot itself while it is open, so this copy is
@@ -178,7 +184,7 @@ export function ScreenshotChosenScreen({
   return (
     <View style={styles.screen}>
       <ScreenHeader
-        center={<ScreenHeaderTitle>Get Replies</ScreenHeaderTitle>}
+        center={<ScreenHeaderTitle>{title}</ScreenHeaderTitle>}
         left={<HeaderBackButton onPress={onBack} />}
       />
       <StageColumn
@@ -202,7 +208,7 @@ export function ScreenshotChosenScreen({
               variant="secondary"
             />
             <ActionButton
-              label="Get Replies"
+              label={continueLabel}
               onPress={() => {
                 void Haptics.impactAsync(
                   Haptics.ImpactFeedbackStyle.Light,

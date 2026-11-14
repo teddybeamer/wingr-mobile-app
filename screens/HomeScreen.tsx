@@ -56,12 +56,14 @@ const REVEAL_STAGGER_MS = 70;
 export function HomeScreen({
   onAccountDeleted,
   onGetReplies,
+  onStartConversation,
   onRevealStarted,
   revealToken,
   showStartConversation = START_CONVERSATION_ENABLED,
 }: {
   onAccountDeleted: () => Promise<void>;
   onGetReplies: () => void;
+  onStartConversation?: () => void;
   onRevealStarted: (revealToken: number) => void;
   revealToken: number | null;
   showStartConversation?: boolean;
@@ -210,9 +212,19 @@ export function HomeScreen({
           <HomeCard
             accent={colors.blue400}
             shareHeight={shareHeight}
-            disabled
+            disabled={!isInteractive}
             icon={<Play color={colors.blue400} size={iconSizes.lg} />}
             image={START_CONVERSATION_IMAGE}
+            onPress={
+              onStartConversation
+                ? () => {
+                    void Haptics.impactAsync(
+                      Haptics.ImpactFeedbackStyle.Light,
+                    ).catch(() => {});
+                    onStartConversation();
+                  }
+                : undefined
+            }
             revealStyle={getRevealStyle(reveals[0])}
             subtitleAccent="UPLOAD THEIR PROFILE."
             subtitleRest="WE’LL HELP YOU BREAK THE ICE."

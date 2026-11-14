@@ -339,10 +339,41 @@ export function VibeCheckCard({
 }) {
   if (presentation === "inlineExpandable") {
     return (
-      <InlineExpandableVibeCheckCard
+      <ExpandableInsightCard
+        accessibilityName="vibe check breakdown"
         defaultExpanded={defaultExpanded}
-        vibeCheck={vibeCheck}
-      />
+        emoji="👀"
+        summary={vibeCheck.summary || "WiNGR read the vibe."}
+        title="Vibe Check"
+      >
+        <View style={styles.inlineVibeMetrics}>
+          <InlineVibeMetric
+            icon={Heart}
+            label="Their interest"
+            value={vibeCheck.interestLevel || "Unclear"}
+            variant="interest"
+            withMeter
+          />
+          <InlineVibeMetric
+            icon={Bolt}
+            label="Conversation energy"
+            value={vibeCheck.conversationEnergy}
+            variant="energy"
+          />
+          <InlineVibeMetric
+            icon={ShieldWarning}
+            label="Risk"
+            value={vibeCheck.risk || "Keep it natural"}
+            variant="risk"
+          />
+          <InlineVibeMetric
+            icon={StarsMinimalistic}
+            label="Best move"
+            value={`${getToneLabel(vibeCheck.bestTone)} reply`}
+            variant="move"
+          />
+        </View>
+      </ExpandableInsightCard>
     );
   }
 
@@ -415,12 +446,25 @@ function getVibeExpandedGlow(card: { height: number; width: number }) {
   };
 }
 
-function InlineExpandableVibeCheckCard({
-  defaultExpanded,
-  vibeCheck,
+// The insight card at the top of a result (Vibe Check in Get Replies, The Angle
+// in Start Conversation): a header with an emoji and a title, one line of
+// summary while closed, and the whole summary plus `children` once opened, over
+// a soft glow sized from the open card.
+export function ExpandableInsightCard({
+  accessibilityName,
+  children,
+  defaultExpanded = false,
+  emoji,
+  summary,
+  title,
 }: {
-  defaultExpanded: boolean;
-  vibeCheck: VibeCheck;
+  // Read as "Show/Hide <accessibilityName>".
+  accessibilityName: string;
+  children: ReactNode;
+  defaultExpanded?: boolean;
+  emoji: string;
+  summary: string;
+  title: string;
 }) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   // The card's size while it is open; the glow is drawn from it.
@@ -461,9 +505,7 @@ function InlineExpandableVibeCheckCard({
 
   return (
     <ReanimatedPressable
-      accessibilityLabel={
-        isExpanded ? "Hide vibe check breakdown" : "Show vibe check breakdown"
-      }
+      accessibilityLabel={`${isExpanded ? "Hide" : "Show"} ${accessibilityName}`}
       accessibilityRole="button"
       accessibilityState={{ expanded: isExpanded }}
       layout={VIBE_CHECK_LAYOUT_TRANSITION}
@@ -499,9 +541,9 @@ function InlineExpandableVibeCheckCard({
         <View style={styles.inlineVibeCardContent}>
           <View style={styles.inlineVibeHeader}>
             <View style={styles.inlineVibeEmojiChip}>
-              <Text style={styles.inlineVibeEmoji}>👀</Text>
+              <Text style={styles.inlineVibeEmoji}>{emoji}</Text>
             </View>
-            <Text style={styles.inlineVibeTitle}>Vibe Check</Text>
+            <Text style={styles.inlineVibeTitle}>{title}</Text>
             <View style={styles.inlineVibeChevronChip}>
               <Reanimated.View
                 style={[styles.inlineVibeChevronIcon, animatedChevronStyle]}
@@ -516,7 +558,7 @@ function InlineExpandableVibeCheckCard({
             numberOfLines={isExpanded ? undefined : 1}
             style={styles.inlineVibeSummary}
           >
-            {vibeCheck.summary || "WiNGR read the vibe."}
+            {summary}
           </Text>
 
           {isExpanded ? (
@@ -524,33 +566,7 @@ function InlineExpandableVibeCheckCard({
               entering={VIBE_CHECK_METRICS_ENTERING}
               exiting={VIBE_CHECK_METRICS_EXITING}
             >
-              <View style={styles.inlineVibeMetrics}>
-                <InlineVibeMetric
-                  icon={Heart}
-                  label="Their interest"
-                  value={vibeCheck.interestLevel || "Unclear"}
-                  variant="interest"
-                  withMeter
-                />
-                <InlineVibeMetric
-                  icon={Bolt}
-                  label="Conversation energy"
-                  value={vibeCheck.conversationEnergy}
-                  variant="energy"
-                />
-                <InlineVibeMetric
-                  icon={ShieldWarning}
-                  label="Risk"
-                  value={vibeCheck.risk || "Keep it natural"}
-                  variant="risk"
-                />
-                <InlineVibeMetric
-                  icon={StarsMinimalistic}
-                  label="Best move"
-                  value={`${getToneLabel(vibeCheck.bestTone)} reply`}
-                  variant="move"
-                />
-              </View>
+              {children}
             </Reanimated.View>
           ) : null}
         </View>
@@ -799,6 +815,8 @@ type RepliesContentProps = {
   presentation?: RepliesContentPresentation;
   showControls?: boolean;
   showTypingIndicator?: boolean;
+  // Analytics event sent when a card is copied.
+  copyEvent?: string;
 };
 
 export function RepliesContent({
@@ -814,6 +832,7 @@ export function RepliesContent({
   showControls = true,
   showTypingIndicator = false,
   maxReplies,
+  copyEvent = "reply_copied",
 }: RepliesContentProps) {
   const [copiedReplyId, setCopiedReplyId] = useState<string | null>(null);
   const [copyAnimationVersion, setCopyAnimationVersion] = useState(0);
@@ -834,7 +853,7 @@ export function RepliesContent({
     if (didCopy) {
       setCopiedReplyId(reply.id);
       setCopyAnimationVersion((version) => version + 1);
-      posthog.capture("reply_copied", { tone: reply.tone });
+      posthog.capture(copyEvent, { tone: reply.tone });
     }
   };
 
@@ -886,6 +905,8 @@ export type ReplyActionBarProps = {
   onReplyGenerated?: () => void;
   onToneChange: (tone: ReplyTone) => Promise<boolean>;
   selectedTone: ReplyTone;
+  // The sticky button's label ("Get New Reply", "Get Opener").
+  stickyLabel?: string;
   variant?: "inline" | "sticky";
 };
 
@@ -895,6 +916,7 @@ export function ReplyActionBar({
   onReplyGenerated,
   onToneChange,
   selectedTone,
+  stickyLabel = "Get New Reply",
   variant = "sticky",
 }: ReplyActionBarProps) {
   const [isToneSheetOpen, setIsToneSheetOpen] = useState(false);
@@ -926,11 +948,7 @@ export function ReplyActionBar({
         <AnimatedTouchableOpacity
           activeOpacity={0.88}
           accessibilityLabel={
-            isGenerating
-              ? "Generating a new reply"
-              : isSticky
-                ? "Get new reply"
-                : "New reply"
+            isGenerating ? "Generating" : isSticky ? stickyLabel : "New reply"
           }
           accessibilityRole="button"
           disabled={isGenerating}
@@ -969,7 +987,7 @@ export function ReplyActionBar({
                     : styles.newRepliesButtonText
                 }
               >
-                {isSticky ? "Get New Reply" : "New reply"}
+                {isSticky ? stickyLabel : "New reply"}
               </Text>
             </>
           )}

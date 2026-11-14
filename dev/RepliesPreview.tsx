@@ -9,7 +9,7 @@ import { RepliesScreen } from "../screens/RepliesScreen";
 import { MOCK_REPLIES, MOCK_VIBE_CHECK } from "./mocks";
 import { sampleScreenshotUri } from "./samples";
 
-function PreviewPage({ children }: { children: React.ReactNode }) {
+export function PreviewPage({ children }: { children: React.ReactNode }) {
   return (
     <View style={{ backgroundColor: colors.background, flex: 1 }}>
       <ScrollView

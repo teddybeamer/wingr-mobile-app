@@ -7,6 +7,13 @@ import { FoundationsPreview } from "./FoundationsPreview";
 import { HomePreview } from "./HomePreview";
 import { LoadingPreview } from "./LoadingPreview";
 import { MoreSheetPreview } from "./MoreSheetPreview";
+import {
+  OpenersScreenPreview,
+  StartChoosePreview,
+  StartChosenPreview,
+  StartLoadingPreview,
+  TheAnglePreview,
+} from "./StartConversationPreview";
 import { ToneSheetPreview } from "./ToneSheetPreview";
 import { PreviewModalPreview } from "./PreviewModalPreview";
 import {
@@ -124,6 +131,53 @@ export const PREVIEWS: PreviewEntry[] = [
     id: "error-onboarding",
     title: "Error dialog · onboarding (Choose New Screenshot)",
     render: () => <ErrorDialogPreview onboarding reason="unreadable_image" />,
+  },
+  {
+    id: "start-choose",
+    title: "Start Conversation · choose screenshot",
+    render: () => <StartChoosePreview />,
+  },
+  {
+    id: "start-chosen",
+    title: "Start Conversation · screenshot chosen",
+    render: () => <StartChosenPreview />,
+  },
+  {
+    id: "start-chosen-error",
+    title: "Start Conversation · not a profile",
+    render: () => (
+      <StartChosenPreview errorMessage="WiNGR couldn’t find a dating profile in that screenshot. Try a screenshot of their profile." />
+    ),
+  },
+  {
+    id: "start-loading",
+    title: "Start Conversation · loading",
+    render: () => <StartLoadingPreview />,
+  },
+  {
+    id: "angle-collapsed",
+    title: "The Angle · collapsed",
+    render: () => <TheAnglePreview expanded={false} />,
+  },
+  {
+    id: "angle-expanded",
+    title: "The Angle · expanded, many topics",
+    render: () => <TheAnglePreview expanded manyTopics />,
+  },
+  {
+    id: "openers",
+    title: "Start Conversation · openers",
+    render: () => <OpenersScreenPreview />,
+  },
+  {
+    id: "openers-generating",
+    title: "Start Conversation · getting an opener",
+    render: () => <OpenersScreenPreview generating />,
+  },
+  {
+    id: "openers-error",
+    title: "Start Conversation · opener error",
+    render: () => <OpenersScreenPreview error />,
   },
   {
     id: "more-sheet",

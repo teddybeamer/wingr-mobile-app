@@ -1,5 +1,5 @@
 import { BlurView } from "expo-blur";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import {
   Image,
   Platform,
@@ -23,6 +23,7 @@ import {
   VibeCheckCard,
 } from "../components/conversation/ConversationContent";
 import type { ConversationFlowError } from "../hooks/useConversationFlow";
+import type { OpenerFlowError } from "../hooks/useOpenerFlow";
 import { getReplyErrorPresentation } from "../lib/reply-limit";
 import { colors, layout, radii, spacing, surfaces } from "../theme";
 import type { ReplyTone, SuggestedReply, VibeCheck } from "../types/wingr";
@@ -42,7 +43,13 @@ const REPLIES_SCREEN = {
   revealGap: 16,
 };
 
+// The result of a flow: the screenshot, an insight card, the cards and the
+// sticky action bar. Get Replies passes a Vibe Check; Start Conversation passes
+// The Angle (`insight`), its title and its own labels.
 export function RepliesScreen({
+  actionLabel,
+  copyEvent,
+  insight,
   isGeneratingReplies,
   lastGeneratedReplyId,
   onBack,
@@ -53,8 +60,13 @@ export function RepliesScreen({
   replyError,
   selectedScreenshotUri,
   selectedTone,
+  title = "Get Replies",
   vibeCheck,
 }: {
+  actionLabel?: string;
+  copyEvent?: string;
+  // Replaces the Vibe Check card.
+  insight?: ReactNode;
   isGeneratingReplies: boolean;
   lastGeneratedReplyId: string | null;
   onBack: () => void;
@@ -62,10 +74,11 @@ export function RepliesScreen({
   onRefreshReplies: () => Promise<boolean>;
   onToneChange: (tone: ReplyTone) => Promise<boolean>;
   replies: SuggestedReply[];
-  replyError: ConversationFlowError | null;
+  replyError: ConversationFlowError | OpenerFlowError | null;
   selectedScreenshotUri: string | null;
   selectedTone: ReplyTone;
-  vibeCheck: VibeCheck;
+  title?: string;
+  vibeCheck?: VibeCheck;
 }) {
   const errorPresentation = replyError
     ? getReplyErrorPresentation(replyError)
@@ -166,7 +179,7 @@ export function RepliesScreen({
   return (
     <View style={styles.screen}>
       <ScreenHeader
-        center={<ScreenHeaderTitle>Get Replies</ScreenHeaderTitle>}
+        center={<ScreenHeaderTitle>{title}</ScreenHeaderTitle>}
         left={<HeaderBackButton onPress={onBack} />}
       />
 
@@ -223,11 +236,15 @@ export function RepliesScreen({
               </View>
             </View>
           ) : null}
-          <VibeCheckCard
-            presentation="inlineExpandable"
-            vibeCheck={vibeCheck}
-          />
+          {insight ??
+            (vibeCheck ? (
+              <VibeCheckCard
+                presentation="inlineExpandable"
+                vibeCheck={vibeCheck}
+              />
+            ) : null)}
           <RepliesContent
+            copyEvent={copyEvent}
             isGenerating={isGeneratingReplies}
             lastGeneratedReplyId={lastGeneratedReplyId}
             onContentLayout={(layout) => {
@@ -282,6 +299,7 @@ export function RepliesScreen({
           onRefreshReplies={onRefreshReplies}
           onToneChange={onToneChange}
           selectedTone={selectedTone}
+          stickyLabel={actionLabel}
         />
       </View>
 

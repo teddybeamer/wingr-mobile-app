@@ -14,7 +14,8 @@ export function getReplyErrorPresentation(error: {
     };
   }
   const retryAt = parseRetryAt(error.retryAt);
-  let message = "You’ve reached your reply limit. Please check back later.";
+  // Use is unlimited; this is the fair use guard (200 generations per 24 hours).
+  let message = "You’ve used WiNGR a lot today. Please check back later.";
   if (retryAt) {
     const date = new Date(Math.ceil(Date.parse(retryAt) / 60_000) * 60_000);
     const day = new Intl.DateTimeFormat("en-GB", {
@@ -26,10 +27,10 @@ export function getReplyErrorPresentation(error: {
       minute: "2-digit",
       hourCycle: "h23",
     }).format(date);
-    message = `You’ve reached your reply limit. You’ll get more replies on ${day} at ${time}.`;
+    message = `You’ve used WiNGR a lot today. You can keep going on ${day} at ${time}.`;
   }
   return {
-    title: "Reply limit reached",
+    title: "Time for a short break",
     message,
     primaryLabel: "Got it",
     dismiss: true,

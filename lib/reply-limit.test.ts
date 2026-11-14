@@ -15,8 +15,8 @@ test("limit notice uses local English date/time, rounds up, and dismisses", (t) 
     ["2026-12-31T22:59:59Z", "1 January at 00:00"],
   ]) {
     assert.deepEqual(getReplyErrorPresentation({ code: "usage_limit", message: "old message", retryAt }), {
-      title: "Reply limit reached",
-      message: `You’ve reached your reply limit. You’ll get more replies on ${expected}.`,
+      title: "Time for a short break",
+      message: `You’ve used WiNGR a lot today. You can keep going on ${expected}.`,
       primaryLabel: "Got it",
       dismiss: true,
     });
@@ -27,8 +27,8 @@ test("missing and invalid timestamps produce the safe limit fallback", () => {
   for (const retryAt of [undefined, "", "PRIVATE", "2026-02-30T12:00:00Z", "2026-10-09", "2026-10-09T25:00:00Z"]) {
     assert.equal(parseRetryAt(retryAt), undefined);
     assert.deepEqual(getReplyErrorPresentation({ code: "usage_limit", message: "old message", retryAt }), {
-      title: "Reply limit reached",
-      message: "You’ve reached your reply limit. Please check back later.",
+      title: "Time for a short break",
+      message: "You’ve used WiNGR a lot today. Please check back later.",
       primaryLabel: "Got it",
       dismiss: true,
     });

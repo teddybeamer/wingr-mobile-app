@@ -142,7 +142,7 @@ export function PaywallScreen(props: OnboardingScreenProps) {
           <View style={styles.planCopy}>
             <Text style={styles.planName}>Weekly Plan</Text>
             <Text style={styles.planAllowance}>
-              125 replies + vibechecks
+              Unlimited replies + vibe checks
             </Text>
           </View>
           <View style={styles.priceCopy}>
@@ -172,7 +172,7 @@ export function PaywallScreen(props: OnboardingScreenProps) {
           <View style={styles.planCopy}>
             <Text style={styles.planName}>Monthly Plan</Text>
             <Text style={styles.planAllowance}>
-              500 replies + vibechecks
+              Unlimited replies + vibe checks
             </Text>
           </View>
           <View style={styles.priceCopy}>

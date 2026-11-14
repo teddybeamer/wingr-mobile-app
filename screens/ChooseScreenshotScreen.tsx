@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import {
   Animated,
   Easing,
+  type ImageSourcePropType,
   StyleSheet,
   Text,
   View,
@@ -23,12 +24,22 @@ const CARD_ENTRY_DELAY_MS = 70;
 const CARD_ENTRY_DURATION_MS = 260;
 const CARD_ENTRY_OFFSET = 8;
 
+// The first screen of a flow: a hero image and a card that explains what to
+// upload. Get Replies uses the defaults; Start Conversation passes its own.
 export function ChooseScreenshotScreen({
+  body = "Include a few messages and avoid cropping your screenshot.",
+  heading = "Get better replies with more context",
+  heroImage = CHOOSE_HERO_IMAGE,
   onBack,
   onChooseScreenshot,
+  title = "Get Replies",
 }: {
+  body?: string;
+  heading?: string;
+  heroImage?: ImageSourcePropType;
   onBack: () => void;
   onChooseScreenshot: () => void;
+  title?: string;
 }) {
   const entry = useRef(new Animated.Value(0)).current;
 
@@ -59,7 +70,7 @@ export function ChooseScreenshotScreen({
   return (
     <View style={styles.screen}>
       <ScreenHeader
-        center={<ScreenHeaderTitle>Get Replies</ScreenHeaderTitle>}
+        center={<ScreenHeaderTitle>{title}</ScreenHeaderTitle>}
         left={<HeaderBackButton onPress={onBack} />}
       />
       <StageColumn
@@ -67,10 +78,10 @@ export function ChooseScreenshotScreen({
           <Animated.View style={[styles.card, cardEntryStyle]}>
             <View style={styles.copy}>
               <Text maxFontSizeMultiplier={1.3} style={styles.title}>
-                Get better replies with more context
+                {heading}
               </Text>
               <Text maxFontSizeMultiplier={1.3} style={styles.body}>
-                Include a few messages and avoid cropping your screenshot.
+                {body}
               </Text>
             </View>
             <ActionButton
@@ -88,9 +99,7 @@ export function ChooseScreenshotScreen({
             />
           </Animated.View>
         }
-        stage={
-          <FadeInImage source={CHOOSE_HERO_IMAGE} style={styles.stageImage} />
-        }
+        stage={<FadeInImage source={heroImage} style={styles.stageImage} />}
       />
     </View>
   );

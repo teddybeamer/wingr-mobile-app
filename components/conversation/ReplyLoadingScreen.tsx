@@ -35,16 +35,16 @@ function formatChatTime(date: Date) {
 // Drives the chat described in lib/loading-chat. `times[i]` is the clock time
 // shown under slot i; it is taken when that slot's typing indicator appears and
 // kept when the indicator becomes the message.
-function useLoadingChat() {
+function useLoadingChat(messages: readonly string[]) {
   const [state, setState] = useState<ChatState>(INITIAL_CHAT_STATE);
   const timesRef = useRef<string[]>([formatChatTime(new Date())]);
 
   useEffect(() => {
-    const delay = getChatStepDelay(state);
+    const delay = getChatStepDelay(state, messages);
     if (delay === null) return;
 
     const timer = setTimeout(() => {
-      const next = advanceChat(state);
+      const next = advanceChat(state, messages);
       if (
         (next.phase === "indicator" || next.phase === "waiting") &&
         timesRef.current[next.shown] === undefined
@@ -64,8 +64,15 @@ function useLoadingChat() {
 // typing indicator that turns into the message, and ends on the indicator until
 // the answer is ready. The card fills the width between the page gutters and
 // the messages scroll inside it when the screen is too short for all of them.
-export function ReplyLoadingScreen() {
-  const { state, times } = useLoadingChat();
+export function ReplyLoadingScreen({
+  accessibilityLabel = "WiNGR is reading your screenshot",
+  messages = LOADING_CHAT_MESSAGES,
+}: {
+  accessibilityLabel?: string;
+  // What WiNGR "types" (Start Conversation has its own lines).
+  messages?: readonly string[];
+} = {}) {
+  const { state, times } = useLoadingChat(messages);
   const scrollRef = useRef<ScrollView>(null);
   const doneCount = state.shown;
   const typingIndex = state.phase === "typing" ? state.shown : null;
@@ -78,7 +85,7 @@ export function ReplyLoadingScreen() {
       <ScreenHeader />
       <View style={styles.area}>
         <View
-          accessibilityLabel="WiNGR is reading your screenshot"
+          accessibilityLabel={accessibilityLabel}
           accessible
           style={styles.card}
         >
@@ -103,7 +110,7 @@ export function ReplyLoadingScreen() {
             {Array.from({ length: slotCount }, (_, index) => {
               const isDone = index < doneCount;
               const isTyping = index === typingIndex;
-              const text = LOADING_CHAT_MESSAGES[index];
+              const text = messages[index];
               return (
                 <ChatRow
                   key={index}
