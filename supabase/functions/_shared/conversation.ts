@@ -204,6 +204,23 @@ function hasExpectedImageSignature(
   }
 }
 
+// A PNG, JPEG or WebP data URL of at most MAX_IMAGE_BYTES whose bytes match the
+// declared type. Shared by every endpoint that accepts a screenshot.
+export function isScreenshotDataUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > MAX_SCREENSHOT_LENGTH)
+    return false;
+  const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(
+    value,
+  );
+  return Boolean(
+    match &&
+      match[2].length % 4 === 0 &&
+      (match[2].length / 4) * 3 - (match[2].match(/=+$/)?.[0].length ?? 0) <=
+        MAX_IMAGE_BYTES &&
+      hasExpectedImageSignature(match[1] as SupportedImageType, match[2]),
+  );
+}
+
 export function parseConversationRequest(value: unknown): ConversationRequest {
   const hasDeviceCheckFields =
     isObject(value) &&
@@ -239,19 +256,7 @@ export function parseConversationRequest(value: unknown): ConversationRequest {
   ) {
     throw new ConversationError("invalid_request");
   }
-  const match =
-    /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(
-      value.screenshot,
-    );
-  if (
-    !match ||
-    match[2].length % 4 !== 0 ||
-    (match[2].length / 4) * 3 - (match[2].match(/=+$/)?.[0].length ?? 0) >
-      MAX_IMAGE_BYTES
-  ) {
-    throw new ConversationError("invalid_request");
-  }
-  if (!hasExpectedImageSignature(match[1] as SupportedImageType, match[2])) {
+  if (!isScreenshotDataUrl(value.screenshot)) {
     throw new ConversationError("invalid_request");
   }
   return {

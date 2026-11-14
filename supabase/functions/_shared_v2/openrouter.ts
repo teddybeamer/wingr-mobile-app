@@ -4,6 +4,7 @@ import {
   conversationSchema,
   parseProviderConversationResult,
   type ConversationRequest,
+  type ProviderConversationResult,
 } from "./conversation.ts";
 import { buildConversationPrompt, SYSTEM_PROMPT } from "./prompting.ts";
 
@@ -21,7 +22,8 @@ export type ProviderLatencyMeasurement = {
   // Fixed configuration strings (never request or response content).
   model: string;
   outcome: "success" | "provider" | "invalid_output" | "timeout";
-  outputContract: typeof AI_OUTPUT_CONTRACT;
+  // Which response contract was requested (e.g. AI_OUTPUT_CONTRACT).
+  outputContract: string;
   provider: string;
 };
 
@@ -69,8 +71,23 @@ export function providerForModel(model: ModelId) {
   return MODEL_PRESETS[model].provider;
 }
 
-export function buildOpenRouterRequest(
-  request: ConversationRequest,
+// One structured request to the pinned provider: a system prompt, a text part and
+// one image, answered as JSON that must match `schema` and is then checked by the
+// caller's strict parser. Get Replies and Start Conversation differ only in these
+// fields; routing, privacy pinning, limits and error handling are shared.
+export type StructuredCall<T> = {
+  // Fixed label for latency telemetry (never request or response content).
+  contract: string;
+  image: string;
+  parse: (value: unknown) => T;
+  schema: object;
+  schemaName: string;
+  systemPrompt: string;
+  userText: string;
+};
+
+export function buildStructuredRequest<T>(
+  call: StructuredCall<T>,
   reasoningEffort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
   model: ModelId = DEFAULT_MODEL,
 ) {
@@ -87,12 +104,12 @@ export function buildOpenRouterRequest(
       require_parameters: true,
     },
     messages: [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: call.systemPrompt },
       {
         role: "user",
         content: [
-          { type: "text", text: buildConversationPrompt(request) },
-          { type: "image_url", image_url: { url: request.screenshot } },
+          { type: "text", text: call.userText },
+          { type: "image_url", image_url: { url: call.image } },
         ],
       },
     ],
@@ -100,12 +117,38 @@ export function buildOpenRouterRequest(
     response_format: {
       type: "json_schema",
       json_schema: {
-        name: "wingr_conversation",
+        name: call.schemaName,
         strict: true,
-        schema: conversationSchema,
+        schema: call.schema,
       },
     },
   };
+}
+
+function conversationCall(
+  request: ConversationRequest,
+): StructuredCall<ProviderConversationResult> {
+  return {
+    contract: AI_OUTPUT_CONTRACT,
+    image: request.screenshot,
+    parse: parseProviderConversationResult,
+    schema: conversationSchema,
+    schemaName: "wingr_conversation",
+    systemPrompt: SYSTEM_PROMPT,
+    userText: buildConversationPrompt(request),
+  };
+}
+
+export function buildOpenRouterRequest(
+  request: ConversationRequest,
+  reasoningEffort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
+  model: ModelId = DEFAULT_MODEL,
+) {
+  return buildStructuredRequest(
+    conversationCall(request),
+    reasoningEffort,
+    model,
+  );
 }
 
 // Classify only fixed configuration-error signatures. Never return or log the
@@ -149,8 +192,26 @@ export function getProviderErrorReason(payload: unknown) {
   return undefined;
 }
 
-export async function analyzeWithGemini(
+export type StructuredCallOptions = {
+  fetchImpl?: typeof fetch;
+  model?: ModelId;
+  onProviderDispatch?: () => Promise<void>;
+  onProviderLatency?: (measurement: ProviderLatencyMeasurement) => void;
+  reasoningEffort?: ReasoningEffort;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+};
+
+export function analyzeWithGemini(
   request: ConversationRequest,
+  apiKey: string,
+  options: StructuredCallOptions = {},
+) {
+  return requestStructuredResult(conversationCall(request), apiKey, options);
+}
+
+export async function requestStructuredResult<T>(
+  call: StructuredCall<T>,
   apiKey: string,
   {
     fetchImpl = fetch,
@@ -160,23 +221,15 @@ export async function analyzeWithGemini(
     reasoningEffort = DEFAULT_REASONING_EFFORT,
     timeoutMs = AI_TIMEOUT_MS,
     signal,
-  }: {
-    fetchImpl?: typeof fetch;
-    model?: ModelId;
-    onProviderDispatch?: () => Promise<void>;
-    onProviderLatency?: (measurement: ProviderLatencyMeasurement) => void;
-    reasoningEffort?: ReasoningEffort;
-    timeoutMs?: number;
-    signal?: AbortSignal;
-  } = {},
-) {
+  }: StructuredCallOptions = {},
+): Promise<T> {
   if (!apiKey.trim()) throw new ConversationError("provider");
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
   const body = JSON.stringify(
-    buildOpenRouterRequest(request, reasoningEffort, model),
+    buildStructuredRequest(call, reasoningEffort, model),
   );
   let providerStartedAt: number | null = null;
   let providerOutcome: ProviderLatencyMeasurement["outcome"] = "provider";
@@ -229,7 +282,7 @@ export async function analyzeWithGemini(
     } catch {
       throw new ConversationError("invalid_output");
     }
-    const parsed = parseProviderConversationResult(result);
+    const parsed = call.parse(result);
     providerOutcome = "success";
     return parsed;
   } catch (error) {
@@ -255,7 +308,7 @@ export async function analyzeWithGemini(
           durationMs: Date.now() - providerStartedAt,
           model,
           outcome: providerOutcome,
-          outputContract: AI_OUTPUT_CONTRACT,
+          outputContract: call.contract,
           provider: providerForModel(model),
         });
       } catch {

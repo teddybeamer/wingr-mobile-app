@@ -1,4 +1,8 @@
 import { ConversationError, parseConversationRequest } from "./conversation.ts";
+import {
+  ConsentVerificationError,
+  type ConsentVerifier,
+} from "./ai-consent.ts";
 import { handleCors } from "./cors.ts";
 import { error, json } from "./http.ts";
 import { analyzeWithGemini } from "./openrouter.ts";
@@ -16,6 +20,7 @@ export type ConversationHandlerOptions = Omit<
   GeminiOptions,
   "onProviderDispatch" | "signal"
 > & {
+  consentVerifier?: ConsentVerifier;
   entitlementVerifier?: RevenueCatEntitlementVerifier;
   getVerifiedUserId?: (accessToken: string) => Promise<string | null>;
   onboardingTrialManager?: OnboardingTrialManager;
@@ -81,8 +86,18 @@ async function readRequestBodyWithinLimit(request: Request): Promise<string> {
 }
 
 const ACCESS_ERRORS = {
+  ai_consent_required: {
+    message:
+      "Please allow WiNGR to share your screenshot with its AI providers to use this feature.",
+    status: 403,
+  },
   authentication_verification_unavailable: {
     message: "Wingr could not verify your account right now. Please try again.",
+    status: 503,
+  },
+  consent_verification_unavailable: {
+    message:
+      "Wingr could not check your AI sharing choice right now. Please try again.",
     status: 503,
   },
   subscription_required: {
@@ -173,6 +188,7 @@ export async function handleConversationRequest(
   if (request.method !== "POST") return error("Method not allowed.", 405);
 
   const {
+    consentVerifier,
     entitlementVerifier,
     getVerifiedUserId,
     onboardingTrialManager,
@@ -193,6 +209,21 @@ export async function handleConversationRequest(
   }
   const authenticatedUserId = userId?.trim() ?? "";
   if (!isUuid(authenticatedUserId)) return accessError("unauthorized");
+
+  // Consent comes before anything that could spend or send something (body,
+  // DeviceCheck trial, entitlement, quota, provider). This endpoint always
+  // routes to Google Vertex through OpenRouter, which the consent names.
+  if (!consentVerifier) return accessError("consent_verification_unavailable");
+  try {
+    if (
+      !(await consentVerifier.hasConsent(request.headers.get("authorization")))
+    )
+      return accessError("ai_consent_required");
+  } catch (failure) {
+    if (failure instanceof ConsentVerificationError)
+      return accessError("consent_verification_unavailable");
+    throw failure;
+  }
 
   try {
     let value;

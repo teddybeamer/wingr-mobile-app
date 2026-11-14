@@ -246,28 +246,28 @@ select is(
 );
 
 -- ---------------------------------------------------------------------------
--- Plan limits are unchanged and can never be exceeded
+-- The fair use limit (200 per rolling 24 hours, any plan) can never be exceeded
 -- ---------------------------------------------------------------------------
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000603', true);
 insert into public.ai_generation_attempts (user_id, attempted_at)
-select auth.uid(), now() - interval '1 day' from generate_series(1, 499);
+select auth.uid(), now() - interval '1 hour' from generate_series(1, 199);
 with reserved as (select public.reserve_ai_generation('monthly') as value)
 insert into settle_state (name, lease_id)
-select 'monthly-499', (value->>'leaseId')::uuid from reserved;
+select 'fair-use-199', (value->>'leaseId')::uuid from reserved;
 select ok(
-  exists (select 1 from settle_state where name = 'monthly-499'),
-  'the Monthly plan allows attempt 500'
+  exists (select 1 from settle_state where name = 'fair-use-199'),
+  'attempt 200 within 24 hours is allowed'
 );
-select public.settle_ai_generation((select lease_id from settle_state where name = 'monthly-499'), 'success');
+select public.settle_ai_generation((select lease_id from settle_state where name = 'fair-use-199'), 'success');
 select is(
   (select count(*) from public.ai_generation_attempts where user_id = auth.uid()),
-  500::bigint,
-  'the 500th attempt is recorded'
+  200::bigint,
+  'the 200th attempt is recorded'
 );
 select is(
   public.reserve_ai_generation('monthly')->>'status',
   'usage_limit',
-  'the Monthly plan rejects attempt 501'
+  'attempt 201 within 24 hours is rejected'
 );
 select ok(
   (public.reserve_ai_generation('monthly')->>'retryAt') is not null,
@@ -279,34 +279,37 @@ select is(
   'a rejected reservation holds no lease'
 );
 
+-- The Weekly plan has the same guard.
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000604', true);
 insert into public.ai_generation_attempts (user_id, attempted_at)
-select auth.uid(), now() - interval '1 day' from generate_series(1, 124);
-with reserved as (select public.reserve_ai_generation('weekly') as value)
-insert into settle_state (name, lease_id)
-select 'weekly-124', (value->>'leaseId')::uuid from reserved;
-select ok(
-  exists (select 1 from settle_state where name = 'weekly-124'),
-  'the Weekly plan allows attempt 125'
-);
-select public.settle_ai_generation((select lease_id from settle_state where name = 'weekly-124'), 'success');
+select auth.uid(), now() - interval '1 hour' from generate_series(1, 200);
 select is(
   public.reserve_ai_generation('weekly')->>'status',
   'usage_limit',
-  'the Weekly plan rejects attempt 126'
+  'the Weekly plan has the same 200 per 24 hours guard'
+);
+
+-- Older attempts do not count: the former plan limits are gone.
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000608', true);
+insert into public.ai_generation_attempts (user_id, attempted_at)
+select auth.uid(), now() - interval '25 hours' from generate_series(1, 600);
+select is(
+  public.reserve_ai_generation('weekly')->>'status',
+  'allowed',
+  'attempts older than 24 hours never block a reservation, even 600 of them'
 );
 
 -- A fifth invalid screenshot at the boundary cannot push past the limit.
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000605', true);
 insert into public.ai_generation_attempts (user_id, attempted_at)
-select auth.uid(), now() - interval '1 day' from generate_series(1, 499);
+select auth.uid(), now() - interval '1 hour' from generate_series(1, 199);
 insert into public.ai_invalid_screenshot_counters (user_id, pending, window_started_at)
 values (auth.uid(), 4, now());
 with reserved as (select public.reserve_ai_generation('monthly') as value)
 select public.settle_ai_generation((value->>'leaseId')::uuid, 'invalid_screenshot') from reserved;
 select is(
   (select count(*) from public.ai_generation_attempts where user_id = auth.uid()),
-  500::bigint,
+  200::bigint,
   'the charge for a fifth invalid screenshot stops exactly at the limit'
 );
 

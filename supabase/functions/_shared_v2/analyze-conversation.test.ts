@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { consentGranted } from "../_shared/test-fixtures.ts";
 import {
   handleConversationRequest as handleConversationRequestCore,
   MAX_REQUEST_BODY_BYTES,
@@ -136,6 +137,7 @@ const handleConversationRequest = (
   options: ConversationHandlerOptions = {},
 ) =>
   handleConversationRequestCore(request, apiKey, {
+    consentVerifier: consentGranted,
     entitlementVerifier: {
       verifyAccess: async () => ({ hasActivePro: true, plan: "monthly" }),
     },
@@ -1085,6 +1087,7 @@ test("missing or failed acquisition protection fails closed before OpenRouter", 
   ]) {
     let providerCalls = 0;
     const response = await handleConversationRequestCore(request(), "key", {
+      consentVerifier: consentGranted,
       entitlementVerifier: {
         verifyAccess: async () => ({ hasActivePro: true, plan: "monthly" }),
       },
@@ -1367,6 +1370,9 @@ test("the handler sends the configured model and provider and logs only those fi
   const info = t.mock.method(console, "info", () => {});
   let sent: { model?: string; provider?: { only?: string[] } } = {};
   const response = await handleConversationRequest(request(), "key", {
+    // inference-net is not named in the consent text, so it is only reachable
+    // here, where the test declares it covered (see the consent tests below).
+    consentCoveredProviders: ["inference-net/fp8"],
     model: DEEPSEEK_MODEL,
     fetchImpl: async (url, init) => {
       sent = JSON.parse(String(init?.body));

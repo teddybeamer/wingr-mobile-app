@@ -65,7 +65,7 @@ select is(
 -- v2: one claim, no attempt.
 select pg_temp.ready(weekly_user, weekly_trial, weekly_hash) from ctx;
 insert into public.ai_generation_attempts (user_id, attempted_at)
-select weekly_user, now() - interval '1 day' from ctx, generate_series(1, 124);
+select weekly_user, now() - interval '1 hour' from ctx, generate_series(1, 199);
 select is(
   (select public.finalize_onboarding_device_trial_v2(weekly_user, weekly_trial, weekly_hash)->>'status' from ctx),
   'finalized',
@@ -78,8 +78,8 @@ select is(
 );
 select is(
   (select pg_temp.attempts_of(weekly_user) from ctx),
-  124,
-  'v2 finalize records no attempt, leaving a Weekly user at 124'
+  199,
+  'v2 finalize records no attempt, leaving a Weekly user at 199'
 );
 select is(
   (select public.finalize_onboarding_device_trial_v2(weekly_user, weekly_trial, weekly_hash)->>'status' from ctx),
@@ -88,39 +88,39 @@ select is(
 );
 select is(
   (select pg_temp.claims_of(weekly_user) from ctx) + (select pg_temp.attempts_of(weekly_user) from ctx),
-  125,
+  200,
   'a replay adds neither a claim nor an attempt'
 );
 
--- The Weekly allowance is intact: attempt 125 is still available, 126 is not.
+-- The fair use allowance is intact: attempt 200 is still available, 201 is not.
 select set_config('request.jwt.claim.sub', (select weekly_user::text from ctx), true);
 create temporary table weekly_lease as
 select public.reserve_ai_generation('weekly')->>'leaseId' as lease_id;
 select is(
   (select lease_id is not null from weekly_lease),
   true,
-  'a Weekly user can still reserve attempt 125 after the free reply'
+  'a Weekly user can still reserve attempt 200 after the free reply'
 );
 select is(
   (select public.settle_ai_generation(lease_id::uuid, 'success')->>'charged' from weekly_lease),
   'true',
-  'attempt 125 is charged normally'
+  'attempt 200 is charged normally'
 );
 select is(
   (select pg_temp.attempts_of(weekly_user) from ctx),
-  125,
-  'the Weekly user used exactly 125 paid attempts'
+  200,
+  'the Weekly user used exactly 200 paid attempts'
 );
 select is(
   (select public.reserve_ai_generation('weekly')->>'status'),
   'usage_limit',
-  'attempt 126 is refused, so the limit is exactly 125 paid replies'
+  'attempt 201 is refused, so the free reply never uses the fair use allowance'
 );
 
--- Monthly: 499 paid attempts, then the free reply, then attempt 500 is still allowed.
+-- Monthly: 199 paid attempts, then the free reply, then attempt 200 is still allowed.
 select pg_temp.ready(monthly_user, monthly_trial, monthly_hash) from ctx;
 insert into public.ai_generation_attempts (user_id, attempted_at)
-select monthly_user, now() - interval '1 day' from ctx, generate_series(1, 499);
+select monthly_user, now() - interval '1 hour' from ctx, generate_series(1, 199);
 select public.finalize_onboarding_device_trial_v2(monthly_user, monthly_trial, monthly_hash) from ctx;
 select set_config('request.jwt.claim.sub', (select monthly_user::text from ctx), true);
 create temporary table monthly_lease as
@@ -128,13 +128,13 @@ select public.reserve_ai_generation('monthly')->>'leaseId' as lease_id;
 select is(
   (select lease_id is not null from monthly_lease),
   true,
-  'a Monthly user at 499 can still reserve attempt 500 after the free reply'
+  'a Monthly user at 199 can still reserve attempt 200 after the free reply'
 );
 select public.settle_ai_generation((select lease_id::uuid from monthly_lease), 'success');
 select is(
   (select public.reserve_ai_generation('monthly')->>'status'),
   'usage_limit',
-  'the Monthly limit is exactly 500 paid replies'
+  'the fair use limit is exactly 200 paid replies'
 );
 
 -- A failed onboarding generation is free: nothing recorded at all.

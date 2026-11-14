@@ -6,3 +6,9 @@ verify_jwt = true
 
 [functions.delete-account]
 verify_jwt = true
+
+[functions.ai-consent]
+verify_jwt = true
+
+[functions.ai-opener]
+verify_jwt = true

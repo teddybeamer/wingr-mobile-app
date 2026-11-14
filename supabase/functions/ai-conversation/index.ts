@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { handleConversationRequest } from "../_shared/analyze-conversation.ts";
+import { createSupabaseConsentVerifier } from "../_shared/ai-consent.ts";
 import { createRevenueCatEntitlementVerifier } from "../_shared/revenuecat-entitlement.ts";
 import { createSupabaseUsageLimiter } from "../_shared/usage-limit.ts";
 import {
@@ -70,8 +71,14 @@ const callerClient = createClient(supabaseUrl, publishableKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
+const consentVerifier = createSupabaseConsentVerifier({
+  publishableKey,
+  supabaseUrl,
+});
+
 Deno.serve((request) =>
   handleConversationRequest(request, Deno.env.get("OPENROUTER_API_KEY") ?? "", {
+    consentVerifier,
     entitlementVerifier,
     async getVerifiedUserId(accessToken) {
       const { data, error } = await callerClient.auth.getClaims(accessToken);

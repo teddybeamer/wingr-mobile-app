@@ -73,6 +73,23 @@ WiNGR 1.0.0 (1) can still be installed.**
 | --- | --- | --- | --- | --- |
 | `ai-conversation` | `functions/ai-conversation`, `functions/_shared/*` (frozen) | includes `messages` | build 1 | `medium` (hard-coded) |
 | `ai-conversation-v2` | `functions/ai-conversation-v2`, `functions/_shared_v2/*` | compact: `replyable`, `vibeCheck`, `replies` | build 2 | `low` default, `AI_REASONING_EFFORT=medium` overrides |
+| `ai-opener` | `functions/ai-opener`, `functions/_shared_v2/analyze-opener.ts`, `opener.ts`, `opener-prompting.ts` | Start Conversation: `angle`, `openers` | v1.1 (redesign) | same as v2 |
+
+`ai-opener` (Start Conversation) takes one dating-profile screenshot and returns
+The Angle (`summary`, 3-6 `topics`, `yourMove`) with one opener per tone
+(`kind: "starters"`), or one more opener in a chosen tone (`kind: "another"`,
+with up to six `previousOpeners`). It shares everything that decides who may
+send what (`_shared_v2/ai-request.ts`: authentication, consent before the body,
+Pro entitlement, the quota lease and settlement, error responses) and the pinned
+provider call (`requestStructuredResult` in `openrouter.ts`) with v2, uses the
+same secrets, and counts against the same quota. An unreadable image or a
+screenshot that is not a profile is a 422 `unusable_screenshot` with reason
+`unreadable_image` or `not_a_profile`, settled like an invalid chat screenshot.
+Deploy it with an explicit project ref, after the database migrations:
+
+```sh
+supabase functions deploy ai-opener --project-ref <verified-project-ref>
+```
 
 `_shared_v2` holds only the contract-specific code (result parser and schema, prompt,
 provider request, handler). Authentication, RevenueCat verification, usage limits,
@@ -150,6 +167,13 @@ without the configured active entitlement returns HTTP 403 with
 authentication, authorization, rate-limit, and response-validation failures return
 HTTP 503 with `code: "subscription_verification_unavailable"`. Neither response
 claims usage or calls OpenRouter.
+
+**Fair use (migration `20261114120000_fair_use_generation_limit.sql`):** for
+`ai-conversation-v2` and `ai-opener`, generations are unlimited for every Pro plan
+except for one guard against abuse: at most 200 settled attempts in any rolling
+24 hours. `reserve_ai_generation` returns `usage_limit` with `retryAt` when it is
+reached, and the app shows a “short break” notice. Everything below about plan
+limits describes the frozen `ai-conversation` (v1) path, which is unchanged.
 
 Weekly subscribers can dispatch 125 AI generation attempts in a rolling seven-day
 window. Monthly subscribers retain 500 attempts in a rolling 30-day window. The

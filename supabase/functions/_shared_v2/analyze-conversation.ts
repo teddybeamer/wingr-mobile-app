@@ -6,17 +6,29 @@ import {
   UnusableScreenshotError,
   type UnusableScreenshotReason,
 } from "./conversation.ts";
+import {
+  CONSENT_COVERED_PROVIDERS,
+  type ConsentVerifier,
+} from "../_shared/ai-consent.ts";
 import { handleCors } from "../_shared/cors.ts";
 import { error, json } from "../_shared/http.ts";
+import {
+  authenticate,
+  checkConsent,
+  checkProAccess,
+  generationErrorResponse,
+  readJsonBody,
+  recordProviderLatency,
+  settleGeneration,
+} from "./ai-request.ts";
 import {
   analyzeWithGemini,
   DEFAULT_MODEL,
   DEFAULT_REASONING_EFFORT,
+  providerForModel,
   type ProviderLatencyMeasurement,
 } from "./openrouter.ts";
-import { RevenueCatVerificationError } from "../_shared/revenuecat-entitlement.ts";
 import type {
-  RevenueCatAccess,
   RevenueCatEntitlementVerifier,
   RevenueCatSubscriptionPlan,
 } from "../_shared/revenuecat-entitlement.ts";
@@ -49,53 +61,15 @@ export type ConversationHandlerOptions = Omit<
   GeminiOptions,
   "onProviderDispatch" | "onProviderLatency" | "signal"
 > & {
+  consentVerifier?: ConsentVerifier;
+  // Providers the consent text names. Only tests set this (to exercise another
+  // preset); production always uses the list in _shared/ai-consent.ts.
+  consentCoveredProviders?: readonly string[];
   entitlementVerifier?: RevenueCatEntitlementVerifier;
   getVerifiedUserId?: (accessToken: string) => Promise<string | null>;
   onboardingTrialManager?: OnboardingTrialManager;
   usageLimiter?: UsageLimiter;
 };
-
-function recordProviderLatency(
-  generation: "onboarding" | "subscription",
-  measurement: ProviderLatencyMeasurement,
-) {
-  // Fixed labels and a duration only. Never log image, transcript, reply,
-  // prompt, user ID, authorization, API key, or provider response.
-  console.info("[Wingr AI] provider latency", {
-    durationMs: measurement.durationMs,
-    event: "ai_generation_provider_latency",
-    generation,
-    model: measurement.model,
-    outcome: measurement.outcome,
-    outputContract: measurement.outputContract,
-    provider: measurement.provider,
-  });
-}
-
-function recordSettlement({
-  charged,
-  durationMs,
-  generation,
-  result,
-  settlement,
-}: {
-  charged: boolean | null;
-  durationMs: number;
-  generation: "onboarding" | "subscription";
-  result: "applied" | "not_found" | "failed";
-  settlement: SettlementOutcome;
-}) {
-  // Fixed labels, a boolean and a duration only. Never log image, transcript,
-  // reply, prompt, user ID, lease ID, authorization, API key, or provider response.
-  console.info("[Wingr AI] generation settlement", {
-    charged,
-    durationMs,
-    event: "ai_generation_settlement",
-    generation,
-    result,
-    settlement,
-  });
-}
 
 // One outcome line per POST, written by handleConversationRequest once the
 // response exists, so every exit is covered: success, validation, authentication,
@@ -104,6 +78,7 @@ function recordSettlement({
 // reason are read back from the response only if they are known values.
 type OutcomeStage =
   | "auth"
+  | "consent"
   | "body"
   | "entitlement"
   | "quota"
@@ -117,8 +92,11 @@ type OutcomeGeneration = "onboarding" | "subscription" | "unknown";
 type RequestTrace = { generation: OutcomeGeneration; stage: OutcomeStage };
 
 const OUTCOME_CATEGORIES = {
+  ai_consent_required: "consent",
+  ai_provider_not_disclosed: "technical",
   authentication_verification_unavailable: "technical",
   generation_in_progress: "quota",
+  consent_verification_unavailable: "technical",
   generation_protection_unavailable: "technical",
   invalid_output: "provider",
   invalid_request: "client_input",
@@ -237,107 +215,7 @@ function recordStageLatency({
   });
 }
 
-// A 10 MiB image expands to a 13,981,048-character data URL. 14 MiB leaves
-// 692,492 bytes beyond the maximum valid screenshot-and-metadata payload.
-export const MAX_REQUEST_BODY_BYTES = 14 * 1024 * 1024;
-
-function contentLengthExceedsLimit(request: Request) {
-  const contentLength = request.headers.get("content-length");
-  return (
-    contentLength !== null &&
-    /^\d+$/.test(contentLength) &&
-    Number(contentLength) > MAX_REQUEST_BODY_BYTES
-  );
-}
-
-async function readRequestBodyWithinLimit(request: Request): Promise<string> {
-  if (contentLengthExceedsLimit(request))
-    throw new ConversationError("payload_too_large");
-
-  if (!request.body) return "";
-
-  const reader = request.body.getReader();
-  let buffer = new Uint8Array(0);
-  let length = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      if (value.byteLength > MAX_REQUEST_BODY_BYTES - length) {
-        try {
-          await reader.cancel();
-        } catch {
-          // The response remains a deterministic 413 even if the peer has
-          // already closed the incoming stream.
-        }
-        throw new ConversationError("payload_too_large");
-      }
-      const requiredLength = length + value.byteLength;
-      if (requiredLength > buffer.byteLength) {
-        const capacity = Math.min(
-          MAX_REQUEST_BODY_BYTES,
-          Math.max(requiredLength, Math.max(64 * 1024, buffer.byteLength * 2)),
-        );
-        const next = new Uint8Array(capacity);
-        next.set(buffer);
-        buffer = next;
-      }
-      buffer.set(value, length);
-      length = requiredLength;
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  return new TextDecoder("utf-8", { fatal: true }).decode(
-    buffer.subarray(0, length),
-  );
-}
-
-const ACCESS_ERRORS = {
-  authentication_verification_unavailable: {
-    message: "Wingr could not verify your account right now. Please try again.",
-    status: 503,
-  },
-  subscription_required: {
-    message: "An active WiNGR Pro subscription is required.",
-    status: 403,
-  },
-  subscription_verification_unavailable: {
-    message:
-      "Wingr could not verify your subscription right now. Please try again.",
-    status: 503,
-  },
-  unauthorized: {
-    message: "Authentication is required.",
-    status: 401,
-  },
-} as const;
-
-function accessError(code: keyof typeof ACCESS_ERRORS) {
-  const failure = ACCESS_ERRORS[code];
-  return json({ code, error: failure.message }, { status: failure.status });
-}
-
-function bearerToken(request: Request) {
-  const authorization = request.headers.get("authorization");
-  if (!authorization?.startsWith("Bearer ")) return null;
-  return authorization.slice("Bearer ".length).trim() || null;
-}
-
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    value,
-  );
-}
-
-function retryAfterHeader(retryAt: string | undefined) {
-  if (!retryAt) return undefined;
-  const milliseconds = Date.parse(retryAt) - Date.now();
-  if (!Number.isFinite(milliseconds)) return undefined;
-  return { "retry-after": String(Math.max(1, Math.ceil(milliseconds / 1000))) };
-}
+export { MAX_REQUEST_BODY_BYTES } from "./ai-request.ts";
 
 async function handleDeviceCheckOnboardingRequest({
   apiKey,
@@ -403,6 +281,8 @@ async function handleRequest(
   if (request.method !== "POST") return error("Method not allowed.", 405);
 
   const {
+    consentCoveredProviders = CONSENT_COVERED_PROVIDERS,
+    consentVerifier,
     entitlementVerifier,
     getVerifiedUserId,
     onboardingTrialManager,
@@ -410,33 +290,28 @@ async function handleRequest(
     ...geminiOptions
   } = options;
 
-  const accessToken = bearerToken(request);
-  if (!accessToken) return accessError("unauthorized");
-  if (!getVerifiedUserId) {
-    return accessError("authentication_verification_unavailable");
-  }
-  let userId: string | null;
-  try {
-    userId = await getVerifiedUserId(accessToken);
-  } catch {
-    return accessError("authentication_verification_unavailable");
-  }
-  const authenticatedUserId = userId?.trim() ?? "";
-  if (!isUuid(authenticatedUserId)) return accessError("unauthorized");
+  const authentication = await authenticate(request, getVerifiedUserId);
+  if ("response" in authentication) return authentication.response;
+  const authenticatedUserId = authentication.userId;
+
+  // Consent comes before anything that could spend or send something: it runs
+  // before the body is read, the onboarding DeviceCheck trial is prepared, the
+  // entitlement is looked up, a quota lease is taken, and the screenshot goes to
+  // a provider. A user without consent therefore uses up nothing and keeps their
+  // free generation for when they accept.
+  trace.stage = "consent";
+  const consentFailure = await checkConsent(request, {
+    consentCoveredProviders,
+    consentVerifier,
+    provider: providerForModel(geminiOptions.model ?? DEFAULT_MODEL),
+  });
+  if (consentFailure) return consentFailure;
   trace.stage = "body";
 
   const requestStartedAt = Date.now();
 
   try {
-    let value;
-    try {
-      const body = await readRequestBodyWithinLimit(request);
-      value = JSON.parse(body);
-    } catch (failure) {
-      if (failure instanceof ConversationError) throw failure;
-      throw new ConversationError("invalid_request");
-    }
-    const input = parseConversationRequest(value);
+    const input = parseConversationRequest(await readJsonBody(request));
     trace.generation = input.isOnboardingGeneration
       ? "onboarding"
       : "subscription";
@@ -467,39 +342,13 @@ async function handleRequest(
     let entitlementWaitMs: number | null = null;
     if (!input.isOnboardingGeneration) {
       trace.stage = "entitlement";
-      if (!entitlementVerifier) {
-        return accessError("subscription_verification_unavailable");
-      }
-      let access: RevenueCatAccess;
-      const entitlementWaitStartedAt = Date.now();
-      try {
-        access = await entitlementVerifier.verifyAccess(
-          authenticatedUserId,
-          request.signal,
-        );
-        entitlementWaitMs = Date.now() - entitlementWaitStartedAt;
-      } catch (failure) {
-        const diagnostic =
-          failure instanceof RevenueCatVerificationError
-            ? {
-                category: failure.category ?? "response_semantics",
-                code: "revenuecat_verification_failed",
-                operation: failure.operation ?? "configuration",
-                upstreamErrorCode: failure.upstreamErrorCode,
-                upstreamErrorType: failure.upstreamErrorType,
-                upstreamStatus: failure.upstreamStatus,
-              }
-            : {
-                category: "unexpected",
-                code: "revenuecat_verification_failed",
-                operation: "unknown",
-              };
-        // Closed enums and machine-readable upstream metadata only. Never log
-        // the failure object, request, customer ID, authorization, or body.
-        console.warn("[Wingr AI] RevenueCat verification failed", diagnostic);
-        return accessError("subscription_verification_unavailable");
-      }
-      if (!access.hasActivePro) return accessError("subscription_required");
+      const access = await checkProAccess(
+        entitlementVerifier,
+        authenticatedUserId,
+        request.signal,
+      );
+      if ("response" in access) return access.response;
+      entitlementWaitMs = access.waitMs;
       subscriptionPlan = access.plan;
     }
 
@@ -582,97 +431,22 @@ async function handleRequest(
         totalMs: Date.now() - requestStartedAt,
       });
       if (generationLease.current && usageLimiter) {
-        // Settled synchronously, exactly once, and never retried: the database
-        // makes settlement idempotent per lease, but a retry here could only
-        // matter by risking a second charge. If settlement fails after a valid
-        // reply, the reply is still returned and the user is not charged; the
-        // failure is logged for investigation. A failed settlement of a free
-        // outcome costs nothing, and the 60-second lease TTL frees the user.
-        const leaseId = generationLease.current.leaseId;
-        const settleStartedAt = Date.now();
-        const generation = input.isOnboardingGeneration
-          ? "onboarding"
-          : "subscription";
-        try {
-          const settled = await usageLimiter.settle(
-            authorization,
-            leaseId,
-            settlement,
-          );
-          recordSettlement({
-            charged: settled.charged,
-            durationMs: Date.now() - settleStartedAt,
-            generation,
-            result: settled.applied ? "applied" : "not_found",
-            settlement,
-          });
-        } catch {
-          console.warn("[Wingr AI] generation settlement failed", {
-            code: "generation_settlement_failed",
-            settlement,
-          });
-          recordSettlement({
-            charged: null,
-            durationMs: Date.now() - settleStartedAt,
-            generation,
-            result: "failed",
-            settlement,
-          });
-        }
+        await settleGeneration({
+          authorization,
+          generation: input.isOnboardingGeneration
+            ? "onboarding"
+            : "subscription",
+          leaseId: generationLease.current.leaseId,
+          settlement,
+          usageLimiter,
+        });
       }
     }
   } catch (failure) {
-    const safeError =
-      failure instanceof ConversationError
-        ? failure
-        : new ConversationError("provider");
-    const status = {
-      invalid_request: 400,
-      payload_too_large: 413,
-      invalid_output: 502,
-      unusable_screenshot: 422,
-      provider: 502,
-      timeout: 504,
-      generation_in_progress: 429,
-      generation_protection_unavailable: 503,
-      usage_limit: 429,
-      onboarding_reply_used: 409,
-      onboarding_device_reply_used: 409,
-    }[safeError.kind];
-    const diagnostics = {
-      code: safeError.kind,
-      providerStatus: safeError.providerStatus,
-      providerReason: safeError.providerReason,
-      reason:
-        safeError instanceof UnusableScreenshotError
-          ? safeError.reason
-          : undefined,
-    };
-    // Closed enum and numeric status only: never log a failure object or provider body.
-    console.warn("[Wingr AI] request failed", diagnostics);
-    const publicError = new ConversationError(
-      safeError.kind,
-      undefined,
-      undefined,
-      safeError.retryAt,
-    );
-    return json(
-      {
-        error: publicError.message,
-        code: safeError.kind,
-        reason:
-          safeError instanceof UnusableScreenshotError
-            ? safeError.reason
-            : undefined,
-        retryAt: safeError.retryAt,
-      },
-      {
-        status,
-        headers:
-          safeError.kind === "generation_in_progress"
-            ? retryAfterHeader(safeError.retryAt)
-            : undefined,
-      },
+    return generationErrorResponse(failure, (safeError) =>
+      safeError instanceof UnusableScreenshotError
+        ? safeError.reason
+        : undefined,
     );
   }
 }

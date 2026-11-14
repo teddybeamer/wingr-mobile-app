@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { consentGranted } from "./test-fixtures.ts";
 import {
   handleConversationRequest as handleConversationRequestCore,
   MAX_REQUEST_BODY_BYTES,
@@ -120,6 +121,7 @@ const handleConversationRequest = (
   options: ConversationHandlerOptions = {},
 ) =>
   handleConversationRequestCore(request, apiKey, {
+    consentVerifier: consentGranted,
     entitlementVerifier: {
       verifyAccess: async () => ({ hasActivePro: true, plan: "monthly" }),
     },
@@ -1196,6 +1198,7 @@ test("missing or failed acquisition protection fails closed before OpenRouter", 
   ]) {
     let providerCalls = 0;
     const response = await handleConversationRequestCore(request(), "key", {
+      consentVerifier: consentGranted,
       entitlementVerifier: {
         verifyAccess: async () => ({ hasActivePro: true, plan: "monthly" }),
       },

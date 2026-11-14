@@ -17,3 +17,7 @@ export const result = {
   },
   replies: ["Skal vi finde en café ved søerne?"],
 };
+
+// Consent is enforced before anything else, so handler tests that are not about
+// consent run with a verifier that always reports a current consent.
+export const consentGranted = { hasConsent: async () => true };

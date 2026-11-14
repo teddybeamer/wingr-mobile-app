@@ -1,12 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  handleConversationRequest,
+  handleConversationRequest as handleConversationRequestCore,
   type ConversationHandlerOptions,
 } from "./analyze-conversation.ts";
+import { consentGranted } from "../_shared/test-fixtures.ts";
 import { ConversationError } from "./conversation.ts";
 import { asProviderResult, input, result } from "./test-fixtures.ts";
 import type { GenerationLease } from "./usage-limit.ts";
+
+const handleConversationRequest = (
+  request: Request,
+  apiKey: string,
+  options: ConversationHandlerOptions = {},
+) =>
+  handleConversationRequestCore(request, apiKey, {
+    consentVerifier: consentGranted,
+    ...options,
+  });
 
 const USER_ID = "00000000-0000-4000-8000-000000000001";
 const LEASE_ID = "00000000-0000-4000-8000-000000000101";
