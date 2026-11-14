@@ -14,14 +14,6 @@ export const starterOpeners = {
       tone: "playful" as const,
       text: "Bold of you to plan our Ikea ban before we’ve even met. Which bed are we testing first?",
     },
-    {
-      tone: "casualSmallTalk" as const,
-      text: "Okay, Ben & Jerry’s in bed is a strong move. What’s the flavour?",
-    },
-    {
-      tone: "direct" as const,
-      text: "I’m in for the Ikea mission. Coffee first, so we can plan the escape?",
-    },
   ],
 };
 

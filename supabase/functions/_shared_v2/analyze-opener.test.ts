@@ -20,7 +20,11 @@ const lease = (): GenerationLease => ({
   leaseId: LEASE_ID,
 });
 
-const startersBody = { kind: "starters", screenshot: profileScreenshot };
+const startersBody = {
+  kind: "starters",
+  screenshot: profileScreenshot,
+  selectedTone: "playful",
+};
 const anotherBody = {
   kind: "another",
   previousOpeners: ["Earlier opener"],
@@ -90,7 +94,7 @@ function setup(answer: unknown = usable(starterOpeners)) {
 
 const untouched = { entitlement: 0, provider: 0, reserve: 0, settle: 0 };
 
-test("starters return the read and one opener per tone, and the lease settles as a success", async () => {
+test("starters return the read and one opener in the chosen tone, and the lease settles as a success", async () => {
   const { calls, options, sent, settlements } = setup();
   const response = await handleOpenerRequest(post(), "key", options);
   assert.equal(response.status, 200);
@@ -158,7 +162,8 @@ test("a request without a verified user is refused", async () => {
 test("an invalid body is rejected before the entitlement or provider", async () => {
   for (const body of [
     "not json",
-    { kind: "starters" },
+    { kind: "starters", selectedTone: "playful" },
+    { kind: "starters", screenshot: profileScreenshot },
     { kind: "another", screenshot: profileScreenshot },
   ]) {
     const { calls, options } = setup();
@@ -191,7 +196,7 @@ test("a screenshot that is not a profile is a 422 with its reason and counts lik
     const body = await response.json();
     assert.equal(body.code, "unusable_screenshot");
     assert.equal(body.reason, reason);
-    assert.match(body.error, /dating profile/);
+    assert.match(body.error, /couldn’t read that image/);
     assert.deepEqual(settlements, ["invalid_screenshot"]);
   }
   const { options, settlements } = setup(declined("something_else"));
@@ -202,7 +207,7 @@ test("a screenshot that is not a profile is a 422 with its reason and counts lik
 
 test("an answer that breaks the contract is free and reported as invalid output", async () => {
   const { options, settlements } = setup(
-    usable({ ...starterOpeners, openers: starterOpeners.openers.slice(1) }),
+    usable({ ...starterOpeners, openers: [] }),
   );
   const response = await handleOpenerRequest(post(), "key", options);
   assert.equal(response.status, 502);

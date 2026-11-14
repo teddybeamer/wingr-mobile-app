@@ -15,7 +15,7 @@ import {
 // recording any image, profile text, opener, account identifier or body.
 export const OPENER_OUTPUT_CONTRACT = "profile_openers_v1";
 
-// "starters": the first read of a profile, with one opener per tone.
+// "starters": the first read of a profile, with one opener in the chosen tone.
 // "another": one more opener in the chosen tone (no new read).
 export const OPENER_REQUEST_KINDS = ["starters", "another"] as const;
 export type OpenerRequestKind = (typeof OPENER_REQUEST_KINDS)[number];
@@ -30,7 +30,7 @@ export type OpenerRequest = {
   kind: OpenerRequestKind;
   previousOpeners?: string[];
   screenshot: string;
-  selectedTone?: ReplyTone;
+  selectedTone: ReplyTone;
 };
 
 export type ProfileAngle = {
@@ -95,13 +95,16 @@ export function parseOpenerRequest(value: unknown): OpenerRequest {
   if (!OPENER_REQUEST_KINDS.includes(kind as OpenerRequestKind))
     return invalid();
   if (!isScreenshotDataUrl(value.screenshot)) return invalid();
-  if (kind === "starters") {
-    // The first read writes one opener per tone, so neither field applies.
-    if (value.selectedTone !== undefined || value.previousOpeners !== undefined)
-      return invalid();
-    return { kind, screenshot: value.screenshot };
-  }
   if (!isReplyTone(value.selectedTone)) return invalid();
+  if (kind === "starters") {
+    // Nothing has been written yet, so there is nothing to avoid repeating.
+    if (value.previousOpeners !== undefined) return invalid();
+    return {
+      kind,
+      screenshot: value.screenshot,
+      selectedTone: value.selectedTone,
+    };
+  }
   const previous = value.previousOpeners;
   if (
     previous !== undefined &&
@@ -141,9 +144,9 @@ function isAngle(value: unknown): value is ProfileAngle {
   );
 }
 
-// The public result for a request, checked against what was asked: "starters"
-// has a read and exactly one opener per tone; "another" has no read and one
-// opener in the chosen tone. No coercion, defaults or recovery.
+// The public result for a request, checked against what was asked: exactly one
+// opener in the chosen tone, with a read for "starters" and none for "another".
+// No coercion, defaults or recovery.
 export function parseOpenerResult(
   value: unknown,
   request: Pick<OpenerRequest, "kind" | "selectedTone">,
@@ -156,15 +159,10 @@ export function parseOpenerResult(
   if (!Array.isArray(value.openers) || !value.openers.every(isOpener))
     return invalid();
   const openers = value.openers as Opener[];
-  if (request.kind === "starters") {
-    if (!isAngle(value.angle) || openers.length !== REPLY_TONES.length)
-      return invalid();
-    const tones = new Set(openers.map((opener) => opener.tone));
-    if (!REPLY_TONES.every((tone) => tones.has(tone))) return invalid();
-  } else if (
-    value.angle !== null ||
-    openers.length !== 1 ||
-    openers[0].tone !== request.selectedTone
+  if (openers.length !== 1 || openers[0].tone !== request.selectedTone)
+    return invalid();
+  if (
+    request.kind === "starters" ? !isAngle(value.angle) : value.angle !== null
   )
     return invalid();
   return { angle: value.angle as ProfileAngle | null, openers };
@@ -245,7 +243,7 @@ export const openerSchema = {
     },
     openers: {
       type: "array",
-      maxItems: REPLY_TONES.length,
+      maxItems: 1,
       items: {
         type: "object",
         additionalProperties: false,

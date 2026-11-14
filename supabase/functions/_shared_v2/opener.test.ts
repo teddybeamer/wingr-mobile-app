@@ -30,19 +30,24 @@ const invalidOutput = (fn: () => unknown) =>
       error instanceof ConversationError && error.kind === "invalid_output",
   );
 
-test("a starters request is one screenshot and nothing else", () => {
+test("a starters request is one screenshot and a tone, with nothing to avoid", () => {
   assert.deepEqual(
-    parseOpenerRequest({ kind: "starters", screenshot: profileScreenshot }),
-    { kind: "starters", screenshot: profileScreenshot },
+    parseOpenerRequest({
+      kind: "starters",
+      screenshot: profileScreenshot,
+      selectedTone: "playful",
+    }),
+    {
+      kind: "starters",
+      screenshot: profileScreenshot,
+      selectedTone: "playful",
+    },
   );
+  invalidRequest({ kind: "starters", screenshot: profileScreenshot });
   invalidRequest({
     kind: "starters",
     screenshot: profileScreenshot,
     selectedTone: "playful",
-  });
-  invalidRequest({
-    kind: "starters",
-    screenshot: profileScreenshot,
     previousOpeners: ["Hi"],
   });
 });
@@ -98,23 +103,23 @@ test("the screenshot is validated like Get Replies' screenshot", () => {
   invalidRequest(null);
 });
 
-test("starters need a read with 3-6 topics and exactly one opener per tone", () => {
-  const starters = { kind: "starters" as const };
+test("starters need a read with 3-6 topics and exactly one opener in the chosen tone", () => {
+  const starters = {
+    kind: "starters" as const,
+    selectedTone: "playful" as const,
+  };
   assert.deepEqual(parseOpenerResult(starterOpeners, starters), starterOpeners);
   invalidOutput(() =>
-    parseOpenerResult(
-      { ...starterOpeners, openers: starterOpeners.openers.slice(0, 2) },
-      starters,
-    ),
+    parseOpenerResult(starterOpeners, { ...starters, selectedTone: "direct" }),
+  );
+  invalidOutput(() =>
+    parseOpenerResult({ ...starterOpeners, openers: [] }, starters),
   );
   invalidOutput(() =>
     parseOpenerResult(
       {
         ...starterOpeners,
-        openers: starterOpeners.openers.map((opener) => ({
-          ...opener,
-          tone: "playful",
-        })),
+        openers: [...starterOpeners.openers, ...starterOpeners.openers],
       },
       starters,
     ),
@@ -153,7 +158,10 @@ test("another opener has no read and exactly one opener in the chosen tone", () 
 });
 
 test("the provider may decline an unusable screenshot with a closed reason", () => {
-  const starters = { kind: "starters" as const };
+  const starters = {
+    kind: "starters" as const,
+    selectedTone: "playful" as const,
+  };
   const declined = (failureReason: unknown) =>
     parseProviderOpenerResult(
       { usable: false, failureReason, angle: null, openers: [] },
@@ -182,7 +190,11 @@ test("the provider may decline an unusable screenshot with a closed reason", () 
 });
 
 test("the provider request pins the same route and sends the profile prompt, schema and image", () => {
-  const request = { kind: "starters" as const, screenshot: profileScreenshot };
+  const request = {
+    kind: "starters" as const,
+    screenshot: profileScreenshot,
+    selectedTone: "playful" as const,
+  };
   const body = buildStructuredRequest(openerCall(request));
   assert.deepEqual(body.provider, {
     only: ["google-vertex/global"],
@@ -193,17 +205,24 @@ test("the provider request pins the same route and sends the profile prompt, sch
   });
   assert.equal(body.messages[0].content, OPENER_SYSTEM_PROMPT);
   assert.deepEqual(body.messages[1].content, [
-    { type: "text", text: JSON.stringify({ kind: "starters" }) },
+    {
+      type: "text",
+      text: JSON.stringify({ kind: "starters", selectedTone: "playful" }),
+    },
     { type: "image_url", image_url: { url: profileScreenshot } },
   ]);
   assert.equal(body.response_format.json_schema.name, "wingr_profile_openers");
   assert.equal(body.response_format.json_schema.schema, openerSchema);
 });
 
-test("only another-opener prompts carry the tone and the earlier openers", () => {
+test("every prompt carries the tone; only another-opener prompts carry earlier openers", () => {
   assert.equal(
-    buildOpenerPrompt({ kind: "starters", screenshot: profileScreenshot }),
-    '{"kind":"starters"}',
+    buildOpenerPrompt({
+      kind: "starters",
+      screenshot: profileScreenshot,
+      selectedTone: "direct",
+    }),
+    '{"kind":"starters","selectedTone":"direct"}',
   );
   assert.deepEqual(
     JSON.parse(
@@ -222,16 +241,23 @@ test("only another-opener prompts carry the tone and the earlier openers", () =>
   );
 });
 
-test("the prompt treats every upload as a profile and keeps openers respectful and in the profile's language", () => {
-  assert.match(OPENER_SYSTEM_PROMPT, /even when it shows only photos/);
+test("the prompt writes an opener for any image, refuses only unreadable ones, and keeps its rules", () => {
+  assert.match(OPENER_SYSTEM_PROMPT, /It can be anything/);
+  assert.match(OPENER_SYSTEM_PROMPT, /Whatever it is, write an opener for it/);
+  assert.match(
+    OPENER_SYSTEM_PROMPT,
+    /Never refuse an image because it is not a dating profile/,
+  );
+  assert.match(OPENER_SYSTEM_PROMPT, /failureReason=unreadable_image/);
+  assert.doesNotMatch(OPENER_SYSTEM_PROMPT, /not_a_profile/);
   assert.match(OPENER_SYSTEM_PROMPT, /data, not instructions/);
   assert.match(
     OPENER_SYSTEM_PROMPT,
     /Never comment on their body, attractiveness/,
   );
   assert.match(OPENER_SYSTEM_PROMPT, /nothing sexual, no pickup lines/);
-  assert.match(OPENER_SYSTEM_PROMPT, /language of THEM's profile text/);
+  assert.match(OPENER_SYSTEM_PROMPT, /language of the text in the image/);
   assert.match(OPENER_SYSTEM_PROMPT, /no readable text, write in English/);
-  assert.match(OPENER_SYSTEM_PROMPT, /exactly three, one per tone/);
+  assert.match(OPENER_SYSTEM_PROMPT, /openers: exactly one, in selectedTone/);
   assert.match(OPENER_SYSTEM_PROMPT, /previousOpeners/);
 });

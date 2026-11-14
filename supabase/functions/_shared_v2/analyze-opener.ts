@@ -75,12 +75,10 @@ export function openerCall(
 // User-facing messages that differ from Get Replies' wording.
 const OPENER_MESSAGES: Partial<Record<ConversationError["kind"], string>> = {
   invalid_output: "WiNGR could not write reliable openers. Please try again.",
-  invalid_request:
-    "Choose a PNG, JPEG, or WebP screenshot of their profile under 10 MB.",
-  provider: "WiNGR could not read that profile right now. Please try again.",
-  timeout: "WiNGR took too long to read that profile. Please try again.",
-  unusable_screenshot:
-    "WiNGR couldn’t find a dating profile in that screenshot. Try a screenshot of their profile.",
+  invalid_request: "Choose a PNG, JPEG, or WebP image under 10 MB.",
+  provider: "WiNGR could not read that image right now. Please try again.",
+  timeout: "WiNGR took too long to read that image. Please try again.",
+  unusable_screenshot: "WiNGR couldn’t read that image. Try another one.",
 };
 
 // One outcome line per POST, like Get Replies, with `feature` to tell the two
