@@ -134,7 +134,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
-  topicText: { ...typography.metricLabel, lineHeight: 17 },
+  topicText: { ...typography.summaryMedium16, lineHeight: 20 },
   topics: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   topicsSection: {
     backgroundColor: "rgba(23, 37, 84, 0.2)",

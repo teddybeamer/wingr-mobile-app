@@ -114,12 +114,12 @@ export function useOpenerFlow() {
         failure instanceof ConversationError ? failure.retryAt : undefined,
       message:
         code === "unusable_screenshot"
-          ? "WiNGR couldn’t find a dating profile in that screenshot. Try a screenshot of their profile."
+          ? "WiNGR couldn’t read that image. Try another one."
           : failure instanceof ConversationError
             ? failure.message
             : kind === "opener"
               ? "WiNGR could not write another opener. Please try again."
-              : "WiNGR could not read that profile. Please try again.",
+              : "WiNGR could not read that image. Please try again.",
     };
   };
 
@@ -129,9 +129,7 @@ export function useOpenerFlow() {
       const permission =
         await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted)
-        throw new Error(
-          "Photo access is needed to choose a screenshot of their profile.",
-        );
+        throw new Error("Photo access is needed to choose a picture of them.");
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsEditing: false,
         mediaTypes: ["images"],
@@ -157,7 +155,7 @@ export function useOpenerFlow() {
     }
   };
 
-  // The first read: The Angle and one opener per tone.
+  // The first read: The Angle and one opener in the selected tone.
   const generateStarters = async () => {
     const uri = screenshotRef.current;
     if (!uri || controllerRef.current) return "cancelled" as const;
@@ -177,6 +175,7 @@ export function useOpenerFlow() {
       const result = await requestStarters({
         requestId: id,
         screenshotUri: uri,
+        selectedTone: toneRef.current,
         signal: controller.signal,
       });
       if (id !== requestIdRef.current) return "cancelled" as const;

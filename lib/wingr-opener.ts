@@ -36,13 +36,9 @@ async function requestOpeners(
   const body = parseOpenerRequest({
     kind: request.kind,
     screenshot,
-    ...(request.kind === "another"
-      ? {
-          selectedTone: request.selectedTone,
-          ...(request.previousOpeners?.length
-            ? { previousOpeners: request.previousOpeners }
-            : {}),
-        }
+    selectedTone: request.selectedTone,
+    ...(request.kind === "another" && request.previousOpeners?.length
+      ? { previousOpeners: request.previousOpeners }
       : {}),
   });
   const result = await postJsonToWingrBackend<unknown>(
@@ -53,18 +49,20 @@ async function requestOpeners(
   return parseOpenerResult(result, body);
 }
 
-// The first read of a profile: The Angle and one opener per tone.
+// The first read of a profile: The Angle and one opener in the chosen tone.
 export async function requestStarters({
   requestId,
   screenshotUri,
+  selectedTone,
   signal,
 }: {
   requestId: number;
   screenshotUri: string;
+  selectedTone: ReplyTone;
   signal?: AbortSignal;
 }): Promise<StartersResult> {
   const result = await requestOpeners(
-    { kind: "starters", screenshotUri },
+    { kind: "starters", screenshotUri, selectedTone },
     signal,
   );
   // parseOpenerResult guarantees a read for "starters".

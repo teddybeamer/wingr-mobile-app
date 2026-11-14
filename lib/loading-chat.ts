@@ -15,7 +15,7 @@ export const LOADING_CHAT_MESSAGES = [
 // Start Conversation's lines while a profile is being read.
 export const PROFILE_LOADING_CHAT_MESSAGES = [
   "Ooh, let’s see who we’ve got...",
-  "Reading their profile...",
+  "Reading the picture...",
   "Finding something worth talking about...",
   "Skipping the boring openers...",
   "Okay, I’ve got a few ideas...",

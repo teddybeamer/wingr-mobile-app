@@ -144,9 +144,9 @@ export const PREVIEWS: PreviewEntry[] = [
   },
   {
     id: "start-chosen-error",
-    title: "Start Conversation · not a profile",
+    title: "Start Conversation · unreadable image",
     render: () => (
-      <StartChosenPreview errorMessage="WiNGR couldn’t find a dating profile in that screenshot. Try a screenshot of their profile." />
+      <StartChosenPreview errorMessage="WiNGR couldn’t read that image. Try another one." />
     ),
   },
   {

@@ -617,7 +617,7 @@ function WingrApp() {
           ) : null}
           {screen === "startChoose" ? (
             <ChooseScreenshotScreen
-              body="Upload a screenshot of their profile. We’ll find something worth starting a conversation about."
+              body="Upload their profile, a post or any photo of them. We’ll find something worth starting a conversation about."
               heading="Let’s break the ice"
               heroImage={START_CONVERSATION_HERO_IMAGE}
               onBack={() => {
@@ -653,7 +653,7 @@ function WingrApp() {
 
           {screen === "startAnalyzing" ? (
             <ReplyLoadingScreen
-              accessibilityLabel="WiNGR is reading their profile"
+              accessibilityLabel="WiNGR is reading their picture"
               messages={PROFILE_LOADING_CHAT_MESSAGES}
             />
           ) : null}
@@ -674,6 +674,7 @@ function WingrApp() {
               onToneChange={opener.changeTone}
               replies={opener.openers}
               replyError={opener.error?.kind === "opener" ? opener.error : null}
+              scrollToInsight
               selectedScreenshotUri={opener.selectedScreenshotUri}
               selectedTone={opener.selectedTone}
               title="Start Conversation"

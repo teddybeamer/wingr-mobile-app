@@ -2,6 +2,7 @@ import * as Clipboard from "expo-clipboard";
 import { BlurView } from "expo-blur";
 import { posthog } from "../../lib/posthog";
 import { FloatingSheet } from "../FloatingSheet";
+import { useInsightScroll } from "./InsightScroll";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import Reanimated, {
   Easing as ReanimatedEasing,
@@ -467,6 +468,7 @@ export function ExpandableInsightCard({
   title: string;
 }) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const scrollToCard = useInsightScroll();
   // The card's size while it is open; the glow is drawn from it.
   const [openCardSize, setOpenCardSize] = useState<{
     height: number;
@@ -500,6 +502,9 @@ export function ExpandableInsightCard({
       withTiming(REPLY_CARD_PRESS_SCALE, { duration: 80, easing }),
       withTiming(1, { duration: 140, easing }),
     );
+    // Opening (not closing) glides the card to the top, where the screen
+    // supports it.
+    if (!isExpanded) scrollToCard?.();
     setIsExpanded((current) => !current);
   };
 

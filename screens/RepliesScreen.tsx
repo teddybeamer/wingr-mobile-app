@@ -1,5 +1,5 @@
 import { BlurView } from "expo-blur";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Image,
   Platform,
@@ -22,6 +22,7 @@ import {
   ReplyActionBar,
   VibeCheckCard,
 } from "../components/conversation/ConversationContent";
+import { InsightScrollContext } from "../components/conversation/InsightScroll";
 import type { ConversationFlowError } from "../hooks/useConversationFlow";
 import type { OpenerFlowError } from "../hooks/useOpenerFlow";
 import { getReplyErrorPresentation } from "../lib/reply-limit";
@@ -41,6 +42,12 @@ const REPLIES_SCREEN = {
   actionBarFallbackHeight: 56,
   actionBarScrollGap: 24,
   revealGap: 16,
+  // Space kept above the insight card when the screen scrolls to it, and the
+  // pause before it does so the screen has settled first.
+  insightScrollGap: 12,
+  insightScrollDelayMs: 450,
+  // After the card's 220 ms open animation.
+  insightOpenScrollDelayMs: 240,
 };
 
 // The result of a flow: the screenshot, an insight card, the cards and the
@@ -51,6 +58,7 @@ export function RepliesScreen({
   copyEvent,
   insight,
   isGeneratingReplies,
+  scrollToInsight = false,
   lastGeneratedReplyId,
   onBack,
   onDismissReplyError,
@@ -68,6 +76,9 @@ export function RepliesScreen({
   // Replaces the Vibe Check card.
   insight?: ReactNode;
   isGeneratingReplies: boolean;
+  // Glides down to the insight card once, after the screen appears, so it is
+  // the first thing in view (Start Conversation's The Angle).
+  scrollToInsight?: boolean;
   lastGeneratedReplyId: string | null;
   onBack: () => void;
   onDismissReplyError: () => void;
@@ -102,6 +113,55 @@ export function RepliesScreen({
   const [isScreenshotHidden, setIsScreenshotHidden] = useState(false);
   const [previewSource, setPreviewSource] = useState<WindowRect | null>(null);
   const screenshotFrameRef = useRef<View>(null);
+  const insightOffsetYRef = useRef<number | null>(null);
+  const insightScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const hasScrolledToInsightRef = useRef(false);
+
+  useEffect(
+    () => () => {
+      if (insightScrollTimerRef.current)
+        clearTimeout(insightScrollTimerRef.current);
+    },
+    [],
+  );
+
+  // A smooth native scroll that puts the insight card at the top, after
+  // `delayMs`. A newer request replaces a pending one.
+  const glideToInsight = (delayMs: number) => {
+    if (insightScrollTimerRef.current)
+      clearTimeout(insightScrollTimerRef.current);
+    insightScrollTimerRef.current = setTimeout(() => {
+      insightScrollTimerRef.current = null;
+      const conversationY = repliesConversationOffsetYRef.current;
+      const insightY = insightOffsetYRef.current;
+      if (conversationY === null || insightY === null) return;
+      const y = Math.max(
+        0,
+        conversationY + insightY - REPLIES_SCREEN.insightScrollGap,
+      );
+      scrollOffsetRef.current = y;
+      scrollViewRef.current?.scrollTo({ animated: true, y });
+    }, delayMs);
+  };
+
+  // The first glide, once both offsets are known, after the screen has settled.
+  const scheduleScrollToInsight = () => {
+    if (!scrollToInsight || hasScrolledToInsightRef.current) return;
+    if (
+      repliesConversationOffsetYRef.current === null ||
+      insightOffsetYRef.current === null
+    )
+      return;
+    hasScrolledToInsightRef.current = true;
+    glideToInsight(REPLIES_SCREEN.insightScrollDelayMs);
+  };
+
+  // Every later opening of the card glides it to the top again, once the card
+  // has finished growing.
+  const scrollInsightOnOpen = () =>
+    glideToInsight(REPLIES_SCREEN.insightOpenScrollDelayMs);
 
   // Scrolls a newly generated reply into view above the action bar.
   const revealPendingReply = () => {
@@ -209,6 +269,7 @@ export function RepliesScreen({
           onLayout={(event) => {
             repliesConversationOffsetYRef.current = event.nativeEvent.layout.y;
             revealPendingReply();
+            scheduleScrollToInsight();
           }}
           style={styles.conversation}
         >
@@ -236,13 +297,25 @@ export function RepliesScreen({
               </View>
             </View>
           ) : null}
-          {insight ??
-            (vibeCheck ? (
-              <VibeCheckCard
-                presentation="inlineExpandable"
-                vibeCheck={vibeCheck}
-              />
-            ) : null)}
+          {insight ? (
+            <View
+              onLayout={(event) => {
+                insightOffsetYRef.current = event.nativeEvent.layout.y;
+                scheduleScrollToInsight();
+              }}
+            >
+              <InsightScrollContext.Provider
+                value={scrollToInsight ? scrollInsightOnOpen : null}
+              >
+                {insight}
+              </InsightScrollContext.Provider>
+            </View>
+          ) : vibeCheck ? (
+            <VibeCheckCard
+              presentation="inlineExpandable"
+              vibeCheck={vibeCheck}
+            />
+          ) : null}
           <RepliesContent
             copyEvent={copyEvent}
             isGenerating={isGeneratingReplies}
